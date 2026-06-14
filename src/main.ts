@@ -101,6 +101,14 @@ export default class EngramPlugin extends Plugin {
     this.contextBuilder?.updateSettings(this.settings);
     this.indexer?.updateSettings(this.settings);
     this.memoryManager?.updateConfig(this.settings.memoryPath, this.settings.maxMemoryTokens);
+
+    // Propagate to active views
+    const leaves = this.app.workspace.getLeavesOfType(ENGRAM_VIEW_TYPE);
+    for (const leaf of leaves) {
+      if (leaf.view instanceof ChatView) {
+        leaf.view.onSettingsUpdate();
+      }
+    }
   }
 
   // ── Connection test (called from settings UI) ────────────────────────────────

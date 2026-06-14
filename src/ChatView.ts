@@ -265,6 +265,27 @@ export class ChatView extends ItemView {
 
     this.permBadge = footer.createSpan('engram-perm-badge');
     this.updatePermBadge();
+    this.permBadge.addEventListener('click', async () => {
+      const current = this.plugin.settings.editPermission;
+      let next: 'read_only' | 'read_append' | 'full_edit';
+      if (current === 'read_only') {
+        next = 'read_append';
+      } else if (current === 'read_append') {
+        next = 'full_edit';
+      } else {
+        next = 'read_only';
+      }
+      this.plugin.settings.editPermission = next;
+      await this.plugin.saveSettings();
+
+      const names: Record<string, string> = {
+        read_only: 'Read Only',
+        read_append: 'Append',
+        full_edit: 'Full Edit',
+      };
+      new Notice(`Permission set to: ${names[next]}`);
+      this.updatePermBadge();
+    });
 
     this.tokenBudgetBar = new TokenBudgetBar(footer, this.plugin.settings.contextWindowTokens);
   }
@@ -324,6 +345,15 @@ export class ChatView extends ItemView {
     this.personaBadge.empty();
     this.personaBadge.createSpan().textContent = '🎭 ';
     this.personaBadge.createSpan('engram-persona-name').textContent = persona?.name ?? 'Default';
+  }
+
+  async onSettingsUpdate(): Promise<void> {
+    this.updateProviderBadge();
+    this.updatePersonaBadge();
+    this.updatePermBadge();
+    this.tokenBudgetBar?.setMax(this.plugin.settings.contextWindowTokens);
+    this.updateTokenBar();
+    await this.checkConnection();
   }
 
   // ── Sessions ───────────────────────────────────────────────────────────────
