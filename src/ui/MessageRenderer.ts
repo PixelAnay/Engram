@@ -1,0 +1,473 @@
+/**
+ * MessageRenderer.ts
+ * Handles efficient DOM rendering of chat bubbles.
+ *
+ * Key improvements over the original ChatView approach:
+ * - Incremental append: new bubbles are only added, not the entire list re-rendered
+ * - Streaming: text content is updated by patching a single text node, not via MarkdownRenderer
+ *   on every token. Markdown is re-rendered only when streaming ends.
+ * - Debounced Markdown renders during streaming (at most every 200ms)
+ */
+
+import { MarkdownRenderer, setIcon, Component } from 'obsidian';
+import type { App } from 'obsidian';
+import type { ChatMessage } from '../types';
+
+export interface DisplayMessage {
+  role: 'user' | 'assistant' | 'error';
+  content: string;
+  attachments?: { name: string; type: string; dataUrl: string }[];
+  toolEvents?: ToolEvent[];
+  streaming?: boolean;
+}
+
+export interface ToolEvent {
+  type: 'start' | 'end';
+  name: string;
+  result?: string;
+}
+
+/** Render Markdown safely across Obsidian versions */
+function renderMarkdownCompat(
+  app: App,
+  source: string,
+  el: HTMLElement,
+  component: Component
+): void {
+  try {
+    MarkdownRenderer.render(app, source, el, '', component);
+  } catch {
+    (MarkdownRenderer as any).renderMarkdown(source, el, '', component);
+  }
+}
+
+const TOOL_ICONS: Record<string, string> = {
+  search_vault: '🔍', read_note: '📖', list_folder: '📁',
+  append_to_note: '✏️', edit_note: '✏️', create_note: '📄',
+  open_note: '🔗', move_note: '📦', rename_note: '✏️',
+  copy_note: '📋', delete_note: '🗑️', create_folder: '📁',
+};
+
+export class MessageRenderer {
+  /** Map from DisplayMessage identity → rendered wrapper element */
+  private renderedBubbles = new Map<DisplayMessage, HTMLElement>();
+
+  /** Timer for debounced Markdown re-renders during streaming */
+  private mdDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** Ref to the streaming bubble's raw text node (for fast token patching) */
+  private streamingTextNode: Text | null = null;
+
+  constructor(
+    private app: App,
+    private container: HTMLElement,
+    private component: Component,
+    private onCopyMessage: (content: string) => void,
+    private onEditMessage: (msg: DisplayMessage) => void,
+    private onNoteClick: (path: string) => void
+  ) {}
+
+  /**
+   * Full re-render of all messages (used on session switch or initial load).
+   * Clears all existing DOM and rebuilds.
+   */
+  renderAll(messages: DisplayMessage[]): void {
+    this.container.empty();
+    this.renderedBubbles.clear();
+    this.streamingTextNode = null;
+
+    for (const msg of messages) {
+      const el = this.renderBubble(msg);
+      this.renderedBubbles.set(msg, el);
+      this.container.appendChild(el);
+    }
+  }
+
+  /**
+   * Append a new bubble to the bottom. Does NOT re-render existing ones.
+   */
+  appendBubble(msg: DisplayMessage): HTMLElement {
+    const el = this.renderBubble(msg);
+    this.renderedBubbles.set(msg, el);
+    this.container.appendChild(el);
+    return el;
+  }
+
+  /**
+   * Fast path for streaming token updates.
+   * Patches only the raw text content node — no Markdown parsing.
+   * Triggers a debounced full Markdown render (every 200ms).
+   */
+  patchStreamingContent(msg: DisplayMessage): void {
+    const wrapper = this.renderedBubbles.get(msg);
+    if (!wrapper) return;
+
+    // Update or create the raw text node inside the content div
+    const contentEl = wrapper.querySelector('.llama-bubble-content') as HTMLElement | null;
+    if (!contentEl) return;
+
+    if (this.streamingTextNode && contentEl.contains(this.streamingTextNode)) {
+      this.streamingTextNode.textContent = msg.content;
+    } else {
+      contentEl.empty();
+      this.streamingTextNode = document.createTextNode(msg.content);
+      contentEl.appendChild(this.streamingTextNode);
+    }
+
+    // Update cursor visibility
+    const cursor = wrapper.querySelector('.llama-cursor');
+    if (cursor) cursor.setAttribute('style', msg.streaming ? '' : 'display:none');
+
+    // Update tool events (cheap DOM update)
+    this.updateToolEventsEl(wrapper, msg.toolEvents ?? []);
+
+    // Schedule a proper Markdown render (debounced)
+    this.scheduleMdRender(msg, contentEl);
+  }
+
+  /**
+   * Finalize a streaming bubble — force immediate Markdown render, add action buttons.
+   */
+  finalizeStreamingBubble(msg: DisplayMessage): void {
+    if (this.mdDebounceTimer !== null) {
+      clearTimeout(this.mdDebounceTimer);
+      this.mdDebounceTimer = null;
+    }
+    this.streamingTextNode = null;
+
+    const wrapper = this.renderedBubbles.get(msg);
+    if (!wrapper) return;
+
+    // Full re-render of this bubble
+    const newEl = this.renderBubble(msg);
+    wrapper.replaceWith(newEl);
+    this.renderedBubbles.set(msg, newEl);
+  }
+
+  // ── Private rendering ─────────────────────────────────────────────────────
+
+  private renderBubble(msg: DisplayMessage): HTMLElement {
+    const wrapper = document.createElement('div');
+    wrapper.className = `llama-msg-wrapper llama-msg-${msg.role}`;
+
+    const bubble = wrapper.appendChild(document.createElement('div'));
+    bubble.className = 'llama-bubble';
+
+    // Tool events
+    if (msg.toolEvents && msg.toolEvents.length > 0) {
+      const toolsEl = bubble.appendChild(document.createElement('div'));
+      toolsEl.className = 'llama-tool-events';
+      this.renderToolEvents(toolsEl, msg.toolEvents);
+    }
+
+    // Attachments
+    if (msg.attachments && msg.attachments.length > 0) {
+      const attContainer = bubble.appendChild(document.createElement('div'));
+      attContainer.className = 'llama-input-attachments';
+      attContainer.style.marginBottom = msg.content ? '8px' : '0';
+      for (const att of msg.attachments) {
+        if (att.type.startsWith('image/')) {
+          const img = attContainer.appendChild(document.createElement('img'));
+          img.src = att.dataUrl;
+          img.alt = att.name;
+          img.style.cssText = 'max-width:100%;border-radius:var(--radius-s);max-height:200px;object-fit:contain';
+        } else {
+          const chip = attContainer.appendChild(document.createElement('div'));
+          chip.className = 'llama-attachment-chip';
+          const nameSpan = chip.appendChild(document.createElement('span'));
+          nameSpan.className = 'llama-attachment-name';
+          nameSpan.textContent = att.name;
+        }
+      }
+    }
+
+    // Content
+    const contentEl = bubble.appendChild(document.createElement('div'));
+    contentEl.className = 'llama-bubble-content';
+
+    if (msg.content) {
+      if (msg.streaming) {
+        // During streaming: plain text node (fast)
+        this.streamingTextNode = document.createTextNode(msg.content);
+        contentEl.appendChild(this.streamingTextNode);
+      } else {
+        renderMarkdownCompat(this.app, msg.content, contentEl, this.component);
+        if (msg.role === 'assistant') {
+          this.makeNoteLinksClickable(contentEl);
+        }
+      }
+    }
+
+    // Thinking indicator (empty streaming bubble)
+    const hasText = msg.content.trim().length > 0;
+    if (msg.streaming && !hasText) {
+      const thinkingEl = contentEl.appendChild(document.createElement('div'));
+      thinkingEl.className = 'llama-thinking';
+      thinkingEl.appendChild(document.createElement('span')).textContent = 'Thinking';
+      thinkingEl.appendChild(document.createElement('span')).className = 'llama-thinking-dots';
+      (thinkingEl.lastChild as HTMLElement).textContent = '...';
+    }
+
+    // Streaming cursor
+    if (msg.streaming) {
+      const cursor = bubble.appendChild(document.createElement('span'));
+      cursor.className = 'llama-cursor';
+      cursor.textContent = '▋';
+    }
+
+    // Action buttons (Copy, Edit)
+    if (!msg.streaming && msg.role !== 'error') {
+      const actions = wrapper.appendChild(document.createElement('div'));
+      actions.className = 'llama-msg-actions';
+
+      const copyBtn = actions.appendChild(document.createElement('button'));
+      copyBtn.className = 'llama-msg-action-btn';
+      copyBtn.title = 'Copy';
+      setIcon(copyBtn, 'copy');
+      copyBtn.addEventListener('click', () => {
+        this.onCopyMessage(msg.content);
+        navigator.clipboard.writeText(msg.content);
+        setIcon(copyBtn, 'check');
+        setTimeout(() => setIcon(copyBtn, 'copy'), 2000);
+      });
+
+      if (msg.role === 'user') {
+        const editBtn = actions.appendChild(document.createElement('button'));
+        editBtn.className = 'llama-msg-action-btn';
+        editBtn.title = 'Edit & Resend';
+        setIcon(editBtn, 'pencil');
+        editBtn.addEventListener('click', () => this.onEditMessage(msg));
+      }
+    }
+
+    return wrapper;
+  }
+
+  private renderToolEvents(container: HTMLElement, events: ToolEvent[]): void {
+    container.empty();
+    for (const ev of events) {
+      const evEl = container.appendChild(document.createElement('div'));
+      evEl.className = `llama-tool-event llama-tool-${ev.type}`;
+      const icon = TOOL_ICONS[ev.name] ?? '🛠️';
+      if (ev.type === 'start') {
+        evEl.textContent = `${icon} ${ev.name.replace(/_/g, ' ')}…`;
+      } else {
+        const summary = ev.result
+          ? ev.result.length > 80 ? ev.result.slice(0, 80) + '…' : ev.result
+          : 'done';
+        evEl.textContent = `${icon} ${ev.name.replace(/_/g, ' ')}: ${summary}`;
+      }
+    }
+  }
+
+  private updateToolEventsEl(wrapper: HTMLElement, events: ToolEvent[]): void {
+    const toolsEl = wrapper.querySelector('.llama-tool-events') as HTMLElement | null;
+    if (!toolsEl && events.length === 0) return;
+
+    if (!toolsEl) {
+      const bubble = wrapper.querySelector('.llama-bubble') as HTMLElement;
+      if (!bubble) return;
+      const newToolsEl = document.createElement('div');
+      newToolsEl.className = 'llama-tool-events';
+      bubble.insertBefore(newToolsEl, bubble.firstChild);
+      this.renderToolEvents(newToolsEl, events);
+    } else {
+      this.renderToolEvents(toolsEl, events);
+    }
+  }
+
+  /** Debounce Markdown render during streaming (max once per 200ms). */
+  private scheduleMdRender(msg: DisplayMessage, contentEl: HTMLElement): void {
+    if (this.mdDebounceTimer !== null) clearTimeout(this.mdDebounceTimer);
+    this.mdDebounceTimer = setTimeout(() => {
+      this.mdDebounceTimer = null;
+      if (!msg.streaming) return; // already finalized
+      contentEl.empty();
+      this.streamingTextNode = null;
+      if (msg.content) {
+        renderMarkdownCompat(this.app, msg.content, contentEl, this.component);
+      }
+    }, 200);
+  }
+
+  // ── Note link clickability ─────────────────────────────────────────────────
+
+  private makeNoteLinksClickable(el: HTMLElement): void {
+    const makeHandler = (path: string) => (e: MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.onNoteClick(path);
+    };
+
+    const toAnchor = (path: string): HTMLAnchorElement => {
+      const a = document.createElement('a');
+      a.className = 'llama-note-link';
+      a.textContent = path;
+      a.title = `Open "${path}" in a new tab`;
+      a.href = '#';
+      a.addEventListener('click', makeHandler(path));
+      return a;
+    };
+
+    // Inline code blocks ending in .md
+    for (const codeEl of Array.from(el.querySelectorAll('code'))) {
+      if (codeEl.closest('pre')) continue;
+      const raw = (codeEl.textContent ?? '').trim();
+      if (!raw || !/\.md(?:#.*)?$/i.test(raw)) continue;
+      const pathOnly = raw.replace(/^\.?\//, '').replace(/#.*$/, '');
+      const file = this.resolveFile(pathOnly);
+      if (file) codeEl.replaceWith(toAnchor(file));
+    }
+
+    // Existing markdown links
+    for (const anchor of Array.from(el.querySelectorAll('a'))) {
+      const href = anchor.getAttribute('href') ?? '';
+      const decoded = href ? decodeURIComponent(href) : '';
+      const raw = decoded || anchor.textContent || href;
+      if (!raw || !/\.md(?:#.*)?$/i.test(raw.trim())) continue;
+      const pathOnly = raw.replace(/^\.?\//, '').replace(/#.*$/, '');
+      const file = this.resolveFile(pathOnly);
+      if (!file) continue;
+      anchor.classList.add('llama-note-link');
+      anchor.setAttribute('title', `Open "${file}" in a new tab`);
+      anchor.addEventListener('click', makeHandler(file));
+    }
+
+    // Plain text paths ending in .md
+    const NOTE_PATH_RE = /(?:[^/\n\r"*<>|?[\]()]+\/)*[^/\n\r"*<>|?[\]()]+\.md/gu;
+    const walkTextNodes = (node: Node) => {
+      if (node.nodeType === Node.TEXT_NODE) {
+        const text = node.textContent ?? '';
+        const matches = [...text.matchAll(NOTE_PATH_RE)];
+        if (matches.length === 0) return;
+        const frag = document.createDocumentFragment();
+        let lastIdx = 0;
+        for (const match of matches) {
+          const start = match.index!;
+          const end = start + match[0].length;
+          const file = this.resolveFile(match[0].trim());
+          if (!file) continue;
+          if (start > lastIdx) frag.appendChild(document.createTextNode(text.slice(lastIdx, start)));
+          frag.appendChild(toAnchor(file));
+          lastIdx = end;
+        }
+        if (lastIdx > 0) {
+          if (lastIdx < text.length) frag.appendChild(document.createTextNode(text.slice(lastIdx)));
+          node.parentNode?.replaceChild(frag, node);
+        }
+      } else if (node.nodeType === Node.ELEMENT_NODE && !['A', 'CODE', 'PRE'].includes((node as Element).tagName)) {
+        for (const child of Array.from(node.childNodes)) walkTextNodes(child);
+      }
+    };
+    walkTextNodes(el);
+  }
+
+  /**
+   * Resolve a raw path string to a vault-relative path using fuzzy matching.
+   * Returns the resolved path string or null.
+   */
+  private resolveFile(rawPath: string): string | null {
+    // We access the Obsidian vault via the app instance
+    const vault = (this.app as any).vault;
+    if (!vault) return null;
+
+    const trimmed = (rawPath ?? '').trim();
+    if (!trimmed) return null;
+
+    const candidates = new Set<string>();
+    const add = (v: string) => {
+      const s = v.trim();
+      if (s) {
+        candidates.add(s);
+        candidates.add(s.normalize('NFC'));
+      }
+    };
+
+    add(trimmed.replace(/\\/g, '/'));
+    add(trimmed.replace(/[""]/g, '"').replace(/['']/g, "'"));
+    add(trimmed.replace(/[\][\](){}<>'"`,;:!?]+$/g, ''));
+    try { add(decodeURIComponent(trimmed)); } catch { /* ignore */ }
+
+    for (const c of candidates) {
+      const f = vault.getAbstractFileByPath(c);
+      if (f) return f.path as string;
+    }
+
+    const toKey = (v: string) => v.replace(/\\/g, '/').normalize('NFC').toLowerCase();
+    const toLoose = (v: string) => v.normalize('NFC').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const cKeys = new Set(Array.from(candidates).map(toKey));
+    const files = vault.getMarkdownFiles() as Array<{ path: string; name: string }>;
+
+    for (const f of files) if (cKeys.has(toKey(f.path))) return f.path;
+
+    for (const c of candidates) {
+      const cK = toKey(c);
+      const cL = toLoose(c);
+      for (const f of files) {
+        const fK = toKey(f.path);
+        const fL = toLoose(f.path);
+        if (fK.endsWith(cK) || cK.endsWith(fK)) return f.path;
+        if (fL === cL) return f.path;
+      }
+    }
+
+    const baseCandidates = Array.from(candidates)
+      .map(c => c.split('/').pop() ?? c)
+      .filter(Boolean)
+      .map(toLoose);
+    for (const base of baseCandidates) {
+      const matches = files.filter(f => toLoose(f.name) === base);
+      if (matches.length === 1) return matches[0].path;
+    }
+
+    return null;
+  }
+
+  /**
+   * Build DisplayMessage objects from a raw ChatMessage history.
+   * Used when switching sessions.
+   */
+  static buildDisplayMessages(messages: ChatMessage[]): DisplayMessage[] {
+    const result: DisplayMessage[] = [];
+
+    for (let i = 0; i < messages.length; i++) {
+      const msg = messages[i];
+      if (msg.role !== 'user' && msg.role !== 'assistant') continue;
+
+      const content = MessageRenderer.toDisplayText(msg.content);
+      let toolEvents: ToolEvent[] | undefined;
+
+      if (msg.tool_calls && msg.tool_calls.length > 0) {
+        toolEvents = [];
+        for (const call of msg.tool_calls) {
+          let resultText = 'done';
+          for (let j = i + 1; j < messages.length && j <= i + 5; j++) {
+            const next = messages[j];
+            if (next.role === 'tool' && next.tool_call_id === call.id) {
+              resultText = MessageRenderer.toDisplayText(next.content);
+              break;
+            }
+          }
+          toolEvents.push({ type: 'end', name: call.function.name, result: resultText });
+        }
+      }
+
+      if (!content.trim() && (!msg.attachments || msg.attachments.length === 0) && (!toolEvents || toolEvents.length === 0)) {
+        continue;
+      }
+
+      result.push({ role: msg.role, content, attachments: msg.attachments, toolEvents });
+    }
+
+    return result;
+  }
+
+  static toDisplayText(content: ChatMessage['content']): string {
+    if (typeof content === 'string') return content;
+    if (!Array.isArray(content)) return '';
+    return content
+      .filter(p => p && p.type === 'text' && typeof p.text === 'string')
+      .map(p => p.text as string)
+      .join('\n');
+  }
+}

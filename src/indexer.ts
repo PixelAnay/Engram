@@ -1,5 +1,6 @@
-import { App, TFile, TFolder, parseFrontMatterTags, getAllTags, CachedMetadata } from 'obsidian';
+import { App, TFile, getAllTags, CachedMetadata } from 'obsidian';
 import type { NoteMetadata, VaultIndex, SearchResult, LlamaPluginSettings } from './types';
+import { normalisePath } from './utils/pathUtils';
 
 const INDEX_VERSION = 2;
 const LRU_MAX = 100; // max full-content entries to keep in memory
@@ -53,6 +54,11 @@ export class VaultIndexer {
   private excludeRegexes: RegExp[] = [];
   private ready = false;
 
+  // ── Caches invalidated by settings/index changes ──────────────────────────
+  private _excludedCount: number | null = null;
+  private _vaultMapCache: string | null = null;
+  private _vaultMapNoteCount: number | null = null;
+
   constructor(private app: App, private settings: LlamaPluginSettings) {
     this.rebuildExcludeRegexes();
   }
@@ -67,8 +73,17 @@ export class VaultIndexer {
     return Object.keys(this.index.notes).length;
   }
 
+  /**
+   * Count of excluded markdown files. Cached — only recomputed when
+   * exclusion patterns or the index changes.
+   */
   get excludedCount(): number {
-    return this.app.vault.getMarkdownFiles().filter(f => this.isExcluded(f.path)).length;
+    if (this._excludedCount === null) {
+      this._excludedCount = this.app.vault
+        .getMarkdownFiles()
+        .filter(f => this.isExcluded(f.path)).length;
+    }
+    return this._excludedCount;
   }
 
   /** Build the index on plugin startup */
@@ -92,6 +107,7 @@ export class VaultIndexer {
         if (!currentPaths.has(path)) delete this.index.notes[path];
       }
       this.ready = true;
+      this.invalidateCaches();
       return;
     }
 
@@ -109,6 +125,7 @@ export class VaultIndexer {
       await new Promise(r => setTimeout(r, 0));
     }
     this.ready = true;
+    this.invalidateCaches();
   }
 
   /** Update a single file in the index */
@@ -119,12 +136,14 @@ export class VaultIndexer {
       this.index.notes[file.path] = await this.buildMeta(file);
     }
     this.contentCache.delete(file.path);
+    this.invalidateCaches();
   }
 
   /** Remove a file from the index */
   removeFile(path: string): void {
     delete this.index.notes[path];
     this.contentCache.delete(path);
+    this.invalidateCaches();
   }
 
   /** Rename a file in the index */
@@ -142,6 +161,7 @@ export class VaultIndexer {
   updateSettings(settings: LlamaPluginSettings): void {
     this.settings = settings;
     this.rebuildExcludeRegexes();
+    this.invalidateCaches();
   }
 
   // ── Content Access ────────────────────────────────────────────────────────
@@ -225,36 +245,46 @@ export class VaultIndexer {
       .slice(0, limit);
   }
 
-  /** Full-text search (reads file content — expensive) */
+  /**
+   * Full-text search (reads file content — expensive).
+   * Processed in small async chunks to avoid freezing the UI.
+   */
   async fullTextSearch(query: string, limit = 10): Promise<SearchResult[]> {
     const q = query.toLowerCase().trim();
     if (!q) return [];
 
     const candidates = Object.keys(this.index.notes);
     const results: SearchResult[] = [];
+    const CHUNK = 20;
 
-    for (const path of candidates) {
-      const content = await this.readNote(path);
-      if (!content) continue;
+    for (let i = 0; i < candidates.length; i += CHUNK) {
+      const batch = candidates.slice(i, i + CHUNK);
+      for (const path of batch) {
+        const content = await this.readNote(path);
+        if (!content) continue;
 
-      const lower = content.toLowerCase();
-      const idx = lower.indexOf(q);
-      if (idx === -1) continue;
+        const lower = content.toLowerCase();
+        const idx = lower.indexOf(q);
+        if (idx === -1) continue;
 
-      // Extract surrounding snippet
-      const start = Math.max(0, idx - 60);
-      const end = Math.min(content.length, idx + q.length + 60);
-      const snippet = '...' + content.slice(start, end).replace(/\n/g, ' ').trim() + '...';
+        // Extract surrounding snippet
+        const start = Math.max(0, idx - 60);
+        const end = Math.min(content.length, idx + q.length + 60);
+        const snippet = '...' + content.slice(start, end).replace(/\n/g, ' ').trim() + '...';
 
-      const occurrences = (lower.match(new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;
+        const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const occurrences = (lower.match(new RegExp(escaped, 'g')) ?? []).length;
 
-      results.push({
-        path,
-        title: this.index.notes[path].title,
-        tags: this.index.notes[path].tags,
-        snippet,
-        score: occurrences,
-      });
+        results.push({
+          path,
+          title: this.index.notes[path].title,
+          tags: this.index.notes[path].tags,
+          snippet,
+          score: occurrences,
+        });
+      }
+      // Yield between batches to keep UI responsive
+      await new Promise(r => setTimeout(r, 0));
     }
 
     return results.sort((a, b) => b.score - a.score).slice(0, limit);
@@ -262,21 +292,32 @@ export class VaultIndexer {
 
   /** Get all notes in a folder */
   listFolder(folderPath: string): NoteMetadata[] {
-    const normalized = folderPath.replace(/\/$/, '');
+    const normalized = normalisePath(folderPath);
     return Object.values(this.index.notes).filter(meta => {
       const dir = meta.path.includes('/') ? meta.path.substring(0, meta.path.lastIndexOf('/')) : '';
       return normalized === '' ? !meta.path.includes('/') : dir === normalized || dir.startsWith(normalized + '/');
     });
   }
 
-  /** Get the compact vault map string for injection into system prompt */
+  /**
+   * Get the compact vault map string for injection into system prompt.
+   * Result is cached and invalidated only when the index changes.
+   */
   getVaultMap(): string {
+    const count = this.noteCount;
+    // Return cached version if the note count hasn't changed
+    if (this._vaultMapCache !== null && this._vaultMapNoteCount === count) {
+      return this._vaultMapCache;
+    }
+
     const notes = Object.values(this.index.notes);
     const lines = notes.map(meta => {
       const tags = meta.tags.length > 0 ? ` [${meta.tags.join(', ')}]` : '';
       return `- ${meta.path}${tags}`;
     });
-    return lines.join('\n');
+    this._vaultMapCache = lines.join('\n');
+    this._vaultMapNoteCount = count;
+    return this._vaultMapCache;
   }
 
   /** Get top N notes ranked by relevance to a query (for auto-injection) */
@@ -290,6 +331,33 @@ export class VaultIndexer {
     return this.index.notes[path] ?? null;
   }
 
+  /**
+   * Return the top tags across the entire vault (for dynamic UI chips etc.)
+   * Returns up to `limit` tags sorted by frequency.
+   */
+  getTopTags(limit = 10): string[] {
+    const freq = new Map<string, number>();
+    for (const meta of Object.values(this.index.notes)) {
+      for (const tag of meta.tags) {
+        freq.set(tag, (freq.get(tag) ?? 0) + 1);
+      }
+    }
+    return [...freq.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, limit)
+      .map(([tag]) => tag);
+  }
+
+  /**
+   * Return the most recently modified notes.
+   * Useful for generating context-aware welcome suggestions.
+   */
+  getRecentNotes(limit = 5): NoteMetadata[] {
+    return Object.values(this.index.notes)
+      .sort((a, b) => b.mtime - a.mtime)
+      .slice(0, limit);
+  }
+
   // ── Private Helpers ───────────────────────────────────────────────────────
 
   private isExcluded(path: string): boolean {
@@ -298,6 +366,13 @@ export class VaultIndexer {
 
   private rebuildExcludeRegexes(): void {
     this.excludeRegexes = this.settings.excludePatterns.map(globToRegex);
+  }
+
+  /** Invalidate computed caches that depend on index state. */
+  private invalidateCaches(): void {
+    this._excludedCount = null;
+    this._vaultMapCache = null;
+    this._vaultMapNoteCount = null;
   }
 
   private async buildMeta(file: TFile): Promise<NoteMetadata> {

@@ -1,6 +1,8 @@
 import { App, TFile, TFolder, Notice } from 'obsidian';
 import type { VaultIndexer } from './indexer';
 import type { LlamaPluginSettings } from './types';
+import { validateVaultPath } from './utils/pathUtils';
+import { showConfirmDialog } from './ui/ConfirmDialog';
 
 // ─── Tool Definitions (OpenAI schema) ────────────────────────────────────────
 
@@ -114,6 +116,10 @@ export const TOOL_DEFINITIONS = [
             type: 'string',
             description: 'The full new content for the note (required for full_overwrite mode)',
           },
+          occurrence: {
+            type: 'number',
+            description: 'Which occurrence to replace in replace_block mode (1-based, default 1). Use -1 to replace all occurrences.',
+          },
         },
         required: ['path', 'mode'],
       },
@@ -209,7 +215,7 @@ export const TOOL_DEFINITIONS = [
     type: 'function',
     function: {
       name: 'delete_note',
-      description: 'Permanently delete a note from the vault. Use with caution — this cannot be undone via the undo stack.',
+      description: 'Permanently delete a note from the vault. Use with caution — requires user confirmation.',
       parameters: {
         type: 'object',
         properties: {
@@ -246,7 +252,7 @@ Available tools:
 - read_note(path): Read full content of a note
 - list_folder(path): List notes in a folder
 - append_to_note(path, content): Append text to a note
-- edit_note(path, mode, old_text?, new_text?, new_content?): Edit a note
+- edit_note(path, mode, old_text?, new_text?, new_content?, occurrence?): Edit a note (occurrence: 1-based index, -1 = all)
 - create_note(path, content, overwrite?): Create a new note
 - open_note(paths): Open one or more notes in editor tabs
 - move_note(source, destination): Move a note to a new path
@@ -264,9 +270,13 @@ Format:
 // ─── Undo History ────────────────────────────────────────────────────────────
 
 export interface UndoEntry {
+  /** Vault-relative path of the file that was modified */
   path: string;
-  previousContent: string;
+  /** Full content before the edit (null if the file was created new and should be deleted on undo) */
+  previousContent: string | null;
+  /** Human-readable description of the operation */
   description: string;
+  /** Unix timestamp of the operation */
   timestamp: number;
 }
 
@@ -275,7 +285,7 @@ export interface UndoEntry {
 export class ToolExecutor {
   private undoStack: UndoEntry[] = [];
 
-  // Callback so ChatView can open notes without a circular dependency
+  /** Callback so ChatView can open notes without a circular dependency */
   onOpenNotes?: (paths: string[]) => void;
 
   constructor(
@@ -301,7 +311,7 @@ export class ToolExecutor {
       switch (name) {
         case 'search_vault':   return await this.toolSearchVault(args);
         case 'read_note':      return await this.toolReadNote(args);
-        case 'list_folder':    return await this.toolListFolder(args);
+        case 'list_folder':    return this.toolListFolder(args);
         case 'append_to_note': return await this.toolAppendToNote(args);
         case 'edit_note':      return await this.toolEditNote(args);
         case 'create_note':    return await this.toolCreateNote(args);
@@ -322,17 +332,46 @@ export class ToolExecutor {
     return [...this.undoStack];
   }
 
+  /** Undo the most recent edit. Returns the path of the file restored, or null. */
   async undoLast(): Promise<string | null> {
-    const entry = this.undoStack.pop();
-    if (!entry) return null;
+    return this.undoAt(this.undoStack.length - 1);
+  }
 
-    const file = this.app.vault.getAbstractFileByPath(entry.path);
+  /** Undo a specific entry by index (0-based from oldest). Returns path or null. */
+  async undoAt(index: number): Promise<string | null> {
+    if (index < 0 || index >= this.undoStack.length) return null;
+
+    const entry = this.undoStack[index];
+    this.undoStack.splice(index, 1);
+
+    // If previousContent is null the file was newly created → delete it
+    if (entry.previousContent === null) {
+      const file = this.app.vault.getAbstractFileByPath(entry.path);
+      if (file) {
+        await this.app.vault.trash(file, true);
+        this.indexer.removeFile(entry.path);
+      }
+      return entry.path;
+    }
+
+    // Restore previous content — recreate file if it was deleted
+    let file = this.app.vault.getAbstractFileByPath(entry.path);
     if (file instanceof TFile) {
       await this.app.vault.modify(file, entry.previousContent);
       await this.indexer.updateFile(file);
-      return entry.path;
+    } else {
+      // File was deleted/moved — recreate it at original path
+      try {
+        await this.ensureParentFolder(entry.path);
+        await this.app.vault.create(entry.path, entry.previousContent);
+        const newFile = this.app.vault.getAbstractFileByPath(entry.path);
+        if (newFile instanceof TFile) await this.indexer.updateFile(newFile);
+      } catch {
+        return null;
+      }
     }
-    return null;
+
+    return entry.path;
   }
 
   // ── Tools ─────────────────────────────────────────────────────────────────
@@ -365,7 +404,7 @@ export class ToolExecutor {
   }
 
   private async toolReadNote(args: Record<string, unknown>): Promise<string> {
-    const path = this.validatePath(args.path);
+    const path = validateVaultPath(args.path);
     if (!path) return 'Error: Invalid or missing path';
 
     const content = await this.indexer.readNote(path);
@@ -392,7 +431,7 @@ export class ToolExecutor {
       return 'Error: Edit permission is set to read-only. Change it in plugin settings.';
     }
 
-    const path = this.validatePath(args.path);
+    const path = validateVaultPath(args.path);
     if (!path) return 'Error: Invalid or missing path';
     const content = String(args.content ?? '');
     if (!content.trim()) return 'Error: Content to append is empty';
@@ -415,7 +454,7 @@ export class ToolExecutor {
       return 'Error: Edit permission is set to read-only. Change it in plugin settings.';
     }
 
-    const path = this.validatePath(args.path);
+    const path = validateVaultPath(args.path);
     if (!path) return 'Error: Invalid or missing path';
     const mode = String(args.mode ?? '');
 
@@ -423,7 +462,6 @@ export class ToolExecutor {
     if (!(file instanceof TFile)) return `Error: Note not found: ${path}`;
 
     const existing = await this.app.vault.read(file);
-    this.pushUndo(path, existing, `edit ${path} (${mode})`);
 
     if (mode === 'replace_block') {
       const oldText = String(args.old_text ?? '');
@@ -432,7 +470,40 @@ export class ToolExecutor {
       if (!existing.includes(oldText)) {
         return `Error: Could not find the text to replace. Make sure it matches exactly (including whitespace):\n\`\`\`\n${oldText}\n\`\`\``;
       }
-      const updated = existing.replace(oldText, newText);
+
+      // Occurrence: 1-based index, -1 = replace all
+      const occurrence = typeof args.occurrence === 'number' ? args.occurrence : 1;
+      let updated: string;
+
+      if (occurrence === -1) {
+        // Replace all occurrences
+        updated = existing.split(oldText).join(newText);
+      } else {
+        // Replace the Nth occurrence (1-based)
+        let count = 0;
+        let searchFrom = 0;
+        let found = false;
+        updated = existing;
+
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          const idx = existing.indexOf(oldText, searchFrom);
+          if (idx === -1) break;
+          count++;
+          if (count === occurrence) {
+            updated = existing.slice(0, idx) + newText + existing.slice(idx + oldText.length);
+            found = true;
+            break;
+          }
+          searchFrom = idx + oldText.length;
+        }
+
+        if (!found) {
+          return `Error: Could not find occurrence #${occurrence} of the specified text (${count} total occurrences found).`;
+        }
+      }
+
+      this.pushUndo(path, existing, `edit ${path} (replace_block)`);
       await this.app.vault.modify(file, updated);
       await this.indexer.updateFile(file);
       return `✅ Replaced block in "${path}" (${Math.abs(newText.length - oldText.length)} chars delta)`;
@@ -442,7 +513,20 @@ export class ToolExecutor {
       if (this.settings.editPermission !== 'full_edit') {
         return 'Error: Full overwrite requires "full_edit" permission in plugin settings.';
       }
+
       const newContent = String(args.new_content ?? '');
+
+      // ── Real user confirmation for full overwrite ──────────────────────────
+      const confirmed = await showConfirmDialog({
+        title: 'Overwrite Note',
+        message: `The AI wants to completely overwrite "${path}". This will replace all existing content. Proceed?`,
+        confirmLabel: 'Overwrite',
+        cancelLabel: 'Cancel',
+        danger: true,
+      });
+      if (!confirmed) return 'Cancelled: User declined the overwrite operation.';
+
+      this.pushUndo(path, existing, `edit ${path} (full_overwrite)`);
       await this.app.vault.modify(file, newContent);
       await this.indexer.updateFile(file);
       return `✅ Overwrote "${path}" with ${newContent.length} chars`;
@@ -459,7 +543,7 @@ export class ToolExecutor {
       return 'Error: Creating notes requires "full_edit" permission in plugin settings.';
     }
 
-    const path = this.validatePath(args.path);
+    const path = validateVaultPath(args.path);
     if (!path) return 'Error: Invalid or missing path';
     const content = String(args.content ?? '');
     const overwrite = Boolean(args.overwrite ?? false);
@@ -470,23 +554,29 @@ export class ToolExecutor {
     }
 
     if (existing instanceof TFile && overwrite) {
+      // ── Confirm overwrite ─────────────────────────────────────────────────
+      const confirmed = await showConfirmDialog({
+        title: 'Overwrite Note',
+        message: `The AI wants to overwrite the existing note "${path}". Proceed?`,
+        confirmLabel: 'Overwrite',
+        cancelLabel: 'Cancel',
+        danger: true,
+      });
+      if (!confirmed) return 'Cancelled: User declined the overwrite operation.';
+
       const old = await this.app.vault.read(existing);
       this.pushUndo(path, old, `create/overwrite ${path}`);
       await this.app.vault.modify(existing, content);
     } else {
       // Ensure parent folders exist
-      const folder = path.contains('/') ? path.substring(0, path.lastIndexOf('/')) : '';
-      if (folder) {
-        const folderExists = this.app.vault.getAbstractFileByPath(folder);
-        if (!folderExists) {
-          await this.app.vault.createFolder(folder);
-        }
-      }
+      await this.ensureParentFolder(path);
       await this.app.vault.create(path, content);
+      // Mark undo as "newly created" so undo will delete it
+      this.pushUndo(path, null, `create ${path}`);
     }
 
-    const file = this.app.vault.getAbstractFileByPath(path) as TFile;
-    if (file) await this.indexer.updateFile(file);
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (file instanceof TFile) await this.indexer.updateFile(file);
 
     return `✅ Created "${path}" (${content.length} chars)`;
   }
@@ -499,7 +589,7 @@ export class ToolExecutor {
     const missing: string[] = [];
 
     for (const p of rawPaths) {
-      const validated = this.validatePath(p);
+      const validated = validateVaultPath(p);
       if (!validated) { missing.push(p); continue; }
       const file = this.app.vault.getAbstractFileByPath(validated);
       if (!(file instanceof TFile)) { missing.push(p); continue; }
@@ -521,27 +611,35 @@ export class ToolExecutor {
   }
 
   private async toolMoveNote(args: Record<string, unknown>): Promise<string> {
-    if (this.settings.editPermission === 'read_only') {
-      return 'Error: Edit permission is set to read-only. Change it in plugin settings.';
+    // Move requires full_edit — it's a structural/destructive change
+    if (this.settings.editPermission !== 'full_edit') {
+      return 'Error: Moving notes requires "full_edit" permission in plugin settings.';
     }
-    const source = this.validatePath(args.source);
-    const destination = this.validatePath(args.destination);
+    const source = validateVaultPath(args.source);
+    const destination = validateVaultPath(args.destination);
     if (!source) return 'Error: Invalid or missing source path';
     if (!destination) return 'Error: Invalid or missing destination path';
 
     const file = this.app.vault.getAbstractFileByPath(source);
     if (!file) return `Error: File not found: ${source}`;
 
-    // Ensure destination parent folder exists
-    const destFolder = destination.includes('/')
-      ? destination.substring(0, destination.lastIndexOf('/'))
-      : '';
-    if (destFolder) {
-      const folderExists = this.app.vault.getAbstractFileByPath(destFolder);
-      if (!folderExists) {
-        await this.app.vault.createFolder(destFolder);
-      }
+    // ── Confirm move ─────────────────────────────────────────────────────────
+    const confirmed = await showConfirmDialog({
+      title: 'Move Note',
+      message: `The AI wants to move "${source}" → "${destination}". Proceed?`,
+      confirmLabel: 'Move',
+      cancelLabel: 'Cancel',
+    });
+    if (!confirmed) return 'Cancelled: User declined the move operation.';
+
+    // Save undo entry: content + old path (we'll restore to old path on undo)
+    if (file instanceof TFile) {
+      const content = await this.app.vault.read(file);
+      this.pushUndo(source, content, `move ${source} → ${destination}`);
     }
+
+    // Ensure destination parent folder exists
+    await this.ensureParentFolder(destination);
 
     await this.app.fileManager.renameFile(file, destination);
 
@@ -554,10 +652,11 @@ export class ToolExecutor {
   }
 
   private async toolRenameNote(args: Record<string, unknown>): Promise<string> {
-    if (this.settings.editPermission === 'read_only') {
-      return 'Error: Edit permission is set to read-only. Change it in plugin settings.';
+    // Rename requires full_edit — structural change
+    if (this.settings.editPermission !== 'full_edit') {
+      return 'Error: Renaming notes requires "full_edit" permission in plugin settings.';
     }
-    const path = this.validatePath(args.path);
+    const path = validateVaultPath(args.path);
     const newName = String(args.new_name ?? '').trim();
     if (!path) return 'Error: Invalid or missing path';
     if (!newName) return 'Error: Invalid or missing new_name';
@@ -570,6 +669,12 @@ export class ToolExecutor {
       ? path.substring(0, path.lastIndexOf('/') + 1)
       : '';
     const newPath = parentFolder + newName;
+
+    // Save undo snapshot
+    if (file instanceof TFile) {
+      const content = await this.app.vault.read(file);
+      this.pushUndo(path, content, `rename ${path} → ${newPath}`);
+    }
 
     await this.app.fileManager.renameFile(file, newPath);
 
@@ -584,8 +689,8 @@ export class ToolExecutor {
     if (this.settings.editPermission === 'read_only') {
       return 'Error: Edit permission is set to read-only. Change it in plugin settings.';
     }
-    const source = this.validatePath(args.source);
-    const destination = this.validatePath(args.destination);
+    const source = validateVaultPath(args.source);
+    const destination = validateVaultPath(args.destination);
     if (!source) return 'Error: Invalid or missing source path';
     if (!destination) return 'Error: Invalid or missing destination path';
 
@@ -595,20 +700,15 @@ export class ToolExecutor {
     const content = await this.app.vault.read(file);
 
     // Ensure destination parent folder exists
-    const destFolder = destination.includes('/')
-      ? destination.substring(0, destination.lastIndexOf('/'))
-      : '';
-    if (destFolder) {
-      const folderExists = this.app.vault.getAbstractFileByPath(destFolder);
-      if (!folderExists) {
-        await this.app.vault.createFolder(destFolder);
-      }
-    }
+    await this.ensureParentFolder(destination);
 
     const existingDest = this.app.vault.getAbstractFileByPath(destination);
     if (existingDest) return `Error: Destination already exists: ${destination}. Choose a different path.`;
 
     await this.app.vault.create(destination, content);
+    // Undo = delete the copy
+    this.pushUndo(destination, null, `copy ${source} → ${destination}`);
+
     const newFile = this.app.vault.getAbstractFileByPath(destination);
     if (newFile instanceof TFile) await this.indexer.updateFile(newFile);
 
@@ -619,14 +719,24 @@ export class ToolExecutor {
     if (this.settings.editPermission !== 'full_edit') {
       return 'Error: Deleting notes requires "full_edit" permission in plugin settings.';
     }
-    const path = this.validatePath(args.path);
+    const path = validateVaultPath(args.path);
     if (!path) return 'Error: Invalid or missing path';
     if (!args.confirm) return 'Error: confirm must be set to true to delete a note.';
 
     const file = this.app.vault.getAbstractFileByPath(path);
     if (!file) return `Error: File not found: ${path}`;
 
-    // Save undo snapshot if it's a TFile
+    // ── Real user confirmation before deletion ────────────────────────────────
+    const confirmed = await showConfirmDialog({
+      title: 'Delete Note',
+      message: `The AI wants to permanently delete "${path}". This will move the file to the system trash.`,
+      confirmLabel: 'Delete',
+      cancelLabel: 'Cancel',
+      danger: true,
+    });
+    if (!confirmed) return 'Cancelled: User declined the delete operation.';
+
+    // Save content snapshot for undo
     if (file instanceof TFile) {
       const content = await this.app.vault.read(file);
       this.pushUndo(path, content, `delete ${path}`);
@@ -642,7 +752,7 @@ export class ToolExecutor {
     if (this.settings.editPermission === 'read_only') {
       return 'Error: Edit permission is set to read-only. Change it in plugin settings.';
     }
-    const path = this.validatePath(args.path);
+    const path = validateVaultPath(args.path);
     if (!path) return 'Error: Invalid or missing path';
 
     const existing = this.app.vault.getAbstractFileByPath(path);
@@ -655,16 +765,25 @@ export class ToolExecutor {
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
-  private validatePath(raw: unknown): string | null {
-    if (typeof raw !== 'string' || !raw.trim()) return null;
-    // Prevent path traversal
-    const normalized = raw.replace(/\\/g, '/').replace(/\.\.\/|\.\.$/g, '').trim();
-    return normalized || null;
+  /**
+   * Ensure all parent folders of a file path exist, creating them if needed.
+   */
+  private async ensureParentFolder(filePath: string): Promise<void> {
+    if (!filePath.includes('/')) return;
+    const folder = filePath.substring(0, filePath.lastIndexOf('/'));
+    if (!folder) return;
+    const exists = this.app.vault.getAbstractFileByPath(folder);
+    if (!exists) {
+      await this.app.vault.createFolder(folder);
+    }
   }
 
-  private pushUndo(path: string, previousContent: string, description: string): void {
+  /**
+   * Push an undo entry. previousContent = null means the file is newly created.
+   * Keeps the last 20 undo entries.
+   */
+  private pushUndo(path: string, previousContent: string | null, description: string): void {
     this.undoStack.push({ path, previousContent, description, timestamp: Date.now() });
-    // Keep only last 20 undo entries
     if (this.undoStack.length > 20) this.undoStack.shift();
   }
 }

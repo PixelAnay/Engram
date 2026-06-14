@@ -11,7 +11,7 @@ export const DEFAULT_SETTINGS: LlamaPluginSettings = {
   editPermission: 'read_append',
   toolCallingMode: 'native',
   excludePatterns: ['Private/**', '*.secret.md'],
-  maxToolCallDepth: 10,
+  maxToolCallDepth: 200,
   showDiffPreview: true,
   diffPreviewThreshold: 200,
   temperature: 0.7,
@@ -165,7 +165,7 @@ export class LlamaSettingTab extends PluginSettingTab {
       .setDesc('Maximum number of consecutive tool calls per turn (prevents infinite loops)')
       .addSlider(slider =>
         slider
-          .setLimits(1, 20, 1)
+          .setLimits(1, 200, 1)
           .setValue(this.plugin.settings.maxToolCallDepth)
           .setDynamicTooltip()
           .onChange(async value => {
