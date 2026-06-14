@@ -71,7 +71,7 @@ export class AnthropicProvider implements AIProvider {
 
   async healthCheck(model?: string): Promise<ProviderStatus> {
     const start = Date.now();
-    const testModel = model || 'claude-3-5-sonnet-latest';
+    const testModel = model || 'claude-fable-5';
     try {
       const res = await requestUrl({
         url: `${this.baseUrl}/v1/messages`,
@@ -99,6 +99,9 @@ export class AnthropicProvider implements AIProvider {
   async listModels(): Promise<string[]> {
     // Anthropic doesn't expose a /models endpoint — return known models
     return [
+      'claude-fable-5',
+      'claude-mythos-5',
+      'claude-opus-4-8',
       'claude-opus-4-5',
       'claude-sonnet-4-5',
       'claude-haiku-4-5',

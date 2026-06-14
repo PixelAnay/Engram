@@ -19,8 +19,8 @@ Engram transforms Obsidian's sidebar chat from a simple query assistant into a *
 
 ### 2. Multi-Provider Compatibility
 Engram supports all major local and cloud LLM providers out of the box:
-*   **Cloud Providers:** Anthropic Claude (Claude 3.5 Sonnet / Claude 3.5 Haiku), OpenAI (o1 / o3-mini), Google Gemini (Gemini 2.5 Flash / Pro), DeepSeek (V3 / R1), Xiaomi MiMo (MiMo-V2.5-Pro / MiMo-V2-Flash), Z.ai (GLM-5.1 / GLM-5 / GLM-4.5), Mistral, Groq, and xAI.
-*   **Local Models:** Ollama, LM Studio, and llama.cpp (fully capable of running models like Llama 3.3, Qwen 2.5, and Gemma 2 with local tool-calling).
+*   **Cloud Providers:** Anthropic Claude (Claude Fable 5 / Opus 4.8), OpenAI (GPT-5.5 Pro / Base / Instant), Google Gemini (Gemini 3.5 Pro / Flash), DeepSeek (DeepSeek-V4-Pro / R1), Xiaomi MiMo (MiMo-V2.5-Pro / MiMo-V2.5), Z.ai (GLM-5.2 / GLM-5.1), Mistral, Groq, and xAI.
+*   **Local Models:** Ollama, LM Studio, and llama.cpp (fully capable of running models like Llama 4 Scout/Maverick, Qwen3.7-Max, and Gemma 4 with local tool-calling).
 *   **Aggregators:** OpenRouter (one API key for 100+ models).
 *   **CORS-Safe Architecture:** Uses Obsidian's native request APIs to bypass CORS blocks for cloud integrations, and fully supports SSE-based text streaming.
 
