@@ -1,115 +1,117 @@
 <#
 .SYNOPSIS
-  Create a versioned GitHub release for the LLAMA Chat Obsidian plugin.
+  Create a versioned GitHub release for the Engram Obsidian plugin.
   The release is BRAT-compatible (main.js + manifest.json + styles.css attached).
 
 .PARAMETER Version
-  New semantic version string, e.g. "1.1.0". Defaults to auto-incrementing patch.
+  New semantic version string, e.g. "5.1.0". Defaults to auto-incrementing patch.
 
 .PARAMETER Notes
   Optional release notes / changelog text.
 
 .EXAMPLE
-  .\scripts\release.ps1 -Version "1.2.0" -Notes "Bug fixes and performance improvements."
+  .\scripts\release.ps1 -Version "5.1.0" -Notes "Bug fixes."
   .\scripts\release.ps1   # auto-increments patch version
 #>
 
 param(
-  [string]$Version  = "",
-  [string]$Notes    = ""
+  [string]$Version = "",
+  [string]$Notes   = ""
 )
 
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $PSScriptRoot
-
 Set-Location $Root
 
-# ── 1. Check prerequisites ───────────────────────────────────────────────────
+# ── gh CLI path ───────────────────────────────────────────────────────────────
 
-if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
-  Write-Error "GitHub CLI (gh) is not installed. Install from https://cli.github.com/ then run: gh auth login"
+$GhExe = "C:\Program Files\GitHub CLI\gh.exe"
+if (-not (Test-Path $GhExe)) {
+  # Fall back to PATH
+  $GhExe = "gh"
 }
 
-if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
-  Write-Error "npm is not installed."
+# ── Repo ──────────────────────────────────────────────────────────────────────
+
+$Remote = git remote get-url (git remote) 2>$null
+if ($Remote -match "github\.com[:/](.+?)(?:\.git)?$") {
+  $Repo = $Matches[1]
+} else {
+  Write-Error "Could not determine GitHub repo from remote URL: $Remote"
+  exit 1
 }
 
-# ── 2. Resolve version ───────────────────────────────────────────────────────
+Write-Host "Repo: $Repo"
 
-$manifest = Get-Content "$Root\manifest.json" | ConvertFrom-Json
-$current  = [version]$manifest.version
+# ── Load manifest ─────────────────────────────────────────────────────────────
 
-if ([string]::IsNullOrWhiteSpace($Version)) {
-  # Auto-increment patch  (1.0.0 -> 1.0.1)
-  $Version = "$($current.Major).$($current.Minor).$($current.Build + 1)"
-  Write-Host "Auto-incrementing patch: $current -> $Version"
+$ManifestPath = Join-Path $Root "manifest.json"
+$Manifest = Get-Content $ManifestPath | ConvertFrom-Json
+
+# ── Determine version ─────────────────────────────────────────────────────────
+
+if ($Version -eq "") {
+  $Parts = $Manifest.version -split "\."
+  $Patch = [int]$Parts[2] + 1
+  $Version = "$($Parts[0]).$($Parts[1]).$Patch"
 }
 
-if ($Version -eq $current.ToString()) {
-  Write-Error "New version ($Version) is the same as current ($current). Bump the version."
+# Strip leading 'v' for semver storage, add for tag
+$SemVer = $Version -replace "^v", ""
+$Tag    = "v$SemVer"
+
+Write-Host "Creating release $Tag..."
+
+# ── Update manifest.json ──────────────────────────────────────────────────────
+
+$Manifest.version = $SemVer
+$Manifest | ConvertTo-Json -Depth 10 | Set-Content $ManifestPath -Encoding UTF8
+Write-Host "Updated manifest.json -> $SemVer"
+
+# ── Update versions.json ──────────────────────────────────────────────────────
+
+$VersionsPath = Join-Path $Root "versions.json"
+if (Test-Path $VersionsPath) {
+  $Versions = Get-Content $VersionsPath | ConvertFrom-Json
+  $Versions | Add-Member -NotePropertyName $SemVer -NotePropertyValue $Manifest.minAppVersion -Force
+  $Versions | ConvertTo-Json -Depth 10 | Set-Content $VersionsPath -Encoding UTF8
+  Write-Host "Updated versions.json -> $SemVer : $($Manifest.minAppVersion)"
 }
 
-Write-Host ""
-Write-Host "Releasing version: $Version"
-Write-Host ""
+# ── Build ─────────────────────────────────────────────────────────────────────
 
-# ── 3. Update manifest.json ──────────────────────────────────────────────────
-
-$manifest.version = $Version
-$manifest | ConvertTo-Json -Depth 5 | Set-Content "$Root\manifest.json" -Encoding UTF8
-Write-Host "Updated manifest.json -> $Version"
-
-# ── 4. Update versions.json ──────────────────────────────────────────────────
-
-$versions = Get-Content "$Root\versions.json" | ConvertFrom-Json
-$versions | Add-Member -NotePropertyName $Version -NotePropertyValue $manifest.minAppVersion -Force
-$versions | ConvertTo-Json -Depth 5 | Set-Content "$Root\versions.json" -Encoding UTF8
-Write-Host "Updated versions.json -> $Version: $($manifest.minAppVersion)"
-
-# ── 5. Production build ──────────────────────────────────────────────────────
-
-Write-Host ""
-Write-Host "Building production bundle..."
+Write-Host "Building..."
 npm run build
-Write-Host "Build complete."
+if ($LASTEXITCODE -ne 0) { Write-Error "Build failed"; exit 1 }
 
-# ── 6. Git commit + tag ──────────────────────────────────────────────────────
+# ── Git commit + tag ──────────────────────────────────────────────────────────
 
-Write-Host ""
-Write-Host "Committing version bump..."
-git add manifest.json versions.json main.js
-git commit -m "chore: bump version to $Version"
-git tag $Version
-git push
-git push --tags
-Write-Host "Pushed commit and tag $Version."
+$RemoteName = git remote
+git add manifest.json versions.json main.js styles.css
+git commit -m "chore: bump version to $SemVer" 2>$null
+git tag $Tag
+git push $RemoteName main
+git push $RemoteName $Tag
+Write-Host "Pushed tag $Tag"
 
-# ── 7. Create GitHub release with BRAT assets ────────────────────────────────
+# ── GitHub Release ────────────────────────────────────────────────────────────
 
-Write-Host ""
-Write-Host "Creating GitHub release..."
+$ReleaseNotes = if ($Notes -ne "") { $Notes } else { "Release $Tag" }
 
-$releaseArgs = @(
-  "release", "create", $Version,
-  "--title", "v$Version",
-  "--notes", ($Notes -ne "" ? $Notes : "Release v$Version"),
-  "$Root\main.js",
-  "$Root\manifest.json",
-  "$Root\styles.css"
+$Args = @(
+  "release", "create", $Tag,
+  "main.js", "manifest.json", "styles.css",
+  "--repo", $Repo,
+  "--title", "$Tag",
+  "--notes", $ReleaseNotes
 )
 
-gh @releaseArgs
+& $GhExe @Args
 
-Write-Host ""
-Write-Host "Done! BRAT users can now install or update using:"
-Write-Host ""
-
-# Get repo info for display
-$remote = git remote get-url origin
-if ($remote -match "github\.com[:/](.+?)(?:\.git)?$") {
-  Write-Host "  Repository: $($Matches[1])"
-  Write-Host "  BRAT URL:   https://github.com/$($Matches[1])"
+if ($LASTEXITCODE -eq 0) {
+  Write-Host ""
+  Write-Host "Release $Tag published successfully!" -ForegroundColor Green
+  Write-Host "https://github.com/$Repo/releases/tag/$Tag"
+} else {
+  Write-Error "gh release create failed"
 }
-
-Write-Host ""
-Write-Host "In Obsidian -> BRAT -> Add Beta Plugin -> paste the URL above."
