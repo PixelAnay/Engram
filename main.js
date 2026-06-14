@@ -91670,7 +91670,7 @@ var ChatView = class extends import_obsidian3.ItemView {
     settingsBtn.addEventListener("click", () => {
       var _a2, _b;
       (_a2 = this.app.setting) == null ? void 0 : _a2.open();
-      (_b = this.app.setting) == null ? void 0 : _b.openTabById("engram");
+      (_b = this.app.setting) == null ? void 0 : _b.openTabById("engram-chat");
     });
     this.contextStatusEl = header.createDiv("engram-context-status");
     this.contextStatusEl.style.display = "none";
