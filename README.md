@@ -2,6 +2,10 @@
 
 > **The AI that remembers you.** A persistent personal intelligence for Obsidian with evolving memory, multi-provider support, interactive slash commands, and secure, scoped vault access.
 
+<p align="center">
+  <img src="assets/screenshot.png" alt="Engram Chat Interface" width="400" />
+</p>
+
 ---
 
 ## 🧠 What is Engram?
