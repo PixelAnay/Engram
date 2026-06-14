@@ -128,7 +128,6 @@
   align-items: center;
   gap: 4px;
   margin-top: 6px;
-  padding-right: 110px;
 }
 
 .engram-chat-select {
@@ -206,6 +205,14 @@
 .engram-icon-btn svg {
   width: 14px;
   height: 14px;
+}
+
+.engram-header-badge-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  margin-bottom: 2px;
 }
 
 /* ── Provider Badge ───────────────────────────────────────────────────────── */
