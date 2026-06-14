@@ -94230,7 +94230,7 @@ var AnthropicProvider = class {
   async healthCheck(model) {
     var _a2, _b;
     const start = Date.now();
-    const testModel = model || "claude-3-5-sonnet-latest";
+    const testModel = model || "claude-fable-5";
     try {
       const res = await (0, import_obsidian7.requestUrl)({
         url: `${this.baseUrl}/v1/messages`,
@@ -94254,6 +94254,9 @@ var AnthropicProvider = class {
   }
   async listModels() {
     return [
+      "claude-fable-5",
+      "claude-mythos-5",
+      "claude-opus-4-8",
       "claude-opus-4-5",
       "claude-sonnet-4-5",
       "claude-haiku-4-5",
