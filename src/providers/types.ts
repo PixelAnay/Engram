@@ -53,7 +53,7 @@ export interface AIProvider {
   ): Promise<{ toolCalls: ToolCall[]; text: string; finishReason: string | null }>;
 
   /** Quick connectivity + model name check. */
-  healthCheck(): Promise<ProviderStatus>;
+  healthCheck(model?: string): Promise<ProviderStatus>;
 
   /** List available models (best-effort, may return [] if not supported). */
   listModels(): Promise<string[]>;

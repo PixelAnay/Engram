@@ -31196,10 +31196,31 @@ var OpenAIProvider = class {
     this.apiKey = apiKey;
   }
   // ── Health check ────────────────────────────────────────────────────────────
-  async healthCheck() {
-    var _a2, _b, _c;
+  async healthCheck(model) {
+    var _a2, _b, _c, _d, _e;
     const start = Date.now();
     try {
+      if (model) {
+        const res2 = await (0, import_obsidian6.requestUrl)({
+          url: `${this.baseUrl}/chat/completions`,
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...this.headers()
+          },
+          body: JSON.stringify({
+            model,
+            messages: [{ role: "user", content: "ping" }],
+            max_tokens: 1
+          }),
+          throw: false
+        });
+        if (res2.status === 200) {
+          return { ok: true, model, latencyMs: Date.now() - start };
+        }
+        const errMsg = ((_b = (_a2 = res2.json) == null ? void 0 : _a2.error) == null ? void 0 : _b.message) || `HTTP ${res2.status}`;
+        throw new Error(errMsg);
+      }
       const res = await (0, import_obsidian6.requestUrl)({
         url: `${this.baseUrl}/models`,
         method: "GET",
@@ -31210,8 +31231,8 @@ var OpenAIProvider = class {
         throw new Error(`HTTP ${res.status}`);
       }
       const data = res.json;
-      const model = (_c = (_b = (_a2 = data == null ? void 0 : data.data) == null ? void 0 : _a2[0]) == null ? void 0 : _b.id) != null ? _c : "unknown";
-      return { ok: true, model, latencyMs: Date.now() - start };
+      const returnedModel = (_e = (_d = (_c = data == null ? void 0 : data.data) == null ? void 0 : _c[0]) == null ? void 0 : _d.id) != null ? _e : "unknown";
+      return { ok: true, model: returnedModel, latencyMs: Date.now() - start };
     } catch (e) {
       throw new Error(`Connection failed: ${e.message}`);
     }
@@ -31370,26 +31391,27 @@ var AnthropicProvider = class {
     this.apiKey = apiKey;
   }
   // ── Health check ────────────────────────────────────────────────────────────
-  async healthCheck() {
-    var _a2, _b, _c;
+  async healthCheck(model) {
+    var _a2, _b;
     const start = Date.now();
+    const testModel = model || "claude-3-5-sonnet-latest";
     try {
       const res = await (0, import_obsidian7.requestUrl)({
         url: `${this.baseUrl}/v1/messages`,
         method: "POST",
         headers: this.headers(),
         body: JSON.stringify({
-          model: "claude-haiku-4-5",
+          model: testModel,
           max_tokens: 1,
           messages: [{ role: "user", content: "hi" }]
         }),
         throw: false
       });
-      if (res.status === 200 || res.status === 400) {
-        const model = (_b = (_a2 = res.json) == null ? void 0 : _a2.model) != null ? _b : "claude";
-        return { ok: true, model, latencyMs: Date.now() - start };
+      if (res.status === 200) {
+        return { ok: true, model: testModel, latencyMs: Date.now() - start };
       }
-      throw new Error(`HTTP ${res.status}: ${(_c = res.text) == null ? void 0 : _c.slice(0, 200)}`);
+      const errMsg = ((_b = (_a2 = res.json) == null ? void 0 : _a2.error) == null ? void 0 : _b.message) || `HTTP ${res.status}`;
+      throw new Error(errMsg);
     } catch (e) {
       throw new Error(`Anthropic connection failed: ${e.message}`);
     }
@@ -32046,7 +32068,7 @@ var ProviderFactory = class {
     this.abortController = null;
   }
   async healthCheck() {
-    const status = await this.provider.healthCheck();
+    const status = await this.provider.healthCheck(this.settings.model || void 0);
     return status.model;
   }
   /**

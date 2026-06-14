@@ -54,9 +54,34 @@ export class OpenAIProvider implements AIProvider {
 
   // ── Health check ────────────────────────────────────────────────────────────
 
-  async healthCheck(): Promise<ProviderStatus> {
+  async healthCheck(model?: string): Promise<ProviderStatus> {
     const start = Date.now();
     try {
+      if (model) {
+        // If a specific model is requested, test it via a minimal chat completion
+        const res = await requestUrl({
+          url: `${this.baseUrl}/chat/completions`,
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...this.headers(),
+          },
+          body: JSON.stringify({
+            model: model,
+            messages: [{ role: 'user', content: 'ping' }],
+            max_tokens: 1,
+          }),
+          throw: false,
+        });
+
+        if (res.status === 200) {
+          return { ok: true, model, latencyMs: Date.now() - start };
+        }
+
+        const errMsg = (res.json as any)?.error?.message || `HTTP ${res.status}`;
+        throw new Error(errMsg);
+      }
+
       const res = await requestUrl({
         url: `${this.baseUrl}/models`,
         method: 'GET',
@@ -69,8 +94,8 @@ export class OpenAIProvider implements AIProvider {
       }
 
       const data = res.json as { data?: Array<{ id: string }> };
-      const model = data?.data?.[0]?.id ?? 'unknown';
-      return { ok: true, model, latencyMs: Date.now() - start };
+      const returnedModel = data?.data?.[0]?.id ?? 'unknown';
+      return { ok: true, model: returnedModel, latencyMs: Date.now() - start };
     } catch (e) {
       throw new Error(`Connection failed: ${(e as Error).message}`);
     }
