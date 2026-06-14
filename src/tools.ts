@@ -1,6 +1,6 @@
 import { App, TFile, TFolder, Notice } from 'obsidian';
 import type { VaultIndexer } from './indexer';
-import type { LlamaPluginSettings } from './types';
+import type { EngramSettings } from './types';
 import { validateVaultPath } from './utils/pathUtils';
 import { showConfirmDialog } from './ui/ConfirmDialog';
 
@@ -291,10 +291,10 @@ export class ToolExecutor {
   constructor(
     private app: App,
     private indexer: VaultIndexer,
-    private settings: LlamaPluginSettings
+    private settings: EngramSettings
   ) {}
 
-  updateSettings(settings: LlamaPluginSettings): void {
+  updateSettings(settings: EngramSettings): void {
     this.settings = settings;
   }
 

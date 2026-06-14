@@ -1,5 +1,5 @@
 {
-  "name": "obsidian-llama-chat",
+  "name": "obsidian-engram",
   "version": "1.0.0",
   "description": "Sidebar chat powered by your local LLM with full vault context",
   "main": "main.js",

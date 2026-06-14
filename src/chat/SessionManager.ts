@@ -3,14 +3,14 @@
  * Extracted from ChatView — owns all chat session CRUD and persistence logic.
  */
 
-import type LlamaPlugin from '../main';
+import type EngramPlugin from '../main';
 import type { ChatSession, ChatMessage } from '../types';
 
 export class SessionManager {
   private currentChatId = '';
   private chatPersistTimer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(private plugin: LlamaPlugin) {}
+  constructor(private plugin: EngramPlugin) {}
 
   get currentId(): string {
     return this.currentChatId;

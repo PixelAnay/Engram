@@ -2,11 +2,7 @@
  * ui/ConfirmDialog.ts
  * ─────────────────────────────────────────────────────────────────────────────
  * Lightweight DOM-based confirmation modal for destructive vault operations.
- *
- * Deliberately avoids importing Obsidian's `Modal` class so this module has
- * zero Obsidian API surface — it works with plain DOM APIs and reuses the
- * existing `llama-modal-*` CSS classes already defined in styles.css.
- *
+  * existing `engram-modal-*` CSS classes already defined in styles.css.
  * Usage:
  *   const ok = await showConfirmDialog({
  *     title: 'Delete Note',
@@ -38,7 +34,7 @@ export interface ConfirmOptions {
    */
   cancelLabel?: string;
   /**
-   * When `true` the confirm button receives the `llama-modal-confirm-danger`
+   * When `true` the confirm button receives the `engram-modal-confirm-danger`
    * CSS class (styled red) to visually signal a destructive action.
    * @default false
    */
@@ -83,6 +79,7 @@ export function showConfirmDialog(options: ConfirmOptions): Promise<boolean> {
 
     // ── Keyboard handler ──────────────────────────────────────────────────
     // Escape always cancels; Enter confirms (matching native browser dialogs).
+    // Let's ensure Enter is only handled if target is not cancel button, but standard behavior is fine.
     function onKeyDown(evt: KeyboardEvent): void {
       if (evt.key === 'Escape') {
         evt.preventDefault();
@@ -98,7 +95,7 @@ export function showConfirmDialog(options: ConfirmOptions): Promise<boolean> {
 
     // Full-screen translucent backdrop — clicking it cancels the dialog.
     const overlay = document.createElement('div');
-    overlay.className = 'llama-modal-overlay';
+    overlay.className = 'engram-modal-overlay';
     overlay.addEventListener('click', (evt) => {
       // Only close when the backdrop itself is clicked, not the modal card.
       if (evt.target === overlay) close(false);
@@ -106,38 +103,38 @@ export function showConfirmDialog(options: ConfirmOptions): Promise<boolean> {
 
     // ── Modal card ────────────────────────────────────────────────────────
     const modal = document.createElement('div');
-    modal.className = 'llama-modal';
+    modal.className = 'engram-modal';
     modal.setAttribute('role', 'dialog');
     modal.setAttribute('aria-modal', 'true');
-    modal.setAttribute('aria-labelledby', 'llama-confirm-title');
-    modal.setAttribute('aria-describedby', 'llama-confirm-msg');
+    modal.setAttribute('aria-labelledby', 'engram-confirm-title');
+    modal.setAttribute('aria-describedby', 'engram-confirm-msg');
     // Stop clicks inside the card from bubbling up to the overlay listener.
     modal.addEventListener('click', (evt) => evt.stopPropagation());
     overlay.appendChild(modal);
 
     // Title
     const titleEl = document.createElement('div');
-    titleEl.id        = 'llama-confirm-title';
-    titleEl.className = 'llama-modal-title';
+    titleEl.id        = 'engram-confirm-title';
+    titleEl.className = 'engram-modal-title';
     titleEl.textContent = title;
     modal.appendChild(titleEl);
 
     // Message / subtitle
     const msgEl = document.createElement('div');
-    msgEl.id        = 'llama-confirm-msg';
-    msgEl.className = 'llama-modal-subtitle';
+    msgEl.id        = 'engram-confirm-msg';
+    msgEl.className = 'engram-modal-subtitle';
     msgEl.textContent = message;
     modal.appendChild(msgEl);
 
     // ── Buttons ───────────────────────────────────────────────────────────
     const btns = document.createElement('div');
-    btns.className = 'llama-modal-btns';
+    btns.className = 'engram-modal-btns';
     modal.appendChild(btns);
 
     // Cancel button
     const cancelBtn = document.createElement('button');
     cancelBtn.type        = 'button';
-    cancelBtn.className   = 'llama-modal-cancel';
+    cancelBtn.className   = 'engram-modal-cancel';
     cancelBtn.textContent = cancelLabel;
     cancelBtn.addEventListener('click', () => close(false));
     btns.appendChild(cancelBtn);
@@ -146,8 +143,8 @@ export function showConfirmDialog(options: ConfirmOptions): Promise<boolean> {
     const confirmBtn = document.createElement('button');
     confirmBtn.type      = 'button';
     confirmBtn.className = danger
-      ? 'llama-modal-confirm llama-modal-confirm-danger'
-      : 'llama-modal-confirm';
+      ? 'engram-modal-confirm engram-modal-confirm-danger'
+      : 'engram-modal-confirm';
     confirmBtn.textContent = confirmLabel;
     confirmBtn.addEventListener('click', () => close(true));
     btns.appendChild(confirmBtn);
@@ -156,9 +153,7 @@ export function showConfirmDialog(options: ConfirmOptions): Promise<boolean> {
     document.body.appendChild(overlay);
 
     // Focus the confirm button so Enter/Escape work immediately without an
-    // extra Tab press.  For danger operations callers may prefer to focus
-    // cancelBtn instead — that decision is left to the caller via CSS or a
-    // future `defaultFocus` option.
+    // extra Tab press.
     confirmBtn.focus();
   });
 }
