@@ -1,7 +1,7 @@
 /**
  * ui/TokenBudgetBar.ts
  * ─────────────────────────────────────────────────────────────────────────────
- * Visual token-budget progress bar for the LLAMA Chat footer.
+ * Visual token-budget progress bar for the Engram Chat footer.
  *
  * Renders a thin horizontal bar that fills left-to-right as tokens are
  * consumed.  Colour changes at 70 % (orange) and 90 % (red) to give the user
