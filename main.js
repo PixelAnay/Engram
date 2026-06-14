@@ -28816,7 +28816,7 @@ var ChatView = class extends import_obsidian3.ItemView {
   buildUI() {
     const root = this.containerEl.children[1];
     root.empty();
-    root.addClass("engram-root");
+    root.addClass("engram-chat-root");
     root.style.padding = "0";
     const header = root.createDiv("engram-header");
     const titleRow = header.createDiv("engram-header-title-row");
@@ -28824,7 +28824,7 @@ var ChatView = class extends import_obsidian3.ItemView {
     titleRow.createSpan("engram-header-title").textContent = "Engram";
     const badgeRow = header.createDiv("engram-header-badge-row");
     this.providerBadge = badgeRow.createSpan("engram-provider-badge");
-    this.personaBadge = badgeRow.createEl("button", { cls: "engram-persona-badge" });
+    this.personaBadge = badgeRow.createEl("button", { cls: "engram-persona-switcher" });
     this.personaBadge.title = "Switch persona";
     this.personaBadge.addEventListener("click", () => this.showPersonaSwitcher());
     const statusRow = header.createDiv("engram-header-status-row");
@@ -28832,7 +28832,7 @@ var ChatView = class extends import_obsidian3.ItemView {
     this.statusLabel = statusRow.createSpan("engram-status-label");
     this.statusLabel.textContent = "Connecting\u2026";
     this.noteCountEl = statusRow.createSpan("engram-note-count");
-    const sessionControls = header.createDiv("engram-session-controls");
+    const sessionControls = header.createDiv("engram-chat-session-controls");
     this.chatSelectEl = sessionControls.createEl("select", { cls: "engram-chat-select" });
     this.chatSelectEl.addEventListener("change", () => {
       if (this.isStreaming) {
@@ -28985,7 +28985,9 @@ var ChatView = class extends import_obsidian3.ItemView {
     const persona = this.plugin.settings.personas.find(
       (p) => p.id === this.plugin.settings.activePersonaId
     );
-    this.personaBadge.textContent = `\u{1F3AD} ${(_a2 = persona == null ? void 0 : persona.name) != null ? _a2 : "Default"}`;
+    this.personaBadge.empty();
+    this.personaBadge.createSpan().textContent = "\u{1F3AD} ";
+    this.personaBadge.createSpan("engram-persona-name").textContent = (_a2 = persona == null ? void 0 : persona.name) != null ? _a2 : "Default";
   }
   // ── Sessions ───────────────────────────────────────────────────────────────
   switchToSession(id) {

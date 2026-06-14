@@ -121,7 +121,7 @@ export class ChatView extends ItemView {
   private buildUI(): void {
     const root = this.containerEl.children[1] as HTMLElement;
     root.empty();
-    root.addClass('engram-root');
+    root.addClass('engram-chat-root');
     root.style.padding = '0';
 
     // ── Header ────────────────────────────────────────────────────────────────
@@ -134,7 +134,7 @@ export class ChatView extends ItemView {
     // Provider + persona badges
     const badgeRow = header.createDiv('engram-header-badge-row');
     this.providerBadge = badgeRow.createSpan('engram-provider-badge');
-    this.personaBadge = badgeRow.createEl('button', { cls: 'engram-persona-badge' });
+    this.personaBadge = badgeRow.createEl('button', { cls: 'engram-persona-switcher' });
     this.personaBadge.title = 'Switch persona';
     this.personaBadge.addEventListener('click', () => this.showPersonaSwitcher());
 
@@ -146,7 +146,7 @@ export class ChatView extends ItemView {
     this.noteCountEl = statusRow.createSpan('engram-note-count');
 
     // Session controls
-    const sessionControls = header.createDiv('engram-session-controls');
+    const sessionControls = header.createDiv('engram-chat-session-controls');
     this.chatSelectEl = sessionControls.createEl('select', { cls: 'engram-chat-select' });
     this.chatSelectEl.addEventListener('change', () => {
       if (this.isStreaming) { this.chatSelectEl.value = this.sessionManager.currentId; return; }
@@ -321,7 +321,9 @@ export class ChatView extends ItemView {
     const persona = this.plugin.settings.personas.find(
       p => p.id === this.plugin.settings.activePersonaId
     );
-    this.personaBadge.textContent = `🎭 ${persona?.name ?? 'Default'}`;
+    this.personaBadge.empty();
+    this.personaBadge.createSpan().textContent = '🎭 ';
+    this.personaBadge.createSpan('engram-persona-name').textContent = persona?.name ?? 'Default';
   }
 
   // ── Sessions ───────────────────────────────────────────────────────────────
