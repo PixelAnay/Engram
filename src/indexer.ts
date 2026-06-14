@@ -1,6 +1,13 @@
 import { App, TFile, getAllTags, CachedMetadata } from 'obsidian';
-import type { NoteMetadata, VaultIndex, SearchResult, LlamaPluginSettings } from './types';
+import type { NoteMetadata, SearchResult, LlamaPluginSettings } from './types';
 import { normalisePath } from './utils/pathUtils';
+
+/** Local-only index shape — not exported from types.ts */
+interface VaultIndex {
+  version: number;
+  buildTime: number;
+  notes: Record<string, NoteMetadata>;
+}
 
 const INDEX_VERSION = 2;
 const LRU_MAX = 100; // max full-content entries to keep in memory
@@ -73,6 +80,11 @@ export class VaultIndexer {
     return Object.keys(this.index.notes).length;
   }
 
+  /** Return all indexed note paths */
+  getAllPaths(): string[] {
+    return Object.keys(this.index.notes);
+  }
+
   /**
    * Count of excluded markdown files. Cached — only recomputed when
    * exclusion patterns or the index changes.
@@ -87,21 +99,23 @@ export class VaultIndexer {
   }
 
   /** Build the index on plugin startup */
-  async build(savedData?: VaultIndex | null): Promise<void> {
+  async build(savedData?: unknown | null): Promise<void> {
+    // Cast the unknown saved data so we can safely access its fields
+    const saved = savedData as VaultIndex | null | undefined;
     this.rebuildExcludeRegexes();
 
     const files = this.app.vault.getMarkdownFiles();
-    const needsRebuild = !savedData ||
-      savedData.version !== INDEX_VERSION ||
+    const needsRebuild = !saved ||
+      saved.version !== INDEX_VERSION ||
       // Check if any file has changed since the last index
       files.some(f => {
-        const meta = savedData.notes[f.path];
+        const meta = saved.notes[f.path];
         return !meta || meta.mtime !== f.stat.mtime;
       });
 
-    if (!needsRebuild && savedData) {
+    if (!needsRebuild && saved) {
       // Restore from cache but remove any deleted files
-      this.index = savedData;
+      this.index = saved;
       const currentPaths = new Set(files.map(f => f.path));
       for (const path of Object.keys(this.index.notes)) {
         if (!currentPaths.has(path)) delete this.index.notes[path];
@@ -188,6 +202,14 @@ export class VaultIndexer {
    * @param tags    Optional tag filter (must match any)
    * @param limit   Max results to return
    */
+  /**
+   * Async overload for context.ts compatibility.
+   * Delegates to the synchronous implementation.
+   */
+  async searchAsync(query: string, limit: number): Promise<Array<{path: string; score: number; title: string}>> {
+    return this.search(query, undefined, limit);
+  }
+
   search(query: string, tags?: string[], limit = 20): SearchResult[] {
     const q = query.toLowerCase().trim();
     const results: SearchResult[] = [];

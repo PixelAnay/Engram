@@ -4,7 +4,7 @@ export interface MessageContentPart {
   type: string;
   text?: string;
   image_url?: { url: string };
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 export interface ChatMessage {
@@ -13,7 +13,7 @@ export interface ChatMessage {
   tool_calls?: ToolCall[];
   tool_call_id?: string;
   name?: string;
-  /** Attachment metadata (no blobs stored — blobs are stripped before persistence) */
+  /** Stripped before persistence — blobs only live for the duration of the API call */
   attachments?: { name: string; type: string; dataUrl: string }[];
 }
 
@@ -26,10 +26,34 @@ export interface ToolCall {
   };
 }
 
-export interface ToolResult {
-  tool_call_id: string;
+// ─── Provider Types ──────────────────────────────────────────────────────────
+
+export type ProviderType = 'openai_compat' | 'anthropic';
+export type EditPermission = 'read_only' | 'read_append' | 'full_edit';
+export type ToolCallingMode = 'native' | 'prompt_injection' | 'disabled';
+export type ScopeMode = 'all' | 'allowlist' | 'denylist';
+
+export interface ProviderPreset {
+  id: string;
+  label: string;
+  type: ProviderType;
+  baseUrl: string;
+  isLocal: boolean;
+}
+
+// ─── Persona Types ───────────────────────────────────────────────────────────
+
+export interface Persona {
+  id: string;
   name: string;
-  content: string;
+  systemPrompt: string;
+}
+
+// ─── Memory Types ────────────────────────────────────────────────────────────
+
+export interface MemoryFact {
+  section: string;
+  fact: string;
 }
 
 // ─── Vault Index Types ───────────────────────────────────────────────────────
@@ -44,38 +68,50 @@ export interface NoteMetadata {
   size: number;
 }
 
-export interface VaultIndex {
-  version: number;
-  buildTime: number;
-  notes: Record<string, NoteMetadata>;
-}
-
 // ─── Plugin Settings ─────────────────────────────────────────────────────────
 
-export type EditPermission = 'read_only' | 'read_append' | 'full_edit';
-export type ToolCallingMode = 'native' | 'prompt_injection' | 'disabled';
-export type ChatState = 'idle' | 'streaming' | 'tool_pending' | 'tool_executing' | 'error';
-
-export interface LlamaPluginSettings {
-  endpoint: string;
+export interface EngramSettings {
+  // Active provider
+  activeProviderId: string;
+  providerType: ProviderType;
+  providerBaseUrl: string;
+  providerApiKey: string;
   model: string;
-  systemPromptExtra: string;
-  contextWindowTokens: number;
-  autoInjectNotes: number;
+  temperature: number;
+
+  // Persona
+  activePersonaId: string;
+  personas: Persona[];
+
+  // Memory
+  memoryPath: string;
+  memoryEnabled: boolean;
+  maxMemoryTokens: number;
+  autoExtractMemory: boolean;
+
+  // Vault scope
+  scopeMode: ScopeMode;
+  scopeFolders: string[];
   editPermission: EditPermission;
-  toolCallingMode: ToolCallingMode;
   excludePatterns: string[];
+
+  // Context
+  contextWindowTokens: number;
+  maxRecentMessages: number;
+  autoInjectNotes: number;
+  toolCallingMode: ToolCallingMode;
   maxToolCallDepth: number;
+
+  // Embeddings
+  ollamaEmbedEndpoint: string;
+  embeddingModel: string;
+
+  // Edit safety
   showDiffPreview: boolean;
   diffPreviewThreshold: number;
-  temperature: number;
-  /** Ollama base URL used for embeddings (may differ from LLM endpoint) */
-  ollamaEmbedEndpoint: string;
-  /** Ollama model name to use for embeddings, e.g. "nomic-embed-text". Leave blank to disable. */
-  embeddingModel: string;
 }
 
-// ─── Persisted Chat History Types ───────────────────────────────────────────
+// ─── Persisted Chat Session ───────────────────────────────────────────────────
 
 export interface ChatSession {
   id: string;
@@ -85,7 +121,7 @@ export interface ChatSession {
   messages: ChatMessage[];
 }
 
-// ─── UI Event Types ───────────────────────────────────────────────────────────
+// ─── Stream / UI Event Types ──────────────────────────────────────────────────
 
 export interface StreamChunk {
   type: 'token' | 'tool_start' | 'tool_end' | 'error' | 'done';
@@ -103,3 +139,7 @@ export interface SearchResult {
   snippet?: string;
   score: number;
 }
+
+// ─── Legacy alias (keeps old imports working during transition) ──────────────
+/** @deprecated Use EngramSettings */
+export type LlamaPluginSettings = EngramSettings;
