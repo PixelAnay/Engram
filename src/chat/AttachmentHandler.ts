@@ -30,11 +30,11 @@ export interface AttachmentRef {
  * rendering a handful of pages in an Obsidian plugin context.
  */
 async function getPdfJs(): Promise<any> {
-  // Dynamic import — esbuild will bundle this at build time
-  // Worker must be disabled for main-thread / bundled mode
+  // Dynamic import — esbuild will bundle these at build time
   const pdfjs = await import('pdfjs-dist/build/pdf.mjs' as any);
-  if (pdfjs.GlobalWorkerOptions) {
-    pdfjs.GlobalWorkerOptions.workerSrc = '';
+  const pdfjsWorker = await import('pdfjs-dist/build/pdf.worker.mjs' as any);
+  if (typeof globalThis !== 'undefined') {
+    (globalThis as any).pdfjsWorker = pdfjsWorker;
   }
   return pdfjs;
 }

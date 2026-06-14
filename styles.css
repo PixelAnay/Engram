@@ -777,7 +777,17 @@
 }
 
 /* ── Badges (footer) ──────────────────────────────────────────────────────── */
-.engram-perm-badge,
+.engram-perm-badge {
+  font-size: 10px;
+  color: var(--text-faint);
+  background: var(--background-modifier-hover);
+  padding: 2px 7px;
+  border-radius: 20px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--engram-transition), color var(--engram-transition);
+}
+
 .engram-model-badge {
   font-size: 10px;
   color: var(--text-faint);
@@ -789,7 +799,11 @@
   transition: background var(--engram-transition), color var(--engram-transition);
 }
 
-.engram-perm-badge:hover,
+.engram-perm-badge:hover {
+  background: color-mix(in srgb, var(--engram-accent) 20%, var(--background-modifier-hover));
+  color: var(--text-normal);
+}
+
 .engram-model-badge:hover {
   background: var(--engram-accent-dim);
   color: var(--text-muted);
@@ -1055,7 +1069,7 @@
   left: 0;
   right: 0;
   margin-bottom: 4px;
-  background: var(--engram-bg);
+  background: var(--background-primary-alt);
   border: 1px solid var(--engram-border);
   border-radius: var(--engram-radius);
   overflow: hidden;
@@ -1082,7 +1096,7 @@
 
 .engram-mention-item:hover,
 .engram-mention-item.active {
-  background: color-mix(in srgb, var(--engram-accent) 10%, var(--engram-bg));
+  background: color-mix(in srgb, var(--engram-accent) 10%, var(--background-primary-alt));
 }
 
 .engram-mention-name {
@@ -1107,7 +1121,7 @@
   left: 0;
   right: 0;
   margin-bottom: 4px;
-  background: var(--engram-bg);
+  background: var(--background-primary-alt);
   border: 1px solid var(--engram-border);
   border-radius: var(--engram-radius);
   overflow: hidden;
@@ -1134,7 +1148,7 @@
 
 .engram-slash-item:hover,
 .engram-slash-item.active {
-  background: color-mix(in srgb, var(--engram-accent) 10%, var(--engram-bg));
+  background: color-mix(in srgb, var(--engram-accent) 10%, var(--background-primary-alt));
 }
 
 .engram-slash-item-name {
