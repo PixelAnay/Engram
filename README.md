@@ -1,173 +1,116 @@
-# LLAMA Chat for Obsidian
+# Engram for Obsidian
 
-Sidebar chat for Obsidian powered by a local LLM server (llama.cpp-compatible), with vault-aware context, search, and controlled note editing tools.
+> **The AI that remembers you.** A persistent personal intelligence for Obsidian with evolving memory, multi-provider support, interactive slash commands, and secure, scoped vault access.
 
-## Features
+---
 
-- Desktop sidebar chat view inside Obsidian
-- Local LLM endpoint support (`/v1/chat/completions` + `/v1/models`)
-- Vault indexing of Markdown notes with automatic background refresh
-- Relevance-based note auto-injection into system context
-- Tool calling for vault operations:
-  - Search notes
-  - Read note content
-  - List folder notes
-  - Append to notes
-  - Edit notes (replace block / full overwrite)
-  - Create notes
-  - Open notes in editor tabs
-- Permission modes for safety:
-  - `read_only`
-  - `read_append`
-  - `full_edit`
-- Undo for last AI edit
-- Exclusion patterns for private files/folders
-- Optional diff preview controls
-- Attachment support in chat input (including PDF pages rendered as images)
-- Past chats history with session switch, new chat, and delete controls
+## 🧠 What is Engram?
 
-## Requirements
+Engram transforms Obsidian's sidebar chat from a simple query assistant into a **persistent thinking partner**. By maintaining a structured, auto-summarizing memory file (`memory.md`), Engram accumulates knowledge about your projects, preferences, habits, and beliefs over time. It reasons over your vault safely, costs pennies to run, and respects your privacy.
 
-- Obsidian desktop (plugin is desktop-only)
-- A locally running OpenAI-compatible LLM endpoint (tested workflow assumes llama.cpp server)
-- Endpoint that supports:
-  - `GET /v1/models`
-  - `POST /v1/chat/completions` (streaming)
+---
 
-Default endpoint in settings: `http://localhost:8080`
+## ✨ Key Features
 
-## Installation
+### 1. Evolving Personal Memory System
+*   **Structured Evolving Memory:** Engram tracks your core identity, ongoing projects, habits, and life events in a dedicated, markdown-based memory file (`memory.md`).
+*   **Auto-Summarization:** When your memory file grows, Engram automatically condenses older entries to minimize LLM token costs without losing context.
+*   **Interactive Control:** Use `/memory` to prompt the AI to extract and summarize key takeaways from your current chat session, review them in a confirmation modal, and save them. Use `/forget` to open and edit your memory file at any time.
 
-### Option 1: Manual install (release-style)
+### 2. Multi-Provider Compatibility
+Engram supports all major local and cloud LLM providers out of the box:
+*   **Cloud Providers:** OpenAI (GPT-4o/o1), Anthropic Claude (via Messages API), Google Gemini, DeepSeek, Mistral, Groq, and xAI.
+*   **Local Models:** Ollama, LM Studio, and llama.cpp (with full local tool-calling capabilities).
+*   **Aggregators:** OpenRouter (one API key for 100+ models).
+*   **CORS-Safe Architecture:** Uses Obsidian's native request APIs to bypass CORS blocks for cloud integrations, and fully supports SSE-based text streaming.
 
-1. Build plugin files:
-   - `npm install`
-   - `npm run build`
-2. Copy these files to your vault plugin folder:
-   - `main.js`
-   - `manifest.json`
-   - `styles.css`
-3. Destination folder should be:
-   - `<YourVault>/.obsidian/plugins/obsidian-llama-chat/`
-4. In Obsidian:
-   - Open **Settings → Community plugins**
-   - Enable **LLAMA Chat**
+### 3. Granular Vault Scoping & Safety
+*   **Knowledge Scopes:** Restrict the AI to specific directories using **Allowlists** or **Denylists**. Files in private folders are fully excluded from indexing, searches, and context injection.
+*   **Interactive Permissions Badge:** Toggle permissions directly in the chat footer with a single click:
+    *   `🔍 Read` — Read-only access (safe browsing).
+    *   `✏️ Append` — AI can only append details to the end of notes.
+    *   `⚠️ Full Edit` — Full modification, creation, and deletion capabilities.
+*   **Destructive Protections:** Shows a real Obsidian confirmation modal before the AI can overwrite notes, create files, or delete items.
 
-### Option 2: Development workflow
+### 4. Premium, Modern User Interface
+*   **Slash Commands & Mentions:** Type `/` to select commands or `@` to autocomplete note names as context links.
+*   **Token Budget Bar:** A color-coded progress bar in the footer showing active token usage against your provider's context window.
+*   **Dynamic Welcome Chips:** Prompts you with suggestions based on your most recently edited notes or top vault tags.
+*   **Undo History Panel:** Review and selectively undo any file creation, append, or overwrite operation performed by the AI.
 
-1. Clone this repo into your Obsidian plugin development location.
+### 5. Local Offline PDF Attachment Parsing
+*   Drag and drop or attach a PDF.
+*   Select a page range (e.g. page 1–3) using an interactive popup.
+*   Engram converts and extracts pages **locally** into images using a built-in PDF.js worker—no external servers, 100% offline.
+
+---
+
+## 🚀 Installation
+
+### Option 1: Via BRAT (Recommended)
+1. Install the **BRAT (Beta Reviewer's Auto-update Tool)** plugin from Obsidian's community store.
+2. In Obsidian Settings, go to **Beta Reviewer's Auto-update Tool**.
+3. Click **Add Beta plugin** and paste this repository URL:
+   `https://github.com/PixelAnay/Engram`
+4. Enable **Engram** under Community Plugins.
+
+### Option 2: Manual Installation
+1. Go to the [Releases](https://github.com/PixelAnay/Engram/releases) tab.
+2. Download `main.js`, `manifest.json`, and `styles.css`.
+3. Create a folder named `obsidian-engram` inside your vault's plugins folder:
+   `<VaultPath>/.obsidian/plugins/obsidian-engram/`
+4. Copy the downloaded files into that directory.
+5. Reload Obsidian and enable the plugin.
+
+---
+
+## 🛠️ Usage & Commands
+
+*   **Ribbon Icon:** Click the Brain icon 🧠 in the left ribbon to open the chat sidebar.
+*   **Slash Commands:**
+    *   `/memory` — Extract and save notes/facts from the current conversation.
+    *   `/forget` — Open the active memory file to prune or view entries.
+    *   `/persona [name]` — Switch between configured LLM personas.
+    *   `/export` — Save the active chat session to a Markdown file.
+    *   `/clear` — Clear the current session.
+    *   `/scope` — Display the folders the AI currently has permission to read.
+*   **Command Palette:**
+    *   `Open Engram sidebar`
+    *   `Engram: Re-index vault`
+    *   `Engram: Open memory file`
+
+---
+
+## 🔒 Security Hardening
+
+*   **Sandbox Boundaries:** Note content is wrapped in strict `[VAULT DATA START]` and `[VAULT DATA END]` markers inside the LLM prompt. The system instructions mandate that the AI treat everything inside these boundaries strictly as data rather than instructions, mitigating prompt injection attacks.
+*   **Key Security:** API keys are excluded from `data.json` and are not synced with Git, Obsidian Sync, or iCloud.
+
+---
+
+## 💻 Development
+
+If you want to build the plugin from source:
+
+1. Clone this repository:
+   `git clone https://github.com/PixelAnay/Engram.git`
 2. Install dependencies:
-   - `npm install`
-3. Start watch build:
-   - `npm run dev`
-4. Reload Obsidian after changes.
+   `npm install`
+3. Build the production bundle:
+   `npm run build`
+4. Sync to your development vault:
+   Set your dev vault path using an environment variable:
+   ```powershell
+   # Windows (PowerShell)
+   setx OBSIDIAN_VAULT_PATH "C:\Path\To\Your\Vault"
+   ```
+   Run the sync script:
+   ```bash
+   npm run deploy
+   ```
 
-## Usage
+---
 
-1. Click the ribbon icon to open **LLAMA Chat** sidebar.
-2. Confirm connection status in the header.
-3. Ask questions normally.
-4. For vault-specific questions, the plugin can search and read notes automatically.
-5. Use plugin settings to control edit permissions and privacy exclusions.
+## 📄 License
 
-### Commands
-
-- `Open LLAMA Chat sidebar`
-- `LLAMA Chat: Re-index vault`
-
-## Settings
-
-### Connection
-
-- **LLM Endpoint**: base URL for your local server (no trailing slash)
-- **Model Name**: optional model ID; leave blank for server default
-- **Temperature**: sampling temperature (0–2)
-
-### Context
-
-- **Context Window (tokens)**: prompt budget target
-- **Auto-inject notes count**: number of top-ranked notes auto-added
-- **Extra system prompt**: custom instructions appended to system prompt
-
-### Permissions and Tools
-
-- **Edit permission level**:
-  - `read_only` for safe read/search only
-  - `read_append` for adding content to existing notes
-  - `full_edit` for full create/overwrite capabilities
-- **Tool calling mode**:
-  - `native` (OpenAI function calling)
-  - `prompt_injection` (fallback for models without native tool calling)
-  - `disabled`
-- **Max tool call depth**: caps chained tool execution per turn
-
-### Privacy and Safety
-
-- **Exclude patterns**: glob patterns (e.g. `Private/**`, `*.secret.md`)
-- **Show diff preview**
-- **Diff preview threshold**
-
-## How Vault Context Works
-
-- Indexes Markdown files and metadata (path, title, tags, frontmatter, mtime)
-- Maintains a vault map used in the system prompt
-- Auto-selects top relevant notes for injection based on user query
-- Updates index on vault create/modify/delete/rename events
-
-## Scripts
-
-- `npm run dev`: esbuild watch mode
-- `npm run build`: Type-check + production bundle
-- `npm run sync`: copy `main.js`, `manifest.json`, and `styles.css` to your vault plugin folder
-- `npm run deploy`: build + sync in one command
-
-### One-Time Setup For Sync/Deploy
-
-Set your vault path in an environment variable so sync knows where to copy files.
-
-PowerShell:
-
-```powershell
-setx OBSIDIAN_VAULT_PATH "C:\Path\To\Your\Vault"
-```
-
-Then restart terminal/VS Code and run:
-
-```bash
-npm run deploy
-```
-
-## Project Structure
-
-- `src/main.ts`: plugin lifecycle, commands, view registration
-- `src/ChatView.ts`: chat UI, streaming, attachments, undo action wiring
-- `src/llm.ts`: LLM API client and streaming/tool-call handling
-- `src/indexer.ts`: vault indexing and search helpers
-- `src/context.ts`: system prompt and context assembly
-- `src/tools.ts`: tool schemas + executor
-- `src/settings.ts`: plugin settings UI and defaults
-
-## Troubleshooting
-
-- **Offline status in header**:
-  - Verify local server is running
-  - Verify endpoint in settings (default `http://localhost:8080`)
-  - Confirm `GET /v1/models` responds
-- **No vault-aware answers**:
-  - Wait for initial indexing to complete
-  - Check exclusion patterns are not too broad
-  - Use `LLAMA Chat: Re-index vault`
-- **Edits are blocked**:
-  - Increase edit permission level in settings
-- **Tool calls not working with your model**:
-  - Switch tool mode to `prompt_injection`
-
-## Security Notes
-
-- This plugin can modify your vault depending on selected permission mode.
-- Keep `read_only` unless you explicitly need write actions.
-- Review outputs and use undo when needed.
-
-## License
-
-MIT
+MIT License. See [LICENSE](LICENSE) for details.
