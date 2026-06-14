@@ -112,7 +112,7 @@ export class EngramSettingTab extends PluginSettingTab {
     containerEl.empty();
     containerEl.addClass('engram-settings');
 
-    new Setting(containerEl).setName('🧠 Engram Settings').setHeading();
+    new Setting(containerEl).setName('🧠 Engram').setHeading();
 
     // ── 1. AI Provider ──────────────────────────────────────────────────────
     new Setting(containerEl).setName('🤖 AI Provider').setHeading();

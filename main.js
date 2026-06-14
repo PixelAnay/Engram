@@ -94553,7 +94553,7 @@ var EngramSettingTab = class extends import_obsidian8.PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
     containerEl.addClass("engram-settings");
-    new import_obsidian8.Setting(containerEl).setName("\u{1F9E0} Engram Settings").setHeading();
+    new import_obsidian8.Setting(containerEl).setName("\u{1F9E0} Engram").setHeading();
     new import_obsidian8.Setting(containerEl).setName("\u{1F916} AI Provider").setHeading();
     const providerSetting = new import_obsidian8.Setting(containerEl).setName("Provider").setDesc("Select your AI provider or endpoint");
     const customUrlSetting = new import_obsidian8.Setting(containerEl).setName("Base URL").setDesc("Full base URL for the custom provider endpoint (no trailing slash)");
