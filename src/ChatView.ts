@@ -1,31 +1,27 @@
 /**
- * ChatView.ts
- * Slim orchestrator for the LLAMA Chat sidebar view.
- *
- * All heavy sub-concerns are delegated to:
- *  - SessionManager   — session CRUD & persistence
- *  - MessageRenderer  — bubble DOM, incremental append, streaming
- *  - AttachmentHandler — file/PDF processing
- *  - MentionAutocomplete — @-mention dropdown
- *  - TokenBudgetBar   — context window usage indicator
+ * ChatView.ts — Engram sidebar view
+ * Slim orchestrator wiring all sub-components.
  */
 
 import { ItemView, WorkspaceLeaf, Notice, setIcon } from 'obsidian';
-import type LlamaPlugin from './main';
+import type EngramPlugin from './main';
 import type { ChatMessage, StreamChunk, MessageContentPart } from './types';
 import { SessionManager } from './chat/SessionManager';
 import { AttachmentHandler, type Attachment } from './chat/AttachmentHandler';
 import { MentionAutocomplete } from './chat/MentionAutocomplete';
 import { MessageRenderer, type DisplayMessage, type ToolEvent } from './ui/MessageRenderer';
 import { TokenBudgetBar } from './ui/TokenBudgetBar';
+import { SlashCommandHandler } from './commands/SlashCommandHandler';
 import { estimateMessagesTokens } from './utils/tokenEstimator';
 
-export const LLAMA_CHAT_VIEW_TYPE = 'llama-chat-view';
+export const ENGRAM_VIEW_TYPE = 'engram-view';
+/** @deprecated Use ENGRAM_VIEW_TYPE */
+export const LLAMA_CHAT_VIEW_TYPE = ENGRAM_VIEW_TYPE;
 
 export class ChatView extends ItemView {
-  private plugin: LlamaPlugin;
+  private plugin: EngramPlugin;
 
-  // ── State ────────────────────────────────────────────────────────────────
+  // ── State ─────────────────────────────────────────────────────────────────
   private messages: ChatMessage[] = [];
   private displayMessages: DisplayMessage[] = [];
   private isStreaming = false;
@@ -35,6 +31,7 @@ export class ChatView extends ItemView {
   private sessionManager!: SessionManager;
   private attachmentHandler!: AttachmentHandler;
   private mentionAutocomplete!: MentionAutocomplete;
+  private slashCommandHandler!: SlashCommandHandler;
   private messageRenderer!: MessageRenderer;
   private tokenBudgetBar!: TokenBudgetBar;
 
@@ -51,21 +48,23 @@ export class ChatView extends ItemView {
   private attachInput!: HTMLInputElement;
   private attachmentPreviewEl!: HTMLElement;
   private permBadge!: HTMLElement;
+  private providerBadge!: HTMLElement;
+  private personaBadge!: HTMLElement;
   private contextStatusEl!: HTMLElement;
+  private memoryToast!: HTMLElement;
 
-  constructor(leaf: WorkspaceLeaf, plugin: LlamaPlugin) {
+  constructor(leaf: WorkspaceLeaf, plugin: EngramPlugin) {
     super(leaf);
     this.plugin = plugin;
   }
 
-  getViewType(): string { return LLAMA_CHAT_VIEW_TYPE; }
-  getDisplayText(): string { return 'LLAMA Chat'; }
-  getIcon(): string { return 'message-circle'; }
+  getViewType(): string { return ENGRAM_VIEW_TYPE; }
+  getDisplayText(): string { return 'Engram'; }
+  getIcon(): string { return 'brain'; }
 
   async onOpen(): Promise<void> {
     this.buildUI();
 
-    // Initialize sub-components
     this.sessionManager = new SessionManager(this.plugin);
     this.attachmentHandler = new AttachmentHandler();
     this.messageRenderer = new MessageRenderer(
@@ -77,29 +76,43 @@ export class ChatView extends ItemView {
       (path) => this.openNotes([path])
     );
 
-    // Wire ToolExecutor callback for open_note tool
     this.plugin.toolExecutor.onOpenNotes = (paths: string[]) => this.openNotes(paths);
 
-    // Initialize session
-    const session = this.sessionManager.initialize();
-    this.messages = [...session.messages];
-    this.displayMessages = MessageRenderer.buildDisplayMessages(this.messages);
+    // Slash commands
+    this.slashCommandHandler = new SlashCommandHandler(
+      this.inputArea,
+      this.inputArea.parentElement!,
+      {
+        onMemory: () => this.runMemoryExtraction(),
+        onForget: () => this.plugin.openMemoryFile(),
+        onPersona: () => this.showPersonaSwitcher(),
+        onExport: () => this.exportConversation(),
+        onClear: () => this.clearChat(),
+        onScope: () => this.showScopeInfo(),
+      }
+    );
 
-    // Mention autocomplete (needs input + container)
+    // Mention autocomplete
     this.mentionAutocomplete = new MentionAutocomplete(
       this.inputArea,
       this.inputArea.parentElement!,
       this.plugin.indexer,
-      () => { /* note selected — no extra action needed */ }
+      () => { /* note selected */ }
     );
+
+    const session = this.sessionManager.initialize();
+    this.messages = [...session.messages];
+    this.displayMessages = MessageRenderer.buildDisplayMessages(this.messages);
 
     this.renderMessages();
     this.refreshSessionControls();
+    this.updateProviderBadge();
+    this.updatePersonaBadge();
     await this.checkConnection();
   }
 
   async onClose(): Promise<void> {
-    this.plugin.llmClient.abort();
+    this.plugin.providerFactory.abort();
     this.tokenBudgetBar?.destroy();
   }
 
@@ -108,87 +121,99 @@ export class ChatView extends ItemView {
   private buildUI(): void {
     const root = this.containerEl.children[1] as HTMLElement;
     root.empty();
-    root.addClass('llama-chat-root');
+    root.addClass('engram-root');
     root.style.padding = '0';
 
-    // ── Header ──────────────────────────────────────────────────────────────
-    const header = root.createDiv('llama-header');
+    // ── Header ────────────────────────────────────────────────────────────────
+    const header = root.createDiv('engram-header');
 
-    const titleRow = header.createDiv('llama-header-title-row');
-    titleRow.createSpan('llama-header-icon').textContent = '🦙';
-    titleRow.createSpan('llama-header-title').textContent = 'LLAMA Chat';
+    const titleRow = header.createDiv('engram-header-title-row');
+    titleRow.createSpan('engram-header-icon').textContent = '🧠';
+    titleRow.createSpan('engram-header-title').textContent = 'Engram';
 
-    const statusRow = header.createDiv('llama-header-status-row');
-    this.statusDot = statusRow.createSpan('llama-status-dot');
-    this.statusLabel = statusRow.createSpan('llama-status-label');
+    // Provider + persona badges
+    const badgeRow = header.createDiv('engram-header-badge-row');
+    this.providerBadge = badgeRow.createSpan('engram-provider-badge');
+    this.personaBadge = badgeRow.createEl('button', { cls: 'engram-persona-badge' });
+    this.personaBadge.title = 'Switch persona';
+    this.personaBadge.addEventListener('click', () => this.showPersonaSwitcher());
+
+    // Status row
+    const statusRow = header.createDiv('engram-header-status-row');
+    this.statusDot = statusRow.createSpan('engram-status-dot');
+    this.statusLabel = statusRow.createSpan('engram-status-label');
     this.statusLabel.textContent = 'Connecting…';
-    this.noteCountEl = statusRow.createSpan('llama-note-count');
+    this.noteCountEl = statusRow.createSpan('engram-note-count');
 
-    const sessionControls = header.createDiv('llama-chat-session-controls');
-    this.chatSelectEl = sessionControls.createEl('select', { cls: 'llama-chat-select' });
+    // Session controls
+    const sessionControls = header.createDiv('engram-session-controls');
+    this.chatSelectEl = sessionControls.createEl('select', { cls: 'engram-chat-select' });
     this.chatSelectEl.addEventListener('change', () => {
       if (this.isStreaming) { this.chatSelectEl.value = this.sessionManager.currentId; return; }
       this.switchToSession(this.chatSelectEl.value);
     });
 
     const newChatBtn = sessionControls.createEl('button', {
-      cls: 'llama-session-btn',
-      text: 'New chat',
-      title: 'Start new chat',
+      cls: 'engram-session-btn', text: 'New chat', title: 'Start new chat',
     });
     newChatBtn.addEventListener('click', () => this.startNewChat());
 
-    this.deleteChatBtn = sessionControls.createEl('button', {
-      cls: 'llama-icon-btn',
-      title: 'Delete current chat',
-    });
+    this.deleteChatBtn = sessionControls.createEl('button', { cls: 'engram-icon-btn', title: 'Delete chat' });
     setIcon(this.deleteChatBtn, 'trash-2');
     this.deleteChatBtn.addEventListener('click', () => this.deleteCurrentChat());
 
-    const headerActions = header.createDiv('llama-header-actions');
+    // Header action buttons
+    const headerActions = header.createDiv('engram-header-actions');
 
-    const refreshBtn = headerActions.createEl('button', { cls: 'llama-icon-btn', title: 'Check connection' });
+    const refreshBtn = headerActions.createEl('button', { cls: 'engram-icon-btn', title: 'Check connection' });
     setIcon(refreshBtn, 'refresh-cw');
     refreshBtn.addEventListener('click', () => this.checkConnection());
 
-    const clearBtn = headerActions.createEl('button', { cls: 'llama-icon-btn', title: 'Clear current chat' });
-    setIcon(clearBtn, 'eraser');
-    clearBtn.addEventListener('click', () => this.clearChat());
+    const memoryBtn = headerActions.createEl('button', { cls: 'engram-icon-btn', title: 'Open memory file' });
+    setIcon(memoryBtn, 'book-open');
+    memoryBtn.addEventListener('click', () => this.plugin.openMemoryFile());
 
-    const undoBtn = headerActions.createEl('button', { cls: 'llama-icon-btn', title: 'Undo last AI edit' });
+    const undoBtn = headerActions.createEl('button', { cls: 'engram-icon-btn', title: 'Undo last AI edit' });
     setIcon(undoBtn, 'rotate-ccw');
     undoBtn.addEventListener('click', () => this.showUndoPanel());
 
-    const settingsBtn = headerActions.createEl('button', { cls: 'llama-icon-btn', title: 'Plugin settings' });
+    const settingsBtn = headerActions.createEl('button', { cls: 'engram-icon-btn', title: 'Settings' });
     setIcon(settingsBtn, 'settings');
     settingsBtn.addEventListener('click', () => {
       (this.app as any).setting?.open();
-      (this.app as any).setting?.openTabById('obsidian-llama-chat');
+      (this.app as any).setting?.openTabById('obsidian-engram');
     });
 
-    // ── Context status (shows "Loading 3 notes…" during context build) ──────
-    this.contextStatusEl = header.createDiv('llama-context-status');
+    // Context status + memory toast
+    this.contextStatusEl = header.createDiv('engram-context-status');
     this.contextStatusEl.style.display = 'none';
 
+    this.memoryToast = header.createDiv('engram-memory-toast');
+    this.memoryToast.style.display = 'none';
+
     // ── Messages ──────────────────────────────────────────────────────────────
-    this.messagesContainer = root.createDiv('llama-messages');
+    this.messagesContainer = root.createDiv('engram-messages');
 
-    // ── Input Bar ──────────────────────────────────────────────────────────────
-    const inputBar = root.createDiv('llama-input-bar');
-    this.attachmentPreviewEl = inputBar.createDiv('llama-input-attachments');
+    // ── Input bar ─────────────────────────────────────────────────────────────
+    const inputBar = root.createDiv('engram-input-bar');
+    this.attachmentPreviewEl = inputBar.createDiv('engram-input-attachments');
 
-    this.inputArea = inputBar.createEl('textarea', {
-      cls: 'llama-input',
-      attr: { placeholder: 'Ask anything about your vault…', rows: '1' },
+    const inputWrapper = inputBar.createDiv('engram-input-wrapper');
+
+    this.inputArea = inputWrapper.createEl('textarea', {
+      cls: 'engram-input',
+      attr: { placeholder: 'Ask anything… or type / for commands', rows: '1' },
     });
 
     this.inputArea.addEventListener('input', () => {
       this.inputArea.style.height = 'auto';
       this.inputArea.style.height = Math.min(this.inputArea.scrollHeight, 160) + 'px';
-      this.mentionAutocomplete?.handleInput();
+      const consumed = this.slashCommandHandler?.handleInput();
+      if (!consumed) this.mentionAutocomplete?.handleInput();
     });
 
     this.inputArea.addEventListener('keydown', (e: KeyboardEvent) => {
+      if (this.slashCommandHandler?.handleKeydown(e)) return;
       if (this.mentionAutocomplete?.handleKeydown(e)) return;
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
@@ -197,19 +222,21 @@ export class ChatView extends ItemView {
     });
 
     this.inputArea.addEventListener('blur', () => {
-      setTimeout(() => this.mentionAutocomplete?.hide(), 150);
+      setTimeout(() => {
+        this.mentionAutocomplete?.hide();
+        this.slashCommandHandler?.hide();
+      }, 150);
     });
 
-    const btnGroup = inputBar.createDiv('llama-btn-group');
+    const btnGroup = inputBar.createDiv('engram-btn-group');
 
-    const attachBtn = btnGroup.createEl('button', { cls: 'llama-attach-btn', title: 'Attach files' });
+    const attachBtn = btnGroup.createEl('button', { cls: 'engram-attach-btn', title: 'Attach files' });
     setIcon(attachBtn, 'paperclip');
 
     this.attachInput = btnGroup.createEl('input', {
       attr: { type: 'file', multiple: 'true', style: 'display:none' },
     });
     attachBtn.addEventListener('click', () => this.attachInput.click());
-
     this.attachInput.addEventListener('change', async (e: Event) => {
       const files = (e.target as HTMLInputElement).files;
       if (!files) return;
@@ -219,53 +246,46 @@ export class ChatView extends ItemView {
       (e.target as HTMLInputElement).value = '';
     });
 
-    btnGroup.createDiv('llama-btn-spacer');
+    btnGroup.createDiv('engram-btn-spacer');
 
-    this.sendBtn = btnGroup.createEl('button', { cls: 'llama-send-btn', text: 'Send' });
+    this.sendBtn = btnGroup.createEl('button', { cls: 'engram-send-btn', text: 'Send' });
     setIcon(this.sendBtn, 'send');
     this.sendBtn.addEventListener('click', () => this.sendMessage());
 
-    this.stopBtn = btnGroup.createEl('button', { cls: 'llama-stop-btn', text: 'Stop' });
+    this.stopBtn = btnGroup.createEl('button', { cls: 'engram-stop-btn', text: 'Stop' });
     setIcon(this.stopBtn, 'square');
     this.stopBtn.style.display = 'none';
     this.stopBtn.addEventListener('click', () => {
-      this.plugin.llmClient.abort();
+      this.plugin.providerFactory.abort();
       this.setStreaming(false);
     });
 
-    // ── Footer ────────────────────────────────────────────────────────────────
-    const footer = root.createDiv('llama-footer');
+    // ── Footer ─────────────────────────────────────────────────────────────────
+    const footer = root.createDiv('engram-footer');
 
-    this.permBadge = footer.createSpan('llama-perm-badge');
+    this.permBadge = footer.createSpan('engram-perm-badge');
     this.updatePermBadge();
 
-    const modelBadge = footer.createSpan('llama-model-badge');
-    modelBadge.textContent = this.plugin.settings.model || 'auto model';
-
-    // Token budget bar (Phase 5.1)
     this.tokenBudgetBar = new TokenBudgetBar(footer, this.plugin.settings.contextWindowTokens);
   }
 
-  // ── Connection Check ───────────────────────────────────────────────────────
+  // ── Connection ─────────────────────────────────────────────────────────────
 
   async checkConnection(): Promise<void> {
     this.setStatus('connecting');
     try {
-      const model = await this.plugin.llmClient.healthCheck();
+      const model = await this.plugin.providerFactory.healthCheck();
       this.setStatus('connected', model);
     } catch (e) {
       this.setStatus('error', (e as Error).message);
     }
-
     if (this.plugin.indexer.isReady) {
-      this.noteCountEl.textContent = `${this.plugin.indexer.noteCount} notes indexed`;
-    } else {
-      this.noteCountEl.textContent = 'Indexing…';
+      this.noteCountEl.textContent = `${this.plugin.indexer.noteCount} notes`;
     }
   }
 
   private setStatus(state: 'connecting' | 'connected' | 'error', info?: string): void {
-    this.statusDot.className = `llama-status-dot llama-status-${state}`;
+    this.statusDot.className = `engram-status-dot engram-status-${state}`;
     if (state === 'connected') {
       this.statusLabel.textContent = info ? `Connected · ${info}` : 'Connected';
     } else if (state === 'error') {
@@ -275,18 +295,36 @@ export class ChatView extends ItemView {
     }
   }
 
-  /** Update the permission badge text (called on open + settings change). */
   private updatePermBadge(): void {
     const icons: Record<string, string> = {
-      read_only: '🔍 Read only',
-      read_append: '✏️ Read + Append',
+      read_only: '🔍 Read',
+      read_append: '✏️ Append',
       full_edit: '⚠️ Full edit',
     };
     this.permBadge.textContent = icons[this.plugin.settings.editPermission] ?? '?';
-    this.permBadge.title = 'Vault edit permission level — change in settings';
   }
 
-  // ── Session Management ─────────────────────────────────────────────────────
+  private updateProviderBadge(): void {
+    const preset = this.plugin.settings;
+    const isLocal = ['local_llamacpp', 'local_ollama', 'local_lmstudio'].includes(preset.activeProviderId);
+    this.providerBadge.empty();
+    const dot = this.providerBadge.createSpan('engram-provider-dot');
+    dot.addClass(isLocal ? 'engram-provider-dot--local' : 'engram-provider-dot--cloud');
+    this.providerBadge.appendText(
+      preset.model
+        ? `${preset.model}`
+        : isLocal ? 'Local AI' : 'Cloud AI'
+    );
+  }
+
+  private updatePersonaBadge(): void {
+    const persona = this.plugin.settings.personas.find(
+      p => p.id === this.plugin.settings.activePersonaId
+    );
+    this.personaBadge.textContent = `🎭 ${persona?.name ?? 'Default'}`;
+  }
+
+  // ── Sessions ───────────────────────────────────────────────────────────────
 
   private switchToSession(id: string): void {
     const session = this.sessionManager.switchTo(id);
@@ -302,7 +340,7 @@ export class ChatView extends ItemView {
 
   private startNewChat(): void {
     if (this.isStreaming) return;
-    const session = this.sessionManager.createAndActivate();
+    this.sessionManager.createAndActivate();
     this.messages = [];
     this.displayMessages = [];
     this.pendingAttachments = [];
@@ -317,8 +355,7 @@ export class ChatView extends ItemView {
     if (this.isStreaming) return;
     const session = this.sessionManager.currentSession;
     if (!session) return;
-    const ok = window.confirm(`Delete chat "${session.title}"?`);
-    if (!ok) return;
+    if (!window.confirm(`Delete "${session.title}"?`)) return;
     const next = this.sessionManager.delete(session.id);
     this.messages = [...next.messages];
     this.displayMessages = MessageRenderer.buildDisplayMessages(this.messages);
@@ -340,23 +377,23 @@ export class ChatView extends ItemView {
   private refreshSessionControls(): void {
     if (!this.chatSelectEl) return;
     this.chatSelectEl.empty();
-    for (const session of this.sessionManager.allSessions) {
-      const option = this.chatSelectEl.createEl('option');
-      option.value = session.id;
-      option.textContent = session.title;
+    for (const s of this.sessionManager.allSessions) {
+      const opt = this.chatSelectEl.createEl('option');
+      opt.value = s.id;
+      opt.textContent = s.title;
     }
     this.chatSelectEl.value = this.sessionManager.currentId;
-    const hasSessions = this.sessionManager.allSessions.length > 0;
-    this.chatSelectEl.disabled = !hasSessions || this.isStreaming;
-    this.deleteChatBtn.disabled = !hasSessions || this.isStreaming;
+    const has = this.sessionManager.allSessions.length > 0;
+    this.chatSelectEl.disabled = !has || this.isStreaming;
+    this.deleteChatBtn.disabled = !has || this.isStreaming;
   }
 
-  // ── Sending Messages ───────────────────────────────────────────────────────
+  // ── Send ───────────────────────────────────────────────────────────────────
 
   private async sendMessage(): Promise<void> {
     const text = this.inputArea.value.trim();
-    const hasAttachments = this.pendingAttachments.length > 0;
-    if ((!text && !hasAttachments) || this.isStreaming) return;
+    const hasAtts = this.pendingAttachments.length > 0;
+    if ((!text && !hasAtts) || this.isStreaming) return;
 
     this.inputArea.value = '';
     this.inputArea.style.height = 'auto';
@@ -365,29 +402,16 @@ export class ChatView extends ItemView {
     this.pendingAttachments = [];
     this.renderAttachmentPreviews();
 
-    // Build the API content (with blobs for the LLM call)
     let apiContent: string | MessageContentPart[] = text;
-    if (attachmentsForSend.length > 0) {
-      const parts = AttachmentHandler.buildContentParts(text, attachmentsForSend, false);
-      apiContent = parts as MessageContentPart[];
-    }
-
-    // Build the history content (without blobs — stored as text refs)
     let historyContent: string | MessageContentPart[] = text;
+
     if (attachmentsForSend.length > 0) {
-      const parts = AttachmentHandler.buildContentParts(text, attachmentsForSend, true);
-      historyContent = parts as MessageContentPart[];
+      apiContent = AttachmentHandler.buildContentParts(text, attachmentsForSend, false) as MessageContentPart[];
+      historyContent = AttachmentHandler.buildContentParts(text, attachmentsForSend, true) as MessageContentPart[];
     }
 
-    // Add to display (show attachments visually)
-    const userDisplayMsg: DisplayMessage = {
-      role: 'user',
-      content: text,
-      attachments: attachmentsForSend,
-    };
+    const userDisplayMsg: DisplayMessage = { role: 'user', content: text, attachments: attachmentsForSend };
     this.displayMessages.push(userDisplayMsg);
-
-    // Add to canonical history (blob-free for persistence)
     this.messages.push({ role: 'user', content: historyContent, attachments: [] });
     this.sessionManager.updateTitleFromPrompt(text);
     this.sessionManager.save(this.messages);
@@ -396,30 +420,20 @@ export class ChatView extends ItemView {
     this.scrollToBottom();
     this.setStreaming(true);
 
-    // Show context-build status
     this.showContextStatus('Building context…');
-
-    // Build context-enriched messages
-    const enrichedMessages = await this.plugin.contextBuilder.prependSystemMessage(
+    const enriched = await this.plugin.contextBuilder.prependSystemMessage(
       this.messages.slice(0, -1),
       text || 'See attachment(s)',
-      (status) => this.showContextStatus(status)
+      (s) => this.showContextStatus(s)
     );
-    // Append the API-content user message (with blobs for this request)
-    enrichedMessages.push({ role: 'user', content: apiContent });
+    enriched.push({ role: 'user', content: apiContent });
     this.hideContextStatus();
 
-    // Add streaming assistant bubble
-    const assistantDisplay: DisplayMessage = {
-      role: 'assistant',
-      content: '',
-      streaming: true,
-      toolEvents: [],
-    };
+    const assistantDisplay: DisplayMessage = { role: 'assistant', content: '', streaming: true, toolEvents: [] };
     this.displayMessages.push(assistantDisplay);
     this.messageRenderer.appendBubble(assistantDisplay);
 
-    let finalMessages: ChatMessage[] = enrichedMessages;
+    let finalMessages: ChatMessage[] = enriched;
 
     const onChunk = (chunk: StreamChunk) => {
       if (chunk.type === 'token' && chunk.content) {
@@ -432,16 +446,14 @@ export class ChatView extends ItemView {
         const evList = assistantDisplay.toolEvents!;
         let last: ToolEvent | undefined;
         for (let i = evList.length - 1; i >= 0; i--) {
-          if (evList[i].name === chunk.toolName && evList[i].type === 'start') {
-            last = evList[i]; break;
-          }
+          if (evList[i].name === chunk.toolName && evList[i].type === 'start') { last = evList[i]; break; }
         }
         if (!last && evList.length > 0) last = evList[evList.length - 1];
         if (last) { last.type = 'end'; last.result = chunk.toolResult; }
         this.messageRenderer.patchStreamingContent(assistantDisplay);
       } else if (chunk.type === 'error' && chunk.error) {
         assistantDisplay.content = chunk.error;
-        assistantDisplay.role = 'error' as any;
+        (assistantDisplay as any).role = 'error';
         this.messageRenderer.patchStreamingContent(assistantDisplay);
       } else if (chunk.type === 'done') {
         assistantDisplay.streaming = false;
@@ -451,24 +463,201 @@ export class ChatView extends ItemView {
     };
 
     try {
-      const gen = this.plugin.llmClient.runTurn(enrichedMessages, this.plugin.toolExecutor, onChunk);
+      const gen = this.plugin.providerFactory.runTurn(enriched, this.plugin.toolExecutor, onChunk);
       for await (const msgs of gen) {
         finalMessages = msgs;
       }
     } catch (e) {
       assistantDisplay.content = `Error: ${(e as Error).message}`;
-      assistantDisplay.role = 'error' as any;
+      (assistantDisplay as any).role = 'error';
       assistantDisplay.streaming = false;
       this.messageRenderer.finalizeStreamingBubble(assistantDisplay);
     }
 
-    // Persist final message state (system messages excluded)
     this.messages = finalMessages.filter(m => m.role !== 'system');
     this.sessionManager.save(this.messages);
     this.updateTokenBar();
-
     this.setStreaming(false);
     this.scrollToBottom();
+
+    // Auto memory extraction (silent, non-blocking)
+    if (this.plugin.settings.memoryEnabled && this.plugin.settings.autoExtractMemory) {
+      this.plugin.memoryExtractor.extractAndSave(
+        this.messages.slice(-6),
+        (count) => {
+          if (count > 0) this.showMemoryToast(count);
+        }
+      );
+    }
+  }
+
+  // ── Memory ─────────────────────────────────────────────────────────────────
+
+  private async runMemoryExtraction(): Promise<void> {
+    if (this.messages.length < 2) {
+      new Notice('Not enough conversation to extract from');
+      return;
+    }
+    new Notice('🧠 Extracting memories…');
+    const count = await this.plugin.memoryExtractor.extractAndSave(
+      this.messages.slice(-10),
+      (n) => { if (n > 0) this.showMemoryToast(n); }
+    );
+    if (count === 0) new Notice('Nothing new worth remembering in this conversation');
+  }
+
+  private showMemoryToast(count: number): void {
+    this.memoryToast.textContent = `🧠 Saved ${count} fact${count > 1 ? 's' : ''} to memory`;
+    this.memoryToast.style.display = 'block';
+    setTimeout(() => { this.memoryToast.style.display = 'none'; }, 3000);
+  }
+
+  // ── Persona switcher ───────────────────────────────────────────────────────
+
+  private showPersonaSwitcher(): void {
+    document.querySelectorAll('.engram-persona-overlay').forEach(el => el.remove());
+
+    const overlay = document.createElement('div');
+    overlay.className = 'engram-modal-overlay engram-persona-overlay';
+
+    const panel = overlay.appendChild(document.createElement('div'));
+    panel.className = 'engram-modal';
+
+    const title = panel.appendChild(document.createElement('div'));
+    title.className = 'engram-modal-title';
+    title.textContent = '🎭 Switch Persona';
+
+    const sub = panel.appendChild(document.createElement('div'));
+    sub.className = 'engram-modal-subtitle';
+    sub.textContent = 'Takes effect from the next message.';
+
+    const list = panel.appendChild(document.createElement('div'));
+    list.className = 'engram-undo-list';
+
+    for (const persona of this.plugin.settings.personas) {
+      const item = list.appendChild(document.createElement('div'));
+      item.className = 'engram-undo-item';
+      if (persona.id === this.plugin.settings.activePersonaId) item.style.borderColor = 'var(--color-accent)';
+
+      const name = item.appendChild(document.createElement('span'));
+      name.className = 'engram-undo-desc';
+      name.textContent = persona.name;
+
+      if (persona.id === this.plugin.settings.activePersonaId) {
+        const active = item.appendChild(document.createElement('span'));
+        active.className = 'engram-undo-time';
+        active.textContent = 'active';
+      }
+
+      item.addEventListener('click', async () => {
+        this.plugin.settings.activePersonaId = persona.id;
+        await this.plugin.saveSettings();
+        this.updatePersonaBadge();
+        overlay.remove();
+        new Notice(`🎭 Persona: ${persona.name}`);
+      });
+    }
+
+    const closeBtn = panel.appendChild(document.createElement('button'));
+    closeBtn.className = 'engram-modal-cancel';
+    closeBtn.textContent = 'Close';
+    closeBtn.style.marginTop = '8px';
+    closeBtn.addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+    document.body.appendChild(overlay);
+  }
+
+  // ── Export ─────────────────────────────────────────────────────────────────
+
+  private async exportConversation(): Promise<void> {
+    if (this.messages.length === 0) { new Notice('Nothing to export'); return; }
+    const session = this.sessionManager.currentSession;
+    const title = session?.title ?? 'Conversation';
+    const date = new Date().toISOString().slice(0, 10);
+    const path = `Exports/${title} ${date}.md`;
+
+    let content = `# ${title}\n*Exported ${date}*\n\n`;
+    for (const msg of this.messages.filter(m => m.role !== 'system')) {
+      const role = msg.role === 'user' ? '**You**' : '**Engram**';
+      const text = typeof msg.content === 'string' ? msg.content : '[attachment]';
+      content += `${role}: ${text}\n\n`;
+    }
+
+    try {
+      await this.app.vault.createFolder('Exports').catch(() => {});
+      await this.app.vault.create(path, content);
+      new Notice(`📝 Exported to ${path}`);
+    } catch (e) {
+      new Notice(`Export failed: ${(e as Error).message}`);
+    }
+  }
+
+  // ── Scope info ─────────────────────────────────────────────────────────────
+
+  private showScopeInfo(): void {
+    const { scopeMode, scopeFolders } = this.plugin.settings;
+    const msg = scopeMode === 'all'
+      ? '📁 Scope: All vault folders'
+      : scopeMode === 'allowlist'
+        ? `📁 Allow-only: ${scopeFolders.join(', ') || 'none'}`
+        : `📁 Blocked: ${scopeFolders.join(', ') || 'none'}`;
+    new Notice(msg);
+  }
+
+  // ── Undo panel ────────────────────────────────────────────────────────────
+
+  private showUndoPanel(): void {
+    const history = this.plugin.toolExecutor.undoHistory;
+    if (history.length === 0) { new Notice('Nothing to undo'); return; }
+
+    document.querySelectorAll('.engram-undo-panel-overlay').forEach(el => el.remove());
+    const overlay = document.createElement('div');
+    overlay.className = 'engram-modal-overlay engram-undo-panel-overlay';
+
+    const panel = overlay.appendChild(document.createElement('div'));
+    panel.className = 'engram-modal engram-undo-panel';
+
+    const title = panel.appendChild(document.createElement('div'));
+    title.className = 'engram-modal-title';
+    title.textContent = '↩️ Undo History';
+
+    const sub = panel.appendChild(document.createElement('div'));
+    sub.className = 'engram-modal-subtitle';
+    sub.textContent = 'Click an entry to undo that operation.';
+
+    const list = panel.appendChild(document.createElement('div'));
+    list.className = 'engram-undo-list';
+
+    [...history].reverse().forEach((entry, ri) => {
+      const actualIdx = history.length - 1 - ri;
+      const item = list.appendChild(document.createElement('div'));
+      item.className = 'engram-undo-item';
+
+      const desc = item.appendChild(document.createElement('span'));
+      desc.className = 'engram-undo-desc';
+      desc.textContent = entry.description;
+
+      const time = item.appendChild(document.createElement('span'));
+      time.className = 'engram-undo-time';
+      const ago = Math.round((Date.now() - entry.timestamp) / 1000);
+      time.textContent = ago < 60 ? `${ago}s ago` : `${Math.round(ago / 60)}m ago`;
+
+      item.addEventListener('click', async () => {
+        overlay.remove();
+        const path = await this.plugin.toolExecutor.undoAt(actualIdx);
+        new Notice(path ? `↩️ Undid: "${entry.description}"` : 'Could not undo');
+      });
+    });
+
+    const closeBtn = panel.appendChild(document.createElement('button'));
+    closeBtn.className = 'engram-modal-cancel';
+    closeBtn.textContent = 'Close';
+    closeBtn.style.marginTop = '8px';
+    closeBtn.addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+    document.body.appendChild(overlay);
   }
 
   // ── Rendering ─────────────────────────────────────────────────────────────
@@ -484,45 +673,30 @@ export class ChatView extends ItemView {
   }
 
   private renderWelcome(): void {
-    const welcome = this.messagesContainer.createDiv('llama-welcome');
-    welcome.createEl('div', { cls: 'llama-welcome-emoji', text: '🦙' });
-    welcome.createEl('div', { cls: 'llama-welcome-title', text: 'LLAMA Chat' });
-    welcome.createEl('div', {
-      cls: 'llama-welcome-subtitle',
-      text: 'Your local AI assistant with full vault access',
-    });
+    const welcome = this.messagesContainer.createDiv('engram-welcome');
+    welcome.createEl('div', { cls: 'engram-welcome-emoji', text: '🧠' });
+    welcome.createEl('div', { cls: 'engram-welcome-title', text: 'Engram' });
+    welcome.createEl('div', { cls: 'engram-welcome-subtitle', text: 'The AI that remembers you' });
 
-    // Phase 5.2: Dynamic welcome chips from actual vault tags + recent notes
-    const chips = welcome.createDiv('llama-welcome-chips');
-
-    // Static fallbacks if vault isn't indexed yet
-    const staticExamples = [
-      '🔍 Search my notes on machine learning',
-      '📝 Summarize my recent todos',
-      '✏️ Add a section to my README',
-      '📁 List what\'s in my Projects folder',
-    ];
-
+    const chips = welcome.createDiv('engram-welcome-chips');
     const dynamicChips: string[] = [];
 
     if (this.plugin.indexer.isReady) {
-      // Top tags → "What are my notes about [tag]?"
       const topTags = this.plugin.indexer.getTopTags(3);
-      for (const tag of topTags) {
-        dynamicChips.push(`🔍 Search notes tagged ${tag}`);
-      }
-
-      // Recent notes → "Summarize [note name]"
+      for (const tag of topTags) dynamicChips.push(`🔍 Search notes tagged ${tag}`);
       const recent = this.plugin.indexer.getRecentNotes(2);
-      for (const note of recent) {
-        dynamicChips.push(`📖 Summarize ${note.title}`);
-      }
+      for (const note of recent) dynamicChips.push(`📖 Summarise ${note.title}`);
     }
 
-    const examples = dynamicChips.length >= 3 ? dynamicChips : staticExamples;
+    const examples = dynamicChips.length >= 3 ? dynamicChips : [
+      '💭 What are my main goals right now?',
+      '📔 Help me reflect on last week',
+      '🧩 What patterns do you see in my notes?',
+      '✏️ Help me write something',
+    ];
 
     for (const ex of examples) {
-      const chip = chips.createEl('button', { cls: 'llama-example-chip', text: ex });
+      const chip = chips.createEl('button', { cls: 'engram-example-chip', text: ex });
       chip.addEventListener('click', () => {
         this.inputArea.value = ex.replace(/^[^\s]+\s/, '').trim();
         this.inputArea.focus();
@@ -533,124 +707,36 @@ export class ChatView extends ItemView {
   private editMessage(msg: DisplayMessage): void {
     const idx = this.displayMessages.indexOf(msg);
     if (idx === -1) return;
-
-    // Count user messages before this one
     let userCount = 0;
     for (let i = 0; i < idx; i++) {
       if (this.displayMessages[i].role === 'user') userCount++;
     }
-
-    // Find corresponding message in canonical history
-    let mIdx = -1;
-    let mUserCount = 0;
+    let mIdx = -1, mUserCount = 0;
     for (let i = 0; i < this.messages.length; i++) {
       if (this.messages[i].role === 'user') {
         if (mUserCount === userCount) { mIdx = i; break; }
         mUserCount++;
       }
     }
-
     if (mIdx !== -1) this.messages = this.messages.slice(0, mIdx);
     this.displayMessages = this.displayMessages.slice(0, idx);
-
     this.inputArea.value = msg.content;
     this.inputArea.focus();
     this.inputArea.style.height = 'auto';
     this.inputArea.style.height = this.inputArea.scrollHeight + 'px';
-
-    if (msg.attachments) {
-      this.pendingAttachments = [...msg.attachments];
-      this.renderAttachmentPreviews();
-    }
-
+    if (msg.attachments) { this.pendingAttachments = [...msg.attachments]; this.renderAttachmentPreviews(); }
     this.renderMessages();
     this.sessionManager.save(this.messages);
   }
 
-  // ── Undo Panel (Phase 5.3) ────────────────────────────────────────────────
-
-  private showUndoPanel(): void {
-    const history = this.plugin.toolExecutor.undoHistory;
-
-    if (history.length === 0) {
-      new Notice('Nothing to undo');
-      return;
-    }
-
-    // Remove any existing panel
-    document.querySelectorAll('.llama-undo-panel-overlay').forEach(el => el.remove());
-
-    const overlay = document.createElement('div');
-    overlay.className = 'llama-modal-overlay llama-undo-panel-overlay';
-
-    const panel = overlay.appendChild(document.createElement('div'));
-    panel.className = 'llama-modal llama-undo-panel';
-
-    const title = panel.appendChild(document.createElement('div'));
-    title.className = 'llama-modal-title';
-    title.textContent = '↩️ Undo History';
-
-    const subtitle = panel.appendChild(document.createElement('div'));
-    subtitle.className = 'llama-modal-subtitle';
-    subtitle.textContent = 'Click an entry to undo that specific operation.';
-
-    const list = panel.appendChild(document.createElement('div'));
-    list.className = 'llama-undo-list';
-
-    // Show newest first
-    const reversed = [...history].reverse();
-    reversed.forEach((entry, reversedIdx) => {
-      const actualIdx = history.length - 1 - reversedIdx;
-      const item = list.appendChild(document.createElement('div'));
-      item.className = 'llama-undo-item';
-
-      const desc = item.appendChild(document.createElement('span'));
-      desc.className = 'llama-undo-desc';
-      desc.textContent = entry.description;
-
-      const time = item.appendChild(document.createElement('span'));
-      time.className = 'llama-undo-time';
-      const ago = Math.round((Date.now() - entry.timestamp) / 1000);
-      time.textContent = ago < 60 ? `${ago}s ago` : `${Math.round(ago / 60)}m ago`;
-
-      item.addEventListener('click', async () => {
-        overlay.remove();
-        const path = await this.plugin.toolExecutor.undoAt(actualIdx);
-        if (path) {
-          new Notice(`↩️ Undid: "${entry.description}"`);
-        } else {
-          new Notice('Could not undo — file may have been moved or deleted');
-        }
-      });
-    });
-
-    const closeBtn = panel.appendChild(document.createElement('button'));
-    closeBtn.className = 'llama-modal-cancel';
-    closeBtn.textContent = 'Close';
-    closeBtn.style.marginTop = '8px';
-    closeBtn.addEventListener('click', () => overlay.remove());
-
-    overlay.addEventListener('click', (e) => {
-      if (e.target === overlay) overlay.remove();
-    });
-
-    document.body.appendChild(overlay);
-  }
-
-  // ── Notes ─────────────────────────────────────────────────────────────────
+  // ── Helpers ───────────────────────────────────────────────────────────────
 
   private async openNotes(paths: string[]): Promise<void> {
-    const { workspace } = this.app;
     for (let i = 0; i < paths.length; i++) {
       const file = this.app.vault.getAbstractFileByPath(paths[i]);
-      if (file) {
-        const leaf = workspace.getLeaf('tab');
-        await leaf.openFile(file as any, { active: i === 0 });
-      }
+      if (file) await this.app.workspace.getLeaf('tab').openFile(file as any, { active: i === 0 });
     }
   }
-
-  // ── Context Status ────────────────────────────────────────────────────────
 
   private showContextStatus(status: string): void {
     this.contextStatusEl.textContent = status;
@@ -662,15 +748,11 @@ export class ChatView extends ItemView {
     this.contextStatusEl.textContent = '';
   }
 
-  // ── Token Bar ────────────────────────────────────────────────────────────
-
   private updateTokenBar(): void {
     const used = estimateMessagesTokens(this.messages);
     this.tokenBudgetBar?.setMax(this.plugin.settings.contextWindowTokens);
     this.tokenBudgetBar?.update(used);
   }
-
-  // ── Streaming State ───────────────────────────────────────────────────────
 
   private setStreaming(streaming: boolean): void {
     this.isStreaming = streaming;
@@ -681,40 +763,28 @@ export class ChatView extends ItemView {
     if (!streaming) {
       this.inputArea.focus();
       this.updatePermBadge();
+      this.updateProviderBadge();
+      this.updatePersonaBadge();
     }
   }
 
-  // ── Attachments ───────────────────────────────────────────────────────────
-
   private renderAttachmentPreviews(): void {
     this.attachmentPreviewEl.empty();
-    for (let i = 0; i < this.pendingAttachments.length; i++) {
-      const att = this.pendingAttachments[i];
-      const chip = this.attachmentPreviewEl.createDiv('llama-attachment-chip');
-      chip.createSpan('llama-attachment-name').textContent = att.name;
-      const removeBtn = chip.createSpan('llama-attachment-remove');
+    this.pendingAttachments.forEach((att, i) => {
+      const chip = this.attachmentPreviewEl.createDiv('engram-attachment-chip');
+      chip.createSpan('engram-attachment-name').textContent = att.name;
+      const removeBtn = chip.createSpan('engram-attachment-remove');
       setIcon(removeBtn, 'x');
       removeBtn.addEventListener('click', () => {
         this.pendingAttachments.splice(i, 1);
         this.renderAttachmentPreviews();
       });
-    }
+    });
   }
-
-  // ── Scroll ────────────────────────────────────────────────────────────────
 
   private scrollToBottom(): void {
     requestAnimationFrame(() => {
       this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
     });
-  }
-
-  private async undoLastEdit(): Promise<void> {
-    const path = await this.plugin.toolExecutor.undoLast();
-    if (path) {
-      new Notice(`↩️ Undid last AI edit to "${path}"`);
-    } else {
-      new Notice('Nothing to undo');
-    }
   }
 }

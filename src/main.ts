@@ -1,27 +1,31 @@
-import { Plugin, WorkspaceLeaf, TFile, Platform, Notice } from 'obsidian';
-import { LLAMA_CHAT_VIEW_TYPE, ChatView } from './ChatView';
+import { Plugin, WorkspaceLeaf, TFile, Notice } from 'obsidian';
+import { ENGRAM_VIEW_TYPE, ChatView } from './ChatView';
 import { VaultIndexer } from './indexer';
 import { EmbeddingIndex } from './embeddings';
-import { LLMClient } from './llm';
 import { ToolExecutor } from './tools';
 import { ContextBuilder } from './context';
-import { LlamaSettingTab, DEFAULT_SETTINGS } from './settings';
-import type { ChatSession, LlamaPluginSettings, VaultIndex } from './types';
+import { MemoryManager } from './memory/MemoryManager';
+import { MemoryExtractor } from './memory/MemoryExtractor';
+import { ProviderFactory } from './providers/ProviderFactory';
+import { EngramSettingTab, DEFAULT_SETTINGS } from './settings';
+import type { ChatSession, EngramSettings } from './types';
 import type { EmbeddingIndexData } from './embeddings';
 
-export default class LlamaPlugin extends Plugin {
-  settings!: LlamaPluginSettings;
+export default class EngramPlugin extends Plugin {
+  settings!: EngramSettings;
   indexer!: VaultIndexer;
   embeddingIndex!: EmbeddingIndex;
-  llmClient!: LLMClient;
+  providerFactory!: ProviderFactory;
   toolExecutor!: ToolExecutor;
   contextBuilder!: ContextBuilder;
+  memoryManager!: MemoryManager;
+  memoryExtractor!: MemoryExtractor;
   chatSessions: ChatSession[] = [];
 
   private indexRebuildTimer: ReturnType<typeof setTimeout> | null = null;
   private chatPersistTimer: ReturnType<typeof setTimeout> | null = null;
 
-  // ── Lifecycle ──────────────────────────────────────────────────────────────
+  // ── Lifecycle ───────────────────────────────────────────────────────────────
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -29,26 +33,32 @@ export default class LlamaPlugin extends Plugin {
     this.initServices();
 
     // Register sidebar view
-    this.registerView(LLAMA_CHAT_VIEW_TYPE, leaf => new ChatView(leaf, this));
+    this.registerView(ENGRAM_VIEW_TYPE, leaf => new ChatView(leaf, this));
 
     // Ribbon icon
-    this.addRibbonIcon('message-circle', 'Open LLAMA Chat', () => this.activateView());
+    this.addRibbonIcon('brain', 'Open Engram', () => this.activateView());
 
     // Command palette
     this.addCommand({
-      id: 'open-llama-chat',
-      name: 'Open LLAMA Chat sidebar',
+      id: 'open-engram',
+      name: 'Open Engram sidebar',
       callback: () => this.activateView(),
     });
 
     this.addCommand({
-      id: 'llama-reindex-vault',
-      name: 'LLAMA Chat: Re-index vault',
+      id: 'engram-reindex-vault',
+      name: 'Re-index vault',
       callback: () => this.rebuildIndex(),
     });
 
+    this.addCommand({
+      id: 'engram-open-memory',
+      name: 'Open memory file',
+      callback: () => this.openMemoryFile(),
+    });
+
     // Settings tab
-    this.addSettingTab(new LlamaSettingTab(this.app, this));
+    this.addSettingTab(new EngramSettingTab(this.app, this));
 
     // Build vault index (non-blocking)
     this.buildIndexInBackground();
@@ -58,30 +68,60 @@ export default class LlamaPlugin extends Plugin {
   }
 
   onunload(): void {
-    this.app.workspace.detachLeavesOfType(LLAMA_CHAT_VIEW_TYPE);
+    this.app.workspace.detachLeavesOfType(ENGRAM_VIEW_TYPE);
     if (this.indexRebuildTimer) clearTimeout(this.indexRebuildTimer);
     if (this.chatPersistTimer) clearTimeout(this.chatPersistTimer);
   }
 
-  // ── Settings ───────────────────────────────────────────────────────────────
+  // ── Settings ────────────────────────────────────────────────────────────────
 
   async loadSettings(): Promise<void> {
     const data = await this.loadData();
     this.settings = Object.assign({}, DEFAULT_SETTINGS, data?.settings ?? {});
+
+    // Migrate old LlamaPluginSettings format if present
+    if ((this.settings as any).endpoint && !(this.settings as any).providerBaseUrl) {
+      (this.settings as any).providerBaseUrl = (this.settings as any).endpoint;
+    }
+    if (!(this.settings as any).personas || !(this.settings as any).personas.length) {
+      this.settings.personas = DEFAULT_SETTINGS.personas;
+    }
+    if (!(this.settings as any).activePersonaId) {
+      this.settings.activePersonaId = 'default';
+    }
   }
 
   async saveSettings(): Promise<void> {
     const existing = (await this.loadData()) ?? {};
     await this.saveData({ ...existing, settings: this.settings });
 
-    // Propagate settings changes to services
-    if (this.llmClient) this.llmClient.updateSettings(this.settings);
-    if (this.toolExecutor) this.toolExecutor.updateSettings(this.settings);
-    if (this.contextBuilder) this.contextBuilder.updateSettings(this.settings);
-    if (this.indexer) this.indexer.updateSettings(this.settings);
+    // Propagate to all services
+    this.providerFactory?.updateSettings(this.settings);
+    this.toolExecutor?.updateSettings(this.settings);
+    this.contextBuilder?.updateSettings(this.settings);
+    this.indexer?.updateSettings(this.settings);
+    this.memoryManager?.updateConfig(this.settings.memoryPath, this.settings.maxMemoryTokens);
   }
 
-  // ── Chat Sessions ─────────────────────────────────────────────────────────
+  // ── Connection test (called from settings UI) ────────────────────────────────
+
+  async testConnection(): Promise<string> {
+    try {
+      this.providerFactory.updateSettings(this.settings);
+      const model = await this.providerFactory.healthCheck();
+      return `✅ Connected — model: ${model}`;
+    } catch (e) {
+      return `❌ ${(e as Error).message}`;
+    }
+  }
+
+  // ── Memory helpers ───────────────────────────────────────────────────────────
+
+  async openMemoryFile(): Promise<void> {
+    await this.memoryManager.openInEditor();
+  }
+
+  // ── Chat Sessions ────────────────────────────────────────────────────────────
 
   async loadChatSessions(): Promise<void> {
     const data = await this.loadData();
@@ -113,7 +153,6 @@ export default class LlamaPlugin extends Plugin {
     const withTouch = { ...session, updatedAt: session.updatedAt || Date.now() };
     if (idx >= 0) this.chatSessions[idx] = withTouch;
     else this.chatSessions.push(withTouch);
-
     this.chatSessions.sort((a, b) => b.updatedAt - a.updatedAt);
     this.scheduleSaveChatSessions();
   }
@@ -123,45 +162,52 @@ export default class LlamaPlugin extends Plugin {
     this.scheduleSaveChatSessions();
   }
 
-  // ── Services ───────────────────────────────────────────────────────────────
+  // ── Services ─────────────────────────────────────────────────────────────────
 
   private initServices(): void {
     this.indexer = new VaultIndexer(this.app, this.settings);
     this.embeddingIndex = new EmbeddingIndex(this.app, this.settings);
-    this.llmClient = new LLMClient(this.settings);
+    this.providerFactory = new ProviderFactory(this.settings);
     this.toolExecutor = new ToolExecutor(this.app, this.indexer, this.settings);
-    this.contextBuilder = new ContextBuilder(this.indexer, this.embeddingIndex, this.settings);
+    this.memoryManager = new MemoryManager(
+      this.app,
+      this.settings.memoryPath,
+      this.settings.maxMemoryTokens
+    );
+    this.contextBuilder = new ContextBuilder(
+      this.app,
+      this.settings,
+      this.indexer,
+      this.memoryManager
+    );
+    this.memoryExtractor = new MemoryExtractor(this.providerFactory, this.memoryManager);
   }
 
-  // ── Vault Indexing ─────────────────────────────────────────────────────────
+  // ── Vault Indexing ────────────────────────────────────────────────────────────
 
   private async buildIndexInBackground(): Promise<void> {
     const data = await this.loadData();
-    const savedIndex: VaultIndex | null = data?.index ?? null;
+    const savedIndex = data?.index ?? null;
     const savedEmbeds: EmbeddingIndexData | null = data?.embeddings ?? null;
 
     try {
       await this.indexer.build(savedIndex);
-      console.log(`[LLAMA Chat] Vault indexed: ${this.indexer.noteCount} notes`);
+      console.log(`[Engram] Vault indexed: ${this.indexer.noteCount} notes`);
 
-      // Build embedding index incrementally (non-blocking, may take a few seconds)
       if (this.settings.embeddingModel) {
-        await this.embeddingIndex.build(
-          savedEmbeds,
-          path => this.indexer.readNote(path)
-        );
-        console.log(`[LLAMA Chat] Embeddings: ${this.embeddingIndex.entryCount} notes embedded`);
+        await this.embeddingIndex.build(savedEmbeds, path => this.indexer.readNote(path));
+        console.log(`[Engram] Embeddings: ${this.embeddingIndex.entryCount} notes embedded`);
       }
 
       await this.persistIndex();
     } catch (e) {
-      console.error('[LLAMA Chat] Indexing error:', e);
+      console.error('[Engram] Indexing error:', e);
     }
   }
 
   private async persistIndex(): Promise<void> {
     const existing = (await this.loadData()) ?? {};
-    const update: Record<string, any> = {
+    const update: Record<string, unknown> = {
       ...existing,
       index: this.indexer.getSerializable(),
     };
@@ -172,24 +218,23 @@ export default class LlamaPlugin extends Plugin {
   }
 
   private async rebuildIndex(): Promise<void> {
-    new Notice('🦙 Re-indexing vault…');
+    new Notice('🧠 Engram: Re-indexing vault…');
     await this.indexer.build(null);
     if (this.settings.embeddingModel) {
-      new Notice('🦙 Building embeddings (this may take a minute)…');
+      new Notice('🧠 Engram: Building embeddings…');
       await this.embeddingIndex.build(null, path => this.indexer.readNote(path));
     }
     await this.persistIndex();
-    new Notice(`🦙 Vault indexed: ${this.indexer.noteCount} notes${this.embeddingIndex.isReady ? `, ${this.embeddingIndex.entryCount} embedded` : ''}`);
+    new Notice(`🧠 Engram: ${this.indexer.noteCount} notes indexed`);
   }
 
-  // ── Vault Event Handlers ───────────────────────────────────────────────────
+  // ── Vault Events ──────────────────────────────────────────────────────────────
 
   private registerVaultEvents(): void {
     this.registerEvent(
       this.app.vault.on('create', async file => {
         if (file instanceof TFile && file.extension === 'md') {
           await this.indexer.updateFile(file);
-          // Embed the new file (fire-and-forget; errors silently ignored)
           if (this.settings.embeddingModel) {
             const content = await this.indexer.readNote(file.path);
             if (content) this.embeddingIndex.embedFile(file, content);
@@ -233,25 +278,23 @@ export default class LlamaPlugin extends Plugin {
     );
   }
 
-  /** Debounce index persistence to avoid writing on every keystroke */
   private schedulePersist(): void {
     if (this.indexRebuildTimer) clearTimeout(this.indexRebuildTimer);
     this.indexRebuildTimer = setTimeout(() => this.persistIndex(), 5000);
   }
 
-  // ── View Management ────────────────────────────────────────────────────────
+  // ── View ──────────────────────────────────────────────────────────────────────
 
   async activateView(): Promise<void> {
     const { workspace } = this.app;
-
     let leaf: WorkspaceLeaf | null = null;
-    const leaves = workspace.getLeavesOfType(LLAMA_CHAT_VIEW_TYPE);
+    const leaves = workspace.getLeavesOfType(ENGRAM_VIEW_TYPE);
 
     if (leaves.length > 0) {
       leaf = leaves[0];
     } else {
       leaf = workspace.getRightLeaf(false);
-      if (leaf) await leaf.setViewState({ type: LLAMA_CHAT_VIEW_TYPE, active: true });
+      if (leaf) await leaf.setViewState({ type: ENGRAM_VIEW_TYPE, active: true });
     }
 
     if (leaf) workspace.revealLeaf(leaf);
