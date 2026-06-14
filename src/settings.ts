@@ -240,7 +240,7 @@ export class EngramSettingTab extends PluginSettingTab {
 
     testSetting.addButton(btn => {
       btn.setButtonText('Test connection').setCta().onClick(async () => {
-        // eslint-disable-next-line obsidianmd/no-unsupported-api
+        // eslint-disable-next-line obsidianmd/no-unsupported-api -- safe on modern Obsidian
         btn.setButtonText('Testing…').setDisabled(true);
         if (testResultEl) testResultEl.remove();
         try {
@@ -255,7 +255,7 @@ export class EngramSettingTab extends PluginSettingTab {
             cls: 'engram-test-result engram-test-err',
           });
         } finally {
-          // eslint-disable-next-line obsidianmd/no-unsupported-api
+          // eslint-disable-next-line obsidianmd/no-unsupported-api -- safe on modern Obsidian
           btn.setButtonText('Test connection').setDisabled(false);
         }
       });
@@ -383,7 +383,7 @@ export class EngramSettingTab extends PluginSettingTab {
           })
       )
       .addButton(btn =>
-        // eslint-disable-next-line obsidianmd/no-unsupported-api
+        // eslint-disable-next-line obsidianmd/no-unsupported-api -- safe on modern Obsidian
         btn.setButtonText('Open').setTooltip('Open memory file in Obsidian').onClick(() => {
           (this.plugin as any).openMemoryFile();
         })
