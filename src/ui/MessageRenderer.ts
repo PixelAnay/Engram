@@ -103,7 +103,7 @@ export class MessageRenderer {
     if (!wrapper) return;
 
     // Update or create the raw text node inside the content div
-    const contentEl = wrapper.querySelector('.llama-bubble-content') as HTMLElement | null;
+    const contentEl = wrapper.querySelector('.engram-bubble-content') as HTMLElement | null;
     if (!contentEl) return;
 
     if (this.streamingTextNode && contentEl.contains(this.streamingTextNode)) {
@@ -115,7 +115,7 @@ export class MessageRenderer {
     }
 
     // Update cursor visibility
-    const cursor = wrapper.querySelector('.llama-cursor');
+    const cursor = wrapper.querySelector('.engram-cursor');
     if (cursor) cursor.setAttribute('style', msg.streaming ? '' : 'display:none');
 
     // Update tool events (cheap DOM update)
@@ -148,22 +148,22 @@ export class MessageRenderer {
 
   private renderBubble(msg: DisplayMessage): HTMLElement {
     const wrapper = document.createElement('div');
-    wrapper.className = `llama-msg-wrapper llama-msg-${msg.role}`;
+    wrapper.className = `engram-msg-wrapper engram-msg-${msg.role}`;
 
     const bubble = wrapper.appendChild(document.createElement('div'));
-    bubble.className = 'llama-bubble';
+    bubble.className = 'engram-bubble';
 
     // Tool events
     if (msg.toolEvents && msg.toolEvents.length > 0) {
       const toolsEl = bubble.appendChild(document.createElement('div'));
-      toolsEl.className = 'llama-tool-events';
+      toolsEl.className = 'engram-tool-events';
       this.renderToolEvents(toolsEl, msg.toolEvents);
     }
 
     // Attachments
     if (msg.attachments && msg.attachments.length > 0) {
       const attContainer = bubble.appendChild(document.createElement('div'));
-      attContainer.className = 'llama-input-attachments';
+      attContainer.className = 'engram-input-attachments';
       attContainer.style.marginBottom = msg.content ? '8px' : '0';
       for (const att of msg.attachments) {
         if (att.type.startsWith('image/')) {
@@ -173,9 +173,9 @@ export class MessageRenderer {
           img.style.cssText = 'max-width:100%;border-radius:var(--radius-s);max-height:200px;object-fit:contain';
         } else {
           const chip = attContainer.appendChild(document.createElement('div'));
-          chip.className = 'llama-attachment-chip';
+          chip.className = 'engram-attachment-chip';
           const nameSpan = chip.appendChild(document.createElement('span'));
-          nameSpan.className = 'llama-attachment-name';
+          nameSpan.className = 'engram-attachment-name';
           nameSpan.textContent = att.name;
         }
       }
@@ -183,7 +183,7 @@ export class MessageRenderer {
 
     // Content
     const contentEl = bubble.appendChild(document.createElement('div'));
-    contentEl.className = 'llama-bubble-content';
+    contentEl.className = 'engram-bubble-content';
 
     if (msg.content) {
       if (msg.streaming) {
@@ -202,26 +202,26 @@ export class MessageRenderer {
     const hasText = msg.content.trim().length > 0;
     if (msg.streaming && !hasText) {
       const thinkingEl = contentEl.appendChild(document.createElement('div'));
-      thinkingEl.className = 'llama-thinking';
+      thinkingEl.className = 'engram-thinking';
       thinkingEl.appendChild(document.createElement('span')).textContent = 'Thinking';
-      thinkingEl.appendChild(document.createElement('span')).className = 'llama-thinking-dots';
+      thinkingEl.appendChild(document.createElement('span')).className = 'engram-thinking-dots';
       (thinkingEl.lastChild as HTMLElement).textContent = '...';
     }
 
     // Streaming cursor
     if (msg.streaming) {
       const cursor = bubble.appendChild(document.createElement('span'));
-      cursor.className = 'llama-cursor';
+      cursor.className = 'engram-cursor';
       cursor.textContent = '▋';
     }
 
     // Action buttons (Copy, Edit)
     if (!msg.streaming && msg.role !== 'error') {
       const actions = wrapper.appendChild(document.createElement('div'));
-      actions.className = 'llama-msg-actions';
+      actions.className = 'engram-msg-actions';
 
       const copyBtn = actions.appendChild(document.createElement('button'));
-      copyBtn.className = 'llama-msg-action-btn';
+      copyBtn.className = 'engram-msg-action-btn';
       copyBtn.title = 'Copy';
       setIcon(copyBtn, 'copy');
       copyBtn.addEventListener('click', () => {
@@ -233,7 +233,7 @@ export class MessageRenderer {
 
       if (msg.role === 'user') {
         const editBtn = actions.appendChild(document.createElement('button'));
-        editBtn.className = 'llama-msg-action-btn';
+        editBtn.className = 'engram-msg-action-btn';
         editBtn.title = 'Edit & Resend';
         setIcon(editBtn, 'pencil');
         editBtn.addEventListener('click', () => this.onEditMessage(msg));
@@ -247,7 +247,7 @@ export class MessageRenderer {
     container.empty();
     for (const ev of events) {
       const evEl = container.appendChild(document.createElement('div'));
-      evEl.className = `llama-tool-event llama-tool-${ev.type}`;
+      evEl.className = `engram-tool-event engram-tool-${ev.type}`;
       const icon = TOOL_ICONS[ev.name] ?? '🛠️';
       if (ev.type === 'start') {
         evEl.textContent = `${icon} ${ev.name.replace(/_/g, ' ')}…`;
@@ -261,14 +261,14 @@ export class MessageRenderer {
   }
 
   private updateToolEventsEl(wrapper: HTMLElement, events: ToolEvent[]): void {
-    const toolsEl = wrapper.querySelector('.llama-tool-events') as HTMLElement | null;
+    const toolsEl = wrapper.querySelector('.engram-tool-events') as HTMLElement | null;
     if (!toolsEl && events.length === 0) return;
 
     if (!toolsEl) {
-      const bubble = wrapper.querySelector('.llama-bubble') as HTMLElement;
+      const bubble = wrapper.querySelector('.engram-bubble') as HTMLElement;
       if (!bubble) return;
       const newToolsEl = document.createElement('div');
-      newToolsEl.className = 'llama-tool-events';
+      newToolsEl.className = 'engram-tool-events';
       bubble.insertBefore(newToolsEl, bubble.firstChild);
       this.renderToolEvents(newToolsEl, events);
     } else {
@@ -301,7 +301,7 @@ export class MessageRenderer {
 
     const toAnchor = (path: string): HTMLAnchorElement => {
       const a = document.createElement('a');
-      a.className = 'llama-note-link';
+      a.className = 'engram-note-link';
       a.textContent = path;
       a.title = `Open "${path}" in a new tab`;
       a.href = '#';
@@ -328,7 +328,7 @@ export class MessageRenderer {
       const pathOnly = raw.replace(/^\.?\//, '').replace(/#.*$/, '');
       const file = this.resolveFile(pathOnly);
       if (!file) continue;
-      anchor.classList.add('llama-note-link');
+      anchor.classList.add('engram-note-link');
       anchor.setAttribute('title', `Open "${file}" in a new tab`);
       anchor.addEventListener('click', makeHandler(file));
     }

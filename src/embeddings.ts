@@ -1,5 +1,5 @@
 import { App, TFile } from 'obsidian';
-import type { LlamaPluginSettings } from './types';
+import type { EngramSettings } from './types';
 
 // ── Cosine similarity ──────────────────────────────────────────────────────────
 
@@ -40,7 +40,7 @@ export class EmbeddingIndex {
 
   constructor(
     private app: App,
-    private settings: LlamaPluginSettings
+    private settings: EngramSettings
   ) {
     this.ollamaEndpoint = settings.ollamaEmbedEndpoint ?? 'http://localhost:11434';
     this.model = settings.embeddingModel ?? '';
@@ -49,7 +49,7 @@ export class EmbeddingIndex {
   get isReady(): boolean { return this.ready && this.model !== ''; }
   get entryCount(): number { return this.entries.length; }
 
-  updateSettings(settings: LlamaPluginSettings): void {
+  updateSettings(settings: EngramSettings): void {
     this.settings = settings;
     this.ollamaEndpoint = settings.ollamaEmbedEndpoint ?? 'http://localhost:11434';
     this.model = settings.embeddingModel ?? '';

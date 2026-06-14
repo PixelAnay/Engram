@@ -66,21 +66,21 @@ function showPdfPageRangeModal(
   onCancel: () => void
 ): void {
   const overlay = document.createElement('div');
-  overlay.className = 'llama-modal-overlay';
+  overlay.className = 'engram-modal-overlay';
 
   const modal = overlay.appendChild(document.createElement('div'));
-  modal.className = 'llama-modal';
+  modal.className = 'engram-modal';
 
   const title = modal.appendChild(document.createElement('div'));
-  title.className = 'llama-modal-title';
+  title.className = 'engram-modal-title';
   title.textContent = `📄 PDF: ${fileName}`;
 
   const subtitle = modal.appendChild(document.createElement('div'));
-  subtitle.className = 'llama-modal-subtitle';
+  subtitle.className = 'engram-modal-subtitle';
   subtitle.textContent = `${totalPages} pages — select which pages to send`;
 
   const row = modal.appendChild(document.createElement('div'));
-  row.className = 'llama-modal-row';
+  row.className = 'engram-modal-row';
 
   const fromLabel = row.appendChild(document.createElement('label'));
   fromLabel.textContent = 'From page';
@@ -89,7 +89,7 @@ function showPdfPageRangeModal(
   fromInput.min = '1';
   fromInput.max = String(totalPages);
   fromInput.value = '1';
-  fromInput.className = 'llama-modal-input';
+  fromInput.className = 'engram-modal-input';
 
   const toLabel = row.appendChild(document.createElement('label'));
   toLabel.textContent = 'To page';
@@ -98,23 +98,23 @@ function showPdfPageRangeModal(
   toInput.min = '1';
   toInput.max = String(totalPages);
   toInput.value = String(Math.min(totalPages, 14));
-  toInput.className = 'llama-modal-input';
+  toInput.className = 'engram-modal-input';
 
   const warning = modal.appendChild(document.createElement('div'));
-  warning.className = 'llama-modal-warning';
+  warning.className = 'engram-modal-warning';
   warning.textContent = '⚠️ Each page is sent as an image. More pages = larger context. Recommend ≤ 14.';
 
   const btns = modal.appendChild(document.createElement('div'));
-  btns.className = 'llama-modal-btns';
+  btns.className = 'engram-modal-btns';
 
   const cancelBtn = btns.appendChild(document.createElement('button'));
   cancelBtn.textContent = 'Cancel';
-  cancelBtn.className = 'llama-modal-cancel';
+  cancelBtn.className = 'engram-modal-cancel';
   cancelBtn.addEventListener('click', () => { overlay.remove(); onCancel(); });
 
   const confirmBtn = btns.appendChild(document.createElement('button'));
   confirmBtn.textContent = 'Attach pages';
-  confirmBtn.className = 'llama-modal-confirm';
+  confirmBtn.className = 'engram-modal-confirm';
   confirmBtn.addEventListener('click', () => {
     const from = Math.max(1, Math.min(totalPages, parseInt(fromInput.value) || 1));
     const to = Math.max(from, Math.min(totalPages, parseInt(toInput.value) || totalPages));
@@ -181,7 +181,7 @@ export class AttachmentHandler {
                   dataUrl,
                 });
               } catch (e) {
-                console.error(`[LLAMA Chat] Failed to render PDF page ${p}:`, e);
+                console.error(`[Engram] Failed to render PDF page ${p}:`, e);
               }
             }
             new Notice(`✅ Loaded ${to - from + 1} pages from ${file.name}`);
@@ -191,7 +191,7 @@ export class AttachmentHandler {
         );
       });
     } catch (err) {
-      console.error('[LLAMA Chat] PDF parsing error', err);
+      console.error('[Engram] PDF parsing error', err);
       new Notice('Failed to parse PDF pages into images.');
     }
     return result;

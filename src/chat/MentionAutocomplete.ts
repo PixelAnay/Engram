@@ -15,7 +15,7 @@ export class MentionAutocomplete {
     private indexer: VaultIndexer,
     private onSelect: (notePath: string) => void
   ) {
-    this.dropdownEl = container.createDiv('llama-mention-dropdown');
+    this.dropdownEl = container.createDiv('engram-mention-dropdown');
     this.dropdownEl.style.display = 'none';
   }
 
@@ -54,11 +54,11 @@ export class MentionAutocomplete {
 
     for (let i = 0; i < filtered.length; i++) {
       const note = filtered[i];
-      const item = this.dropdownEl.createDiv('llama-mention-item');
+      const item = this.dropdownEl.createDiv('engram-mention-item');
       if (i === 0) item.classList.add('active');
 
-      item.createSpan('llama-mention-name').textContent = note.title;
-      item.createSpan('llama-mention-path').textContent = note.path;
+      item.createSpan('engram-mention-name').textContent = note.title;
+      item.createSpan('engram-mention-path').textContent = note.path;
 
       item.addEventListener('mousedown', (e: MouseEvent) => {
         e.preventDefault();
@@ -72,9 +72,9 @@ export class MentionAutocomplete {
     if (this.dropdownEl.style.display === 'none') return false;
 
     const items = Array.from(
-      this.dropdownEl.querySelectorAll('.llama-mention-item')
+      this.dropdownEl.querySelectorAll('.engram-mention-item')
     ) as HTMLElement[];
-    const active = this.dropdownEl.querySelector('.llama-mention-item.active') as HTMLElement | null;
+    const active = this.dropdownEl.querySelector('.engram-mention-item.active') as HTMLElement | null;
     const idx = active ? items.indexOf(active) : -1;
 
     if (e.key === 'ArrowDown') {

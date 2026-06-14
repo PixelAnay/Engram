@@ -1,5 +1,5 @@
 import { App, TFile, getAllTags, CachedMetadata } from 'obsidian';
-import type { NoteMetadata, SearchResult, LlamaPluginSettings } from './types';
+import type { NoteMetadata, SearchResult, EngramSettings } from './types';
 import { normalisePath } from './utils/pathUtils';
 
 /** Local-only index shape — not exported from types.ts */
@@ -66,7 +66,7 @@ export class VaultIndexer {
   private _vaultMapCache: string | null = null;
   private _vaultMapNoteCount: number | null = null;
 
-  constructor(private app: App, private settings: LlamaPluginSettings) {
+  constructor(private app: App, private settings: EngramSettings) {
     this.rebuildExcludeRegexes();
   }
 
@@ -172,7 +172,7 @@ export class VaultIndexer {
   }
 
   /** Update settings (e.g. exclusion patterns changed) */
-  updateSettings(settings: LlamaPluginSettings): void {
+  updateSettings(settings: EngramSettings): void {
     this.settings = settings;
     this.rebuildExcludeRegexes();
     this.invalidateCaches();

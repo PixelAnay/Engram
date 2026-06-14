@@ -40,9 +40,9 @@ const COLOR_CRITICAL = '#f87171'; // red
  * `setMax`, and `destroy` methods for lifecycle management.
  */
 export class TokenBudgetBar {
-  /** Wrapping element — carries the `llama-token-bar` class. */
+  /** Wrapping element — carries the `engram-token-bar` class. */
   private readonly el: HTMLElement;
-  /** The coloured fill strip — carries the `llama-token-bar-fill` class. */
+  /** The coloured fill strip — carries the `engram-token-bar-fill` class. */
   private readonly fillEl: HTMLElement;
   /** Text label showing e.g. "4.2k / 32k tokens". */
   private readonly labelEl: HTMLElement;
@@ -58,17 +58,17 @@ export class TokenBudgetBar {
 
     // ── Wrapper ───────────────────────────────────────────────────────────
     this.el = document.createElement('div');
-    this.el.className = 'llama-token-bar';
+    this.el.className = 'engram-token-bar';
     container.appendChild(this.el);
 
     // ── Fill strip ────────────────────────────────────────────────────────
     this.fillEl = document.createElement('div');
-    this.fillEl.className = 'llama-token-bar-fill';
+    this.fillEl.className = 'engram-token-bar-fill';
     this.el.appendChild(this.fillEl);
 
     // ── Label ─────────────────────────────────────────────────────────────
     this.labelEl = document.createElement('span');
-    this.labelEl.className = 'llama-token-bar-label';
+    this.labelEl.className = 'engram-token-bar-label';
     this.el.appendChild(this.labelEl);
 
     // Render initial empty state
