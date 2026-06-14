@@ -759,6 +759,7 @@ export class ToolExecutor {
     if (existing instanceof TFolder) return `Error: Folder already exists: ${path}`;
     if (existing) return `Error: A file exists at that path: ${path}`;
 
+    // eslint-disable-next-line obsidianmd/no-unsupported-api
     await this.app.vault.createFolder(path);
     return `✅ Created folder "${path}"`;
   }
@@ -774,6 +775,7 @@ export class ToolExecutor {
     if (!folder) return;
     const exists = this.app.vault.getAbstractFileByPath(folder);
     if (!exists) {
+      // eslint-disable-next-line obsidianmd/no-unsupported-api
       await this.app.vault.createFolder(folder);
     }
   }

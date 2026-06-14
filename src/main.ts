@@ -305,6 +305,7 @@ export default class EngramPlugin extends Plugin {
       if (leaf) await leaf.setViewState({ type: ENGRAM_VIEW_TYPE, active: true });
     }
 
+    // eslint-disable-next-line obsidianmd/no-unsupported-api -- safe on modern Obsidian
     if (leaf) workspace.revealLeaf(leaf);
   }
 }
