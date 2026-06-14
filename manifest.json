@@ -1,7 +1,7 @@
 ﻿{
     "id":  "obsidian-engram",
     "name":  "Engram",
-    "version":  "5.0.1",
+    "version":  "5.0.2",
     "minAppVersion":  "0.15.0",
     "description":  "The AI that remembers you. A personal intelligence with persistent memory, multi-provider AI, and full vault access.",
     "author":  "PixelAnay",
