@@ -803,6 +803,18 @@
   box-shadow: 0 3px 8px color-mix(in srgb, var(--color-accent) 40%, transparent);
 }
 
+/* Danger variant — shown for destructive operations (e.g. delete note) */
+.llama-modal-confirm-danger {
+  background: #ef4444;
+  border-color: transparent;
+  color: white;
+}
+
+.llama-modal-confirm-danger:hover {
+  background: #dc2626;
+  box-shadow: 0 3px 8px color-mix(in srgb, #ef4444 40%, transparent);
+}
+
 /* ── @ Mention Autocomplete Dropdown ──────────────────────────────────────── */
 
 .llama-mention-dropdown {
@@ -855,4 +867,136 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* ── Token Budget Bar ────────────────────────────────────────────────────── */
+
+.llama-token-bar {
+  position: relative;
+  width: 100%;
+  height: 6px;
+  background: var(--background-modifier-border);
+  border-radius: 3px;
+  overflow: hidden;
+  cursor: default;
+  /* Reserve space for the label above/below — the label is absolutely
+     positioned so the bar height itself stays at 6 px */
+}
+
+.llama-token-bar-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: 3px;
+  /* Smooth colour + width transitions for live updates */
+  transition: width 0.35s ease, background-color 0.35s ease;
+  /* Default colour (overridden inline by JS) */
+  background-color: #4ade80;
+}
+
+/* Colour variants via data-budget attribute — provide a CSS fallback path
+   alongside the inline styles set by TokenBudgetBar.update() */
+.llama-token-bar-fill[data-budget="ok"]       { background-color: #4ade80; }
+.llama-token-bar-fill[data-budget="warning"]  { background-color: #f59e0b; }
+.llama-token-bar-fill[data-budget="critical"] { background-color: #f87171; }
+
+.llama-token-bar-label {
+  display: block;
+  font-size: 10px;
+  color: var(--text-faint);
+  text-align: right;
+  margin-top: 2px;
+  white-space: nowrap;
+  user-select: none;
+}
+
+/* ── Context Status Label ─────────────────────────────────────────────────── */
+
+.llama-context-status {
+  font-size: 10px;
+  color: var(--color-accent);
+  padding: 2px 0 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  animation: llama-pulse 1.2s ease-in-out infinite;
+}
+
+.llama-context-status::before {
+  content: '⏳';
+  font-size: 9px;
+}
+
+/* ── Confirm Dialog — Danger Button ──────────────────────────────────────── */
+
+.llama-modal-confirm-danger {
+  background: #ef4444;
+  border-color: transparent;
+  color: white;
+}
+
+.llama-modal-confirm-danger:hover {
+  background: #dc2626;
+  box-shadow: 0 3px 8px color-mix(in srgb, #ef4444 40%, transparent);
+}
+
+/* ── Undo History Panel ───────────────────────────────────────────────────── */
+
+.llama-undo-panel {
+  min-width: 340px;
+  max-width: 480px;
+}
+
+.llama-undo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 300px;
+  overflow-y: auto;
+  margin: 8px 0;
+}
+
+.llama-undo-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-radius: var(--radius-s);
+  background: var(--background-secondary);
+  cursor: pointer;
+  border: 1px solid var(--background-modifier-border);
+  transition: background 0.15s, border-color 0.15s;
+  gap: 12px;
+}
+
+.llama-undo-item:hover {
+  background: color-mix(in srgb, var(--color-accent) 10%, var(--background-secondary));
+  border-color: var(--color-accent);
+}
+
+.llama-undo-desc {
+  font-size: 12px;
+  color: var(--text-normal);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.llama-undo-time {
+  font-size: 10px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* ── Footer Layout (token bar + badges stacked) ─────────────────────────── */
+
+.llama-footer {
+  flex-shrink: 0;
+  padding: 6px 12px 8px;
+  border-top: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }

@@ -1,157 +1,44 @@
-import { ItemView, WorkspaceLeaf, MarkdownRenderer, Notice, setIcon, Component } from 'obsidian';
+/**
+ * ChatView.ts
+ * Slim orchestrator for the LLAMA Chat sidebar view.
+ *
+ * All heavy sub-concerns are delegated to:
+ *  - SessionManager   — session CRUD & persistence
+ *  - MessageRenderer  — bubble DOM, incremental append, streaming
+ *  - AttachmentHandler — file/PDF processing
+ *  - MentionAutocomplete — @-mention dropdown
+ *  - TokenBudgetBar   — context window usage indicator
+ */
+
+import { ItemView, WorkspaceLeaf, Notice, setIcon } from 'obsidian';
 import type LlamaPlugin from './main';
-import type { ChatMessage, StreamChunk, MessageContentPart, ChatSession } from './types';
-
-/** Render Markdown safely across Obsidian versions */
-function renderMarkdownCompat(
-  app: Parameters<typeof MarkdownRenderer.render>[0],
-  source: string,
-  el: HTMLElement,
-  component: Component
-): void {
-  try {
-    // Obsidian 1.0+ static method
-    MarkdownRenderer.render(app, source, el, '', component);
-  } catch {
-    // Fallback: older Obsidian API
-    (MarkdownRenderer as any).renderMarkdown(source, el, '', component);
-  }
-}
-
-async function getPdfJs(): Promise<any> {
-  if ((window as any).pdfjsLib) return (window as any).pdfjsLib;
-  return new Promise((resolve, reject) => {
-    const script = document.createElement('script');
-    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js';
-    script.onload = () => {
-      (window as any).pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
-      resolve((window as any).pdfjsLib);
-    };
-    script.onerror = () => reject(new Error('Failed to load pdf.js from CDN'));
-    document.head.appendChild(script);
-  });
-}
-
-function renderPdfPageToDataUrl(pdfDoc: any, pageNum: number): Promise<string> {
-  return new Promise(async (resolve, reject) => {
-    try {
-      const page = await pdfDoc.getPage(pageNum);
-      // scale 2.0 ensures text is crisp enough for the vision model
-      const viewport = page.getViewport({ scale: 2.0 });
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return reject(new Error('No canvas context'));
-      canvas.width = viewport.width;
-      canvas.height = viewport.height;
-
-      const renderContext = { canvasContext: ctx, viewport: viewport };
-      await page.render(renderContext).promise;
-
-      resolve(canvas.toDataURL('image/jpeg', 0.85));
-    } catch (e) {
-      reject(e);
-    }
-  });
-}
+import type { ChatMessage, StreamChunk, MessageContentPart } from './types';
+import { SessionManager } from './chat/SessionManager';
+import { AttachmentHandler, type Attachment } from './chat/AttachmentHandler';
+import { MentionAutocomplete } from './chat/MentionAutocomplete';
+import { MessageRenderer, type DisplayMessage, type ToolEvent } from './ui/MessageRenderer';
+import { TokenBudgetBar } from './ui/TokenBudgetBar';
+import { estimateMessagesTokens } from './utils/tokenEstimator';
 
 export const LLAMA_CHAT_VIEW_TYPE = 'llama-chat-view';
 
-interface DisplayMessage {
-  role: 'user' | 'assistant' | 'error';
-  content: string;
-  attachments?: { name: string; type: string; dataUrl: string }[];
-  toolEvents?: ToolEvent[];
-  streaming?: boolean;
-}
-
-interface ToolEvent {
-  type: 'start' | 'end';
-  name: string;
-  result?: string;
-}
-
-// ── PDF Page Range Modal ──────────────────────────────────────────────────────
-
-function showPdfPageRangeModal(
-  fileName: string,
-  totalPages: number,
-  onConfirm: (from: number, to: number) => void,
-  onCancel: () => void
-): void {
-  const overlay = document.createElement('div');
-  overlay.className = 'llama-modal-overlay';
-
-  const modal = overlay.appendChild(document.createElement('div'));
-  modal.className = 'llama-modal';
-
-  const title = modal.appendChild(document.createElement('div'));
-  title.className = 'llama-modal-title';
-  title.textContent = `📄 PDF: ${fileName}`;
-
-  const subtitle = modal.appendChild(document.createElement('div'));
-  subtitle.className = 'llama-modal-subtitle';
-  subtitle.textContent = `${totalPages} pages — select which pages to send`;
-
-  const row = modal.appendChild(document.createElement('div'));
-  row.className = 'llama-modal-row';
-
-  const fromLabel = row.appendChild(document.createElement('label'));
-  fromLabel.textContent = 'From page';
-  const fromInput = row.appendChild(document.createElement('input'));
-  fromInput.type = 'number';
-  fromInput.min = '1';
-  fromInput.max = String(totalPages);
-  fromInput.value = '1';
-  fromInput.className = 'llama-modal-input';
-
-  const toLabel = row.appendChild(document.createElement('label'));
-  toLabel.textContent = 'To page';
-  const toInput = row.appendChild(document.createElement('input'));
-  toInput.type = 'number';
-  toInput.min = '1';
-  toInput.max = String(totalPages);
-  toInput.value = String(Math.min(totalPages, 14));
-  toInput.className = 'llama-modal-input';
-
-  const warning = modal.appendChild(document.createElement('div'));
-  warning.className = 'llama-modal-warning';
-  warning.textContent = '⚠️ Each page is sent as an image. More pages = larger context. Recommend ≤ 14.';
-
-  const btns = modal.appendChild(document.createElement('div'));
-  btns.className = 'llama-modal-btns';
-
-  const cancelBtn = btns.appendChild(document.createElement('button'));
-  cancelBtn.textContent = 'Cancel';
-  cancelBtn.className = 'llama-modal-cancel';
-  cancelBtn.addEventListener('click', () => { overlay.remove(); onCancel(); });
-
-  const confirmBtn = btns.appendChild(document.createElement('button'));
-  confirmBtn.textContent = 'Attach pages';
-  confirmBtn.className = 'llama-modal-confirm';
-  confirmBtn.addEventListener('click', () => {
-    const from = Math.max(1, Math.min(totalPages, parseInt(fromInput.value) || 1));
-    const to = Math.max(from, Math.min(totalPages, parseInt(toInput.value) || totalPages));
-    overlay.remove();
-    onConfirm(from, to);
-  });
-
-  overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) { overlay.remove(); onCancel(); }
-  });
-
-  document.body.appendChild(overlay);
-  fromInput.focus();
-}
-
 export class ChatView extends ItemView {
   private plugin: LlamaPlugin;
+
+  // ── State ────────────────────────────────────────────────────────────────
   private messages: ChatMessage[] = [];
   private displayMessages: DisplayMessage[] = [];
-  private currentChatId = '';
   private isStreaming = false;
-  private pendingAttachments: { name: string; type: string; dataUrl: string }[] = [];
+  private pendingAttachments: Attachment[] = [];
 
-  // DOM refs
+  // ── Sub-components ────────────────────────────────────────────────────────
+  private sessionManager!: SessionManager;
+  private attachmentHandler!: AttachmentHandler;
+  private mentionAutocomplete!: MentionAutocomplete;
+  private messageRenderer!: MessageRenderer;
+  private tokenBudgetBar!: TokenBudgetBar;
+
+  // ── DOM refs ──────────────────────────────────────────────────────────────
   private statusDot!: HTMLElement;
   private statusLabel!: HTMLElement;
   private messagesContainer!: HTMLElement;
@@ -163,8 +50,8 @@ export class ChatView extends ItemView {
   private deleteChatBtn!: HTMLButtonElement;
   private attachInput!: HTMLInputElement;
   private attachmentPreviewEl!: HTMLElement;
-  private mentionDropdown!: HTMLElement;
-  private mentionStart = -1;
+  private permBadge!: HTMLElement;
+  private contextStatusEl!: HTMLElement;
 
   constructor(leaf: WorkspaceLeaf, plugin: LlamaPlugin) {
     super(leaf);
@@ -177,17 +64,43 @@ export class ChatView extends ItemView {
 
   async onOpen(): Promise<void> {
     this.buildUI();
-    this.initializeCurrentChat();
-    this.renderMessages();
-    this.refreshChatSessionControls();
-    await this.checkConnection();
 
-    // Register callback so ToolExecutor can open notes in tabs
+    // Initialize sub-components
+    this.sessionManager = new SessionManager(this.plugin);
+    this.attachmentHandler = new AttachmentHandler();
+    this.messageRenderer = new MessageRenderer(
+      this.app,
+      this.messagesContainer,
+      this,
+      (content) => navigator.clipboard.writeText(content),
+      (msg) => this.editMessage(msg),
+      (path) => this.openNotes([path])
+    );
+
+    // Wire ToolExecutor callback for open_note tool
     this.plugin.toolExecutor.onOpenNotes = (paths: string[]) => this.openNotes(paths);
+
+    // Initialize session
+    const session = this.sessionManager.initialize();
+    this.messages = [...session.messages];
+    this.displayMessages = MessageRenderer.buildDisplayMessages(this.messages);
+
+    // Mention autocomplete (needs input + container)
+    this.mentionAutocomplete = new MentionAutocomplete(
+      this.inputArea,
+      this.inputArea.parentElement!,
+      this.plugin.indexer,
+      () => { /* note selected — no extra action needed */ }
+    );
+
+    this.renderMessages();
+    this.refreshSessionControls();
+    await this.checkConnection();
   }
 
   async onClose(): Promise<void> {
     this.plugin.llmClient.abort();
+    this.tokenBudgetBar?.destroy();
   }
 
   // ── UI Construction ────────────────────────────────────────────────────────
@@ -196,37 +109,39 @@ export class ChatView extends ItemView {
     const root = this.containerEl.children[1] as HTMLElement;
     root.empty();
     root.addClass('llama-chat-root');
-    root.style.padding = '0';  // override Obsidian's default .view-content padding
+    root.style.padding = '0';
 
     // ── Header ──────────────────────────────────────────────────────────────
     const header = root.createDiv('llama-header');
 
     const titleRow = header.createDiv('llama-header-title-row');
-    const icon = titleRow.createSpan('llama-header-icon');
-    icon.textContent = '🦙';
+    titleRow.createSpan('llama-header-icon').textContent = '🦙';
     titleRow.createSpan('llama-header-title').textContent = 'LLAMA Chat';
 
     const statusRow = header.createDiv('llama-header-status-row');
     this.statusDot = statusRow.createSpan('llama-status-dot');
     this.statusLabel = statusRow.createSpan('llama-status-label');
     this.statusLabel.textContent = 'Connecting…';
-
     this.noteCountEl = statusRow.createSpan('llama-note-count');
 
     const sessionControls = header.createDiv('llama-chat-session-controls');
     this.chatSelectEl = sessionControls.createEl('select', { cls: 'llama-chat-select' });
     this.chatSelectEl.addEventListener('change', () => {
-      if (this.isStreaming) {
-        this.chatSelectEl.value = this.currentChatId;
-        return;
-      }
+      if (this.isStreaming) { this.chatSelectEl.value = this.sessionManager.currentId; return; }
       this.switchToSession(this.chatSelectEl.value);
     });
 
-    const newChatBtn = sessionControls.createEl('button', { cls: 'llama-session-btn', text: 'New chat', title: 'Start new chat' });
+    const newChatBtn = sessionControls.createEl('button', {
+      cls: 'llama-session-btn',
+      text: 'New chat',
+      title: 'Start new chat',
+    });
     newChatBtn.addEventListener('click', () => this.startNewChat());
 
-    this.deleteChatBtn = sessionControls.createEl('button', { cls: 'llama-icon-btn', title: 'Delete current chat' });
+    this.deleteChatBtn = sessionControls.createEl('button', {
+      cls: 'llama-icon-btn',
+      title: 'Delete current chat',
+    });
     setIcon(this.deleteChatBtn, 'trash-2');
     this.deleteChatBtn.addEventListener('click', () => this.deleteCurrentChat());
 
@@ -236,27 +151,30 @@ export class ChatView extends ItemView {
     setIcon(refreshBtn, 'refresh-cw');
     refreshBtn.addEventListener('click', () => this.checkConnection());
 
-    const clearBtn = headerActions.createEl('button', { cls: 'llama-icon-btn', title: 'Clear current chat messages' });
+    const clearBtn = headerActions.createEl('button', { cls: 'llama-icon-btn', title: 'Clear current chat' });
     setIcon(clearBtn, 'eraser');
     clearBtn.addEventListener('click', () => this.clearChat());
 
     const undoBtn = headerActions.createEl('button', { cls: 'llama-icon-btn', title: 'Undo last AI edit' });
     setIcon(undoBtn, 'rotate-ccw');
-    undoBtn.addEventListener('click', () => this.undoLastEdit());
+    undoBtn.addEventListener('click', () => this.showUndoPanel());
 
     const settingsBtn = headerActions.createEl('button', { cls: 'llama-icon-btn', title: 'Plugin settings' });
     setIcon(settingsBtn, 'settings');
     settingsBtn.addEventListener('click', () => {
-      (this.app as any).setting.open();
-      (this.app as any).setting.openTabById('obsidian-llama-chat');
+      (this.app as any).setting?.open();
+      (this.app as any).setting?.openTabById('obsidian-llama-chat');
     });
 
-    // ── Messages ─────────────────────────────────────────────────────────────
+    // ── Context status (shows "Loading 3 notes…" during context build) ──────
+    this.contextStatusEl = header.createDiv('llama-context-status');
+    this.contextStatusEl.style.display = 'none';
+
+    // ── Messages ──────────────────────────────────────────────────────────────
     this.messagesContainer = root.createDiv('llama-messages');
 
-    // ── Input Bar ─────────────────────────────────────────────────────────────
+    // ── Input Bar ──────────────────────────────────────────────────────────────
     const inputBar = root.createDiv('llama-input-bar');
-
     this.attachmentPreviewEl = inputBar.createDiv('llama-input-attachments');
 
     this.inputArea = inputBar.createEl('textarea', {
@@ -265,25 +183,13 @@ export class ChatView extends ItemView {
     });
 
     this.inputArea.addEventListener('input', () => {
-      // Auto-grow textarea
       this.inputArea.style.height = 'auto';
       this.inputArea.style.height = Math.min(this.inputArea.scrollHeight, 160) + 'px';
-      this.handleMentionInput();
+      this.mentionAutocomplete?.handleInput();
     });
 
     this.inputArea.addEventListener('keydown', (e: KeyboardEvent) => {
-      if (this.mentionDropdown.style.display !== 'none') {
-        const items = Array.from(this.mentionDropdown.querySelectorAll('.llama-mention-item')) as HTMLElement[];
-        const active = this.mentionDropdown.querySelector('.llama-mention-item.active') as HTMLElement | null;
-        const idx = active ? items.indexOf(active) : -1;
-        if (e.key === 'ArrowDown') { e.preventDefault(); items[(idx + 1) % items.length]?.classList.add('active'); if (active) active.classList.remove('active'); return; }
-        if (e.key === 'ArrowUp') { e.preventDefault(); const prev = items[(idx - 1 + items.length) % items.length]; if (active) active.classList.remove('active'); prev?.classList.add('active'); return; }
-        if (e.key === 'Enter' || e.key === 'Tab') {
-          const sel = (active || items[0]) as HTMLElement | undefined;
-          if (sel) { e.preventDefault(); sel.click(); return; }
-        }
-        if (e.key === 'Escape') { this.hideMentionDropdown(); return; }
-      }
+      if (this.mentionAutocomplete?.handleKeydown(e)) return;
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         if (!this.isStreaming) this.sendMessage();
@@ -291,72 +197,26 @@ export class ChatView extends ItemView {
     });
 
     this.inputArea.addEventListener('blur', () => {
-      // Delay so click on dropdown items registers first
-      setTimeout(() => this.hideMentionDropdown(), 150);
+      setTimeout(() => this.mentionAutocomplete?.hide(), 150);
     });
-
-    // ── @ Mention dropdown ────────────────────────────────────────────────────
-    this.mentionDropdown = inputBar.createDiv('llama-mention-dropdown');
-    this.mentionDropdown.style.display = 'none';
 
     const btnGroup = inputBar.createDiv('llama-btn-group');
 
     const attachBtn = btnGroup.createEl('button', { cls: 'llama-attach-btn', title: 'Attach files' });
     setIcon(attachBtn, 'paperclip');
 
-    this.attachInput = btnGroup.createEl('input', { attr: { type: 'file', multiple: 'true', style: 'display: none' } });
+    this.attachInput = btnGroup.createEl('input', {
+      attr: { type: 'file', multiple: 'true', style: 'display:none' },
+    });
     attachBtn.addEventListener('click', () => this.attachInput.click());
 
     this.attachInput.addEventListener('change', async (e: Event) => {
-      const target = e.target as HTMLInputElement;
-      const files = target.files;
+      const files = (e.target as HTMLInputElement).files;
       if (!files) return;
-      for (let i = 0; i < files.length; i++) {
-        const f = files[i];
-        if (f.type === 'application/pdf') {
-          try {
-            const pdfjsLib = await getPdfJs();
-            const arrayBuffer = await f.arrayBuffer();
-            const pdfDoc = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
-            const totalPages = pdfDoc.numPages;
-
-            // Show page range selector modal
-            await new Promise<void>((resolve) => {
-              showPdfPageRangeModal(
-                f.name,
-                totalPages,
-                async (from, to) => {
-                  new Notice(`Processing pages ${from}–${to} of ${f.name}…`);
-                  for (let p = from; p <= to; p++) {
-                    const dataUrl = await renderPdfPageToDataUrl(pdfDoc, p);
-                    this.pendingAttachments.push({
-                      name: `${f.name} (Page ${p})`,
-                      type: 'image/jpeg',
-                      dataUrl
-                    });
-                  }
-                  new Notice(`✅ Loaded ${to - from + 1} pages from ${f.name}`);
-                  this.renderAttachmentPreviews();
-                  resolve();
-                },
-                () => resolve()
-              );
-            });
-          } catch (err) {
-            console.error('PDF parsing error', err);
-            new Notice('Failed to parse PDF pages into images.');
-          }
-        } else {
-          const dataUrl = await new Promise<string>((resolve) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(reader.result as string);
-            reader.readAsDataURL(f);
-          });
-          this.pendingAttachments.push({ name: f.name, type: f.type, dataUrl });
-        }
-      }
+      const newAtts = await this.attachmentHandler.processFiles(files);
+      this.pendingAttachments.push(...newAtts);
       this.renderAttachmentPreviews();
-      target.value = '';
+      (e.target as HTMLInputElement).value = '';
     });
 
     btnGroup.createDiv('llama-btn-spacer');
@@ -373,20 +233,17 @@ export class ChatView extends ItemView {
       this.setStreaming(false);
     });
 
-    // ── Permission badge ──────────────────────────────────────────────────────
+    // ── Footer ────────────────────────────────────────────────────────────────
     const footer = root.createDiv('llama-footer');
 
-    const permBadge = footer.createSpan('llama-perm-badge');
-    const permIcons: Record<string, string> = {
-      read_only: '🔍 Read only',
-      read_append: '✏️ Read + Append',
-      full_edit: '⚠️ Full edit',
-    };
-    permBadge.textContent = permIcons[this.plugin.settings.editPermission] ?? '?';
-    permBadge.title = 'Vault edit permission level — change in settings';
+    this.permBadge = footer.createSpan('llama-perm-badge');
+    this.updatePermBadge();
 
     const modelBadge = footer.createSpan('llama-model-badge');
     modelBadge.textContent = this.plugin.settings.model || 'auto model';
+
+    // Token budget bar (Phase 5.1)
+    this.tokenBudgetBar = new TokenBudgetBar(footer, this.plugin.settings.contextWindowTokens);
   }
 
   // ── Connection Check ───────────────────────────────────────────────────────
@@ -400,7 +257,6 @@ export class ChatView extends ItemView {
       this.setStatus('error', (e as Error).message);
     }
 
-    // Update note count
     if (this.plugin.indexer.isReady) {
       this.noteCountEl.textContent = `${this.plugin.indexer.noteCount} notes indexed`;
     } else {
@@ -419,184 +275,80 @@ export class ChatView extends ItemView {
     }
   }
 
-  // ── Chat Sessions ─────────────────────────────────────────────────────────
-
-  private initializeCurrentChat(): void {
-    const first = this.plugin.chatSessions[0];
-    if (first) {
-      this.switchToSession(first.id);
-      return;
-    }
-
-    const newSession = this.createSession();
-    this.plugin.upsertChatSession(newSession);
-    this.switchToSession(newSession.id);
-  }
-
-  private createSession(title = 'New chat'): ChatSession {
-    const now = Date.now();
-    return {
-      id: this.createSessionId(),
-      title,
-      createdAt: now,
-      updatedAt: now,
-      messages: [],
+  /** Update the permission badge text (called on open + settings change). */
+  private updatePermBadge(): void {
+    const icons: Record<string, string> = {
+      read_only: '🔍 Read only',
+      read_append: '✏️ Read + Append',
+      full_edit: '⚠️ Full edit',
     };
+    this.permBadge.textContent = icons[this.plugin.settings.editPermission] ?? '?';
+    this.permBadge.title = 'Vault edit permission level — change in settings';
   }
 
-  private createSessionId(): string {
-    const rand = Math.random().toString(36).slice(2, 9);
-    return `chat-${Date.now()}-${rand}`;
-  }
+  // ── Session Management ─────────────────────────────────────────────────────
 
   private switchToSession(id: string): void {
-    const session = this.plugin.chatSessions.find(s => s.id === id);
+    const session = this.sessionManager.switchTo(id);
     if (!session) return;
-
-    this.currentChatId = session.id;
     this.messages = [...session.messages];
-    this.displayMessages = this.buildDisplayMessagesFromHistory(this.messages);
+    this.displayMessages = MessageRenderer.buildDisplayMessages(this.messages);
     this.pendingAttachments = [];
     this.renderAttachmentPreviews();
     this.renderMessages();
-    this.refreshChatSessionControls();
+    this.refreshSessionControls();
+    this.updateTokenBar();
   }
 
   private startNewChat(): void {
     if (this.isStreaming) return;
-    const session = this.createSession();
-    this.plugin.upsertChatSession(session);
-    this.switchToSession(session.id);
+    const session = this.sessionManager.createAndActivate();
+    this.messages = [];
+    this.displayMessages = [];
+    this.pendingAttachments = [];
+    this.renderAttachmentPreviews();
+    this.renderMessages();
+    this.refreshSessionControls();
+    this.updateTokenBar();
     this.inputArea.focus();
   }
 
   private deleteCurrentChat(): void {
     if (this.isStreaming) return;
-
-    const session = this.plugin.chatSessions.find(s => s.id === this.currentChatId);
+    const session = this.sessionManager.currentSession;
     if (!session) return;
-
-    const ok = window.confirm(`Delete chat \"${session.title}\"?`);
+    const ok = window.confirm(`Delete chat "${session.title}"?`);
     if (!ok) return;
-
-    this.plugin.deleteChatSession(session.id);
-    if (this.plugin.chatSessions.length === 0) {
-      const fresh = this.createSession();
-      this.plugin.upsertChatSession(fresh);
-    }
-
-    const next = this.plugin.chatSessions[0];
-    if (next) this.switchToSession(next.id);
+    const next = this.sessionManager.delete(session.id);
+    this.messages = [...next.messages];
+    this.displayMessages = MessageRenderer.buildDisplayMessages(this.messages);
+    this.pendingAttachments = [];
+    this.renderMessages();
+    this.refreshSessionControls();
+    this.updateTokenBar();
   }
 
-  private refreshChatSessionControls(): void {
-    if (!this.chatSelectEl) return;
+  private clearChat(): void {
+    if (this.isStreaming) return;
+    this.messages = [];
+    this.displayMessages = [];
+    this.sessionManager.clearCurrentMessages();
+    this.renderMessages();
+    this.updateTokenBar();
+  }
 
+  private refreshSessionControls(): void {
+    if (!this.chatSelectEl) return;
     this.chatSelectEl.empty();
-    for (const session of this.plugin.chatSessions) {
+    for (const session of this.sessionManager.allSessions) {
       const option = this.chatSelectEl.createEl('option');
       option.value = session.id;
       option.textContent = session.title;
     }
-
-    this.chatSelectEl.value = this.currentChatId;
-    const hasSession = this.plugin.chatSessions.length > 0;
-    this.chatSelectEl.disabled = !hasSession || this.isStreaming;
-    this.deleteChatBtn.disabled = !hasSession || this.isStreaming;
-  }
-
-  private persistCurrentChat(): void {
-    if (!this.currentChatId) return;
-
-    const existing = this.plugin.chatSessions.find(s => s.id === this.currentChatId);
-    const title = existing?.title || 'New chat';
-    const now = Date.now();
-    const createdAt = existing?.createdAt ?? now;
-
-    this.plugin.upsertChatSession({
-      id: this.currentChatId,
-      title,
-      createdAt,
-      updatedAt: now,
-      messages: [...this.messages],
-    });
-
-    this.refreshChatSessionControls();
-  }
-
-  private updateCurrentChatTitleFromPrompt(prompt: string): void {
-    if (!prompt.trim() || !this.currentChatId) return;
-
-    const session = this.plugin.chatSessions.find(s => s.id === this.currentChatId);
-    if (!session || session.title !== 'New chat' || session.messages.length > 1) return;
-
-    session.title = this.buildSessionTitle(prompt);
-    session.updatedAt = Date.now();
-    this.plugin.upsertChatSession(session);
-    this.refreshChatSessionControls();
-  }
-
-  private buildSessionTitle(text: string): string {
-    const normalized = text.replace(/\s+/g, ' ').trim();
-    if (!normalized) return 'New chat';
-    return normalized.length > 48 ? `${normalized.slice(0, 48)}...` : normalized;
-  }
-
-  private buildDisplayMessagesFromHistory(messages: ChatMessage[]): DisplayMessage[] {
-    const result: DisplayMessage[] = [];
-
-    for (let i = 0; i < messages.length; i++) {
-      const msg = messages[i];
-      if (msg.role !== 'user' && msg.role !== 'assistant') continue;
-
-      const content = this.toDisplayText(msg.content);
-      let toolEvents: ToolEvent[] | undefined = undefined;
-
-      if (msg.tool_calls && msg.tool_calls.length > 0) {
-        toolEvents = [];
-        for (const call of msg.tool_calls) {
-          let resultText = 'done';
-          // Find matching tool_result in subsequent messages
-          for (let j = i + 1; j < messages.length && j <= i + 5; j++) {
-            const nextMsg = messages[j];
-            if (nextMsg.role === 'tool' && nextMsg.tool_call_id === call.id) {
-              const tcContent = this.toDisplayText(nextMsg.content);
-              resultText = tcContent;
-              break;
-            }
-          }
-          toolEvents.push({
-            type: 'end',
-            name: call.function.name,
-            result: resultText
-          });
-        }
-      }
-
-      // Skip completely empty messages
-      if (!content.trim() && (!msg.attachments || msg.attachments.length === 0) && (!toolEvents || toolEvents.length === 0)) {
-        continue;
-      }
-
-      result.push({
-        role: msg.role,
-        content: content,
-        attachments: msg.attachments,
-        toolEvents
-      });
-    }
-
-    return result;
-  }
-
-  private toDisplayText(content: ChatMessage['content']): string {
-    if (typeof content === 'string') return content;
-    if (!Array.isArray(content)) return '';
-
-    return content
-      .filter(part => part && part.type === 'text' && typeof part.text === 'string')
-      .map(part => part.text as string)
-      .join('\n');
+    this.chatSelectEl.value = this.sessionManager.currentId;
+    const hasSessions = this.sessionManager.allSessions.length > 0;
+    this.chatSelectEl.disabled = !hasSessions || this.isStreaming;
+    this.deleteChatBtn.disabled = !hasSessions || this.isStreaming;
   }
 
   // ── Sending Messages ───────────────────────────────────────────────────────
@@ -609,72 +361,93 @@ export class ChatView extends ItemView {
     this.inputArea.value = '';
     this.inputArea.style.height = 'auto';
 
-    const attachmentsToMove = [...this.pendingAttachments];
+    const attachmentsForSend = [...this.pendingAttachments];
     this.pendingAttachments = [];
     this.renderAttachmentPreviews();
 
-    let content: string | MessageContentPart[] = text;
-    if (attachmentsToMove.length > 0) {
-      const parts: MessageContentPart[] = [];
-      if (text) {
-        parts.push({ type: 'text', text });
-      }
-      for (const att of attachmentsToMove) {
-        // OpenAI schema strictly enforces 'type' to be either 'text' or 'image_url'.
-        // For other formats (PDFs, Audio), passing the base64 string with the correct MIME type
-        // through the 'image_url' parameter allows the backend to handle it seamlessly.
-        parts.push({ type: 'image_url', image_url: { url: att.dataUrl } });
-      }
-      content = parts;
+    // Build the API content (with blobs for the LLM call)
+    let apiContent: string | MessageContentPart[] = text;
+    if (attachmentsForSend.length > 0) {
+      const parts = AttachmentHandler.buildContentParts(text, attachmentsForSend, false);
+      apiContent = parts as MessageContentPart[];
     }
 
-    // Add user message to display
-    this.displayMessages.push({ role: 'user', content: text, attachments: attachmentsToMove });
-    this.messages.push({ role: 'user', content, attachments: attachmentsToMove });
-    this.updateCurrentChatTitleFromPrompt(text);
-    this.persistCurrentChat();
-    this.renderMessages();
+    // Build the history content (without blobs — stored as text refs)
+    let historyContent: string | MessageContentPart[] = text;
+    if (attachmentsForSend.length > 0) {
+      const parts = AttachmentHandler.buildContentParts(text, attachmentsForSend, true);
+      historyContent = parts as MessageContentPart[];
+    }
 
+    // Add to display (show attachments visually)
+    const userDisplayMsg: DisplayMessage = {
+      role: 'user',
+      content: text,
+      attachments: attachmentsForSend,
+    };
+    this.displayMessages.push(userDisplayMsg);
+
+    // Add to canonical history (blob-free for persistence)
+    this.messages.push({ role: 'user', content: historyContent, attachments: [] });
+    this.sessionManager.updateTitleFromPrompt(text);
+    this.sessionManager.save(this.messages);
+
+    this.messageRenderer.appendBubble(userDisplayMsg);
+    this.scrollToBottom();
     this.setStreaming(true);
+
+    // Show context-build status
+    this.showContextStatus('Building context…');
 
     // Build context-enriched messages
     const enrichedMessages = await this.plugin.contextBuilder.prependSystemMessage(
-      this.messages.slice(0, -1), // all except the just-added user msg (context builder handles it)
-      text || "See attachment(s)"
+      this.messages.slice(0, -1),
+      text || 'See attachment(s)',
+      (status) => this.showContextStatus(status)
     );
-    enrichedMessages.push({ role: 'user', content });
+    // Append the API-content user message (with blobs for this request)
+    enrichedMessages.push({ role: 'user', content: apiContent });
+    this.hideContextStatus();
 
-    // Add empty streaming bubble
-    const assistantDisplay: DisplayMessage = { role: 'assistant', content: '', streaming: true, toolEvents: [] };
+    // Add streaming assistant bubble
+    const assistantDisplay: DisplayMessage = {
+      role: 'assistant',
+      content: '',
+      streaming: true,
+      toolEvents: [],
+    };
     this.displayMessages.push(assistantDisplay);
-    this.renderMessages();
+    this.messageRenderer.appendBubble(assistantDisplay);
 
     let finalMessages: ChatMessage[] = enrichedMessages;
 
     const onChunk = (chunk: StreamChunk) => {
       if (chunk.type === 'token' && chunk.content) {
         assistantDisplay.content += chunk.content;
-        this.updateLastBubble(assistantDisplay);
+        this.messageRenderer.patchStreamingContent(assistantDisplay);
       } else if (chunk.type === 'tool_start') {
         assistantDisplay.toolEvents!.push({ type: 'start', name: chunk.toolName! });
-        this.updateLastBubble(assistantDisplay);
+        this.messageRenderer.patchStreamingContent(assistantDisplay);
       } else if (chunk.type === 'tool_end') {
         const evList = assistantDisplay.toolEvents!;
         let last: ToolEvent | undefined;
         for (let i = evList.length - 1; i >= 0; i--) {
-          if (evList[i].name === chunk.toolName && evList[i].type === 'start') { last = evList[i]; break; }
+          if (evList[i].name === chunk.toolName && evList[i].type === 'start') {
+            last = evList[i]; break;
+          }
         }
         if (!last && evList.length > 0) last = evList[evList.length - 1];
         if (last) { last.type = 'end'; last.result = chunk.toolResult; }
-        this.updateLastBubble(assistantDisplay);
+        this.messageRenderer.patchStreamingContent(assistantDisplay);
       } else if (chunk.type === 'error' && chunk.error) {
         assistantDisplay.content = chunk.error;
         assistantDisplay.role = 'error' as any;
-        this.updateLastBubble(assistantDisplay);
+        this.messageRenderer.patchStreamingContent(assistantDisplay);
       } else if (chunk.type === 'done') {
         assistantDisplay.streaming = false;
-        this.updateLastBubble(assistantDisplay);
+        this.messageRenderer.finalizeStreamingBubble(assistantDisplay);
       }
+      this.scrollToBottom();
     };
 
     try {
@@ -686,12 +459,13 @@ export class ChatView extends ItemView {
       assistantDisplay.content = `Error: ${(e as Error).message}`;
       assistantDisplay.role = 'error' as any;
       assistantDisplay.streaming = false;
-      this.updateLastBubble(assistantDisplay);
+      this.messageRenderer.finalizeStreamingBubble(assistantDisplay);
     }
 
-    // Update canonical message history with final state (excluding system)
+    // Persist final message state (system messages excluded)
     this.messages = finalMessages.filter(m => m.role !== 'system');
-    this.persistCurrentChat();
+    this.sessionManager.save(this.messages);
+    this.updateTokenBar();
 
     this.setStreaming(false);
     this.scrollToBottom();
@@ -699,45 +473,14 @@ export class ChatView extends ItemView {
 
   // ── Rendering ─────────────────────────────────────────────────────────────
 
-  private editMessage(msg: DisplayMessage): void {
-    const idx = this.displayMessages.indexOf(msg);
-    if (idx === -1) return;
-
-    // Count how many user messages came before this one in display
-    let userCount = 0;
-    for (let i = 0; i < idx; i++) {
-      if (this.displayMessages[i].role === 'user') userCount++;
+  private renderMessages(): void {
+    this.messagesContainer.empty();
+    if (this.displayMessages.length === 0) {
+      this.renderWelcome();
+      return;
     }
-
-    // Find the corresponding user message in the canonical state (this.messages)
-    let mIdx = -1;
-    let mUserCount = 0;
-    for (let i = 0; i < this.messages.length; i++) {
-      if (this.messages[i].role === 'user') {
-        if (mUserCount === userCount) { mIdx = i; break; }
-        mUserCount++;
-      }
-    }
-
-    // Truncate state to conceptually "rewind" time
-    if (mIdx !== -1) {
-      this.messages = this.messages.slice(0, mIdx);
-    }
-    this.displayMessages = this.displayMessages.slice(0, idx);
-
-    // Put content back into the input box
-    this.inputArea.value = msg.content;
-    this.inputArea.focus();
-    this.inputArea.style.height = 'auto';
-    this.inputArea.style.height = this.inputArea.scrollHeight + 'px';
-
-    if (msg.attachments) {
-      this.pendingAttachments = [...msg.attachments];
-      this.renderAttachmentPreviews();
-    }
-
-    this.renderMessages();
-    this.persistCurrentChat();
+    this.messageRenderer.renderAll(this.displayMessages);
+    this.scrollToBottom();
   }
 
   private renderWelcome(): void {
@@ -749,441 +492,199 @@ export class ChatView extends ItemView {
       text: 'Your local AI assistant with full vault access',
     });
 
+    // Phase 5.2: Dynamic welcome chips from actual vault tags + recent notes
     const chips = welcome.createDiv('llama-welcome-chips');
-    const examples = [
+
+    // Static fallbacks if vault isn't indexed yet
+    const staticExamples = [
       '🔍 Search my notes on machine learning',
       '📝 Summarize my recent todos',
       '✏️ Add a section to my README',
       '📁 List what\'s in my Projects folder',
     ];
+
+    const dynamicChips: string[] = [];
+
+    if (this.plugin.indexer.isReady) {
+      // Top tags → "What are my notes about [tag]?"
+      const topTags = this.plugin.indexer.getTopTags(3);
+      for (const tag of topTags) {
+        dynamicChips.push(`🔍 Search notes tagged ${tag}`);
+      }
+
+      // Recent notes → "Summarize [note name]"
+      const recent = this.plugin.indexer.getRecentNotes(2);
+      for (const note of recent) {
+        dynamicChips.push(`📖 Summarize ${note.title}`);
+      }
+    }
+
+    const examples = dynamicChips.length >= 3 ? dynamicChips : staticExamples;
+
     for (const ex of examples) {
       const chip = chips.createEl('button', { cls: 'llama-example-chip', text: ex });
       chip.addEventListener('click', () => {
-        this.inputArea.value = ex.slice(2).trim();
+        this.inputArea.value = ex.replace(/^[^\s]+\s/, '').trim();
         this.inputArea.focus();
       });
     }
   }
 
-  private renderMessages(): void {
-    this.messagesContainer.empty();
+  private editMessage(msg: DisplayMessage): void {
+    const idx = this.displayMessages.indexOf(msg);
+    if (idx === -1) return;
 
-    if (this.displayMessages.length === 0) {
-      this.renderWelcome();
-      return;
+    // Count user messages before this one
+    let userCount = 0;
+    for (let i = 0; i < idx; i++) {
+      if (this.displayMessages[i].role === 'user') userCount++;
     }
 
-    for (const msg of this.displayMessages) {
-      this.renderBubble(msg, this.messagesContainer);
-    }
-
-    this.scrollToBottom();
-  }
-
-  private renderBubble(msg: DisplayMessage, container: HTMLElement): HTMLElement {
-    const wrapper = container.createDiv(`llama-msg-wrapper llama-msg-${msg.role}`);
-
-    // No avatar — clean look
-    const bubble = wrapper.createDiv('llama-bubble');
-
-    // Tool events (shown above the response text)
-    if (msg.toolEvents && msg.toolEvents.length > 0) {
-      const toolsEl = bubble.createDiv('llama-tool-events');
-      for (const ev of msg.toolEvents) {
-        const evEl = toolsEl.createDiv(`llama-tool-event llama-tool-${ev.type}`);
-        const icons: Record<string, string> = {
-          search_vault: '🔍', read_note: '📖', list_folder: '📁',
-          append_to_note: '✏️', edit_note: '✏️', create_note: '📄',
-          open_note: '🔗', move_note: '📦', rename_note: '✏️',
-          copy_note: '📋', delete_note: '🗑️', create_folder: '📁',
-        };
-        const icon = icons[ev.name] ?? '🛠️';
-        if (ev.type === 'start') {
-          evEl.textContent = `${icon} ${ev.name.replace(/_/g, ' ')}…`;
-        } else {
-          const summary = ev.result
-            ? ev.result.length > 80 ? ev.result.slice(0, 80) + '…' : ev.result
-            : 'done';
-          evEl.textContent = `${icon} ${ev.name.replace(/_/g, ' ')}: ${summary}`;
-        }
+    // Find corresponding message in canonical history
+    let mIdx = -1;
+    let mUserCount = 0;
+    for (let i = 0; i < this.messages.length; i++) {
+      if (this.messages[i].role === 'user') {
+        if (mUserCount === userCount) { mIdx = i; break; }
+        mUserCount++;
       }
     }
 
-    // Message content (Markdown rendered)
-    const contentEl = bubble.createDiv('llama-bubble-content');
+    if (mIdx !== -1) this.messages = this.messages.slice(0, mIdx);
+    this.displayMessages = this.displayMessages.slice(0, idx);
 
-    if (msg.attachments && msg.attachments.length > 0) {
-      const attContainer = bubble.createDiv('llama-input-attachments');
-      attContainer.style.marginBottom = msg.content ? '8px' : '0';
-      for (const att of msg.attachments) {
-        if (att.type.startsWith('image/')) {
-          const img = attContainer.createEl('img', { attr: { src: att.dataUrl, alt: att.name } });
-          img.style.maxWidth = '100%';
-          img.style.borderRadius = 'var(--radius-s)';
-          img.style.maxHeight = '200px';
-          img.style.objectFit = 'contain';
-        } else {
-          const chip = attContainer.createDiv('llama-attachment-chip');
-          chip.createSpan('llama-attachment-name').textContent = att.name;
-        }
-      }
-    }
-
-    if (msg.content) {
-      renderMarkdownCompat(this.app, msg.content, contentEl, this);
-      // Make vault note paths in AI responses clickable
-      if (msg.role === 'assistant') {
-        this.makeNoteLinksClickable(contentEl);
-      }
-    }
-
-    const hasText = typeof msg.content === 'string' && msg.content.trim().length > 0;
-    if (msg.streaming && !hasText) {
-      const thinkingEl = contentEl.createDiv('llama-thinking');
-      thinkingEl.createSpan({ text: 'Thinking' });
-      thinkingEl.createSpan('llama-thinking-dots').textContent = '...';
-    }
-
-    // Streaming cursor
-    if (msg.streaming) {
-      const cursor = bubble.createSpan('llama-cursor');
-      cursor.textContent = '▋';
-    }
-
-    // Actions bar (Copy / Edit)
-    if (!msg.streaming && msg.role !== 'error') {
-      const actions = wrapper.createDiv('llama-msg-actions');
-
-      const copyBtn = actions.createEl('button', { cls: 'llama-msg-action-btn', title: 'Copy' });
-      setIcon(copyBtn, 'copy');
-      copyBtn.addEventListener('click', () => {
-        navigator.clipboard.writeText(msg.content);
-        setIcon(copyBtn, 'check');
-        setTimeout(() => setIcon(copyBtn, 'copy'), 2000);
-      });
-
-      if (msg.role === 'user') {
-        const editBtn = actions.createEl('button', { cls: 'llama-msg-action-btn', title: 'Edit & Resend' });
-        setIcon(editBtn, 'pencil');
-        editBtn.addEventListener('click', () => this.editMessage(msg));
-      }
-    }
-
-    return wrapper;
-  }
-
-  // ── @ Mention Autocomplete ─────────────────────────────────────────────────
-
-  private handleMentionInput(): void {
-    const val = this.inputArea.value;
-    const pos = this.inputArea.selectionStart ?? val.length;
-
-    // Find the last '@' before cursor with no spaces breaking it
-    const before = val.slice(0, pos);
-    const atMatch = before.match(/@([^\s@]*)$/);
-
-    if (!atMatch) {
-      this.hideMentionDropdown();
-      return;
-    }
-
-    const query = atMatch[1].toLowerCase();
-    this.mentionStart = before.lastIndexOf('@');
-
-    // Search indexer for matching notes
-    const allNotes = this.plugin.indexer.search(query || '', undefined, 30);
-    const filtered = query
-      ? allNotes.filter(n =>
-          n.path.toLowerCase().includes(query) || n.title.toLowerCase().includes(query)
-        ).slice(0, 8)
-      : allNotes.slice(0, 8);
-
-    if (filtered.length === 0) {
-      this.hideMentionDropdown();
-      return;
-    }
-
-    this.mentionDropdown.empty();
-    this.mentionDropdown.style.display = 'block';
-
-    for (let i = 0; i < filtered.length; i++) {
-      const note = filtered[i];
-      const item = this.mentionDropdown.createDiv('llama-mention-item');
-      if (i === 0) item.classList.add('active');
-
-      const name = item.createSpan('llama-mention-name');
-      name.textContent = note.title;
-      const path = item.createSpan('llama-mention-path');
-      path.textContent = note.path;
-
-      item.addEventListener('mousedown', (e) => {
-        e.preventDefault();
-        this.insertMention(note.path);
-      });
-    }
-  }
-
-  private insertMention(notePath: string): void {
-    const val = this.inputArea.value;
-    const pos = this.inputArea.selectionStart ?? val.length;
-    const before = val.slice(0, this.mentionStart);
-    const after = val.slice(pos);
-    const inserted = `[[${notePath}]]`;
-    this.inputArea.value = before + inserted + after;
-    const newCursor = before.length + inserted.length;
-    this.inputArea.setSelectionRange(newCursor, newCursor);
-    this.hideMentionDropdown();
+    this.inputArea.value = msg.content;
     this.inputArea.focus();
-  }
+    this.inputArea.style.height = 'auto';
+    this.inputArea.style.height = this.inputArea.scrollHeight + 'px';
 
-  private hideMentionDropdown(): void {
-    this.mentionDropdown.style.display = 'none';
-    this.mentionStart = -1;
-  }
-
-  private updateLastBubble(msg: DisplayMessage): void {
-    // Re-render just the last bubble in place
-    const wrappers = this.messagesContainer.querySelectorAll('.llama-msg-wrapper');
-    const last = wrappers[wrappers.length - 1];
-    if (last) {
-      const newEl = document.createElement('div');
-      this.renderBubble(msg, newEl as any);
-      last.replaceWith(newEl.firstChild!);
+    if (msg.attachments) {
+      this.pendingAttachments = [...msg.attachments];
+      this.renderAttachmentPreviews();
     }
-    this.scrollToBottom();
+
+    this.renderMessages();
+    this.sessionManager.save(this.messages);
   }
 
-  private scrollToBottom(): void {
-    requestAnimationFrame(() => {
-      this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
+  // ── Undo Panel (Phase 5.3) ────────────────────────────────────────────────
+
+  private showUndoPanel(): void {
+    const history = this.plugin.toolExecutor.undoHistory;
+
+    if (history.length === 0) {
+      new Notice('Nothing to undo');
+      return;
+    }
+
+    // Remove any existing panel
+    document.querySelectorAll('.llama-undo-panel-overlay').forEach(el => el.remove());
+
+    const overlay = document.createElement('div');
+    overlay.className = 'llama-modal-overlay llama-undo-panel-overlay';
+
+    const panel = overlay.appendChild(document.createElement('div'));
+    panel.className = 'llama-modal llama-undo-panel';
+
+    const title = panel.appendChild(document.createElement('div'));
+    title.className = 'llama-modal-title';
+    title.textContent = '↩️ Undo History';
+
+    const subtitle = panel.appendChild(document.createElement('div'));
+    subtitle.className = 'llama-modal-subtitle';
+    subtitle.textContent = 'Click an entry to undo that specific operation.';
+
+    const list = panel.appendChild(document.createElement('div'));
+    list.className = 'llama-undo-list';
+
+    // Show newest first
+    const reversed = [...history].reverse();
+    reversed.forEach((entry, reversedIdx) => {
+      const actualIdx = history.length - 1 - reversedIdx;
+      const item = list.appendChild(document.createElement('div'));
+      item.className = 'llama-undo-item';
+
+      const desc = item.appendChild(document.createElement('span'));
+      desc.className = 'llama-undo-desc';
+      desc.textContent = entry.description;
+
+      const time = item.appendChild(document.createElement('span'));
+      time.className = 'llama-undo-time';
+      const ago = Math.round((Date.now() - entry.timestamp) / 1000);
+      time.textContent = ago < 60 ? `${ago}s ago` : `${Math.round(ago / 60)}m ago`;
+
+      item.addEventListener('click', async () => {
+        overlay.remove();
+        const path = await this.plugin.toolExecutor.undoAt(actualIdx);
+        if (path) {
+          new Notice(`↩️ Undid: "${entry.description}"`);
+        } else {
+          new Notice('Could not undo — file may have been moved or deleted');
+        }
+      });
     });
+
+    const closeBtn = panel.appendChild(document.createElement('button'));
+    closeBtn.className = 'llama-modal-cancel';
+    closeBtn.textContent = 'Close';
+    closeBtn.style.marginTop = '8px';
+    closeBtn.addEventListener('click', () => overlay.remove());
+
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) overlay.remove();
+    });
+
+    document.body.appendChild(overlay);
   }
 
-  // ── Actions ────────────────────────────────────────────────────────────────
+  // ── Notes ─────────────────────────────────────────────────────────────────
 
-  /**
-   * Open one or more vault notes in new editor tabs.
-   * The first note gets focus; additional notes open as background tabs.
-   */
   private async openNotes(paths: string[]): Promise<void> {
     const { workspace } = this.app;
     for (let i = 0; i < paths.length; i++) {
-      const leaf = workspace.getLeaf('tab');
-      const file = this.resolveNoteFile(paths[i]);
+      const file = this.app.vault.getAbstractFileByPath(paths[i]);
       if (file) {
+        const leaf = workspace.getLeaf('tab');
         await leaf.openFile(file as any, { active: i === 0 });
       }
     }
   }
 
-  private resolveNoteFile(rawPath: string): any | null {
-    const candidates = new Set<string>();
-    const trimmed = (rawPath ?? '').trim();
-    if (!trimmed) return null;
+  // ── Context Status ────────────────────────────────────────────────────────
 
-    const addCandidate = (value: string): void => {
-      const v = value.trim();
-      if (!v) return;
-      candidates.add(v);
-      candidates.add(v.normalize('NFC'));
-      candidates.add(v.normalize('NFD'));
-    };
-
-    addCandidate(trimmed.replace(/\\/g, '/'));
-    addCandidate(trimmed.replace(/[“”]/g, '"').replace(/[‘’]/g, "'"));
-    addCandidate(trimmed.replace(/[\]\[(){}<>'"`.,;:!?]+$/g, ''));
-
-    try {
-      addCandidate(decodeURIComponent(trimmed));
-    } catch {
-      // Ignore malformed URI input.
-    }
-
-    for (const candidate of candidates) {
-      const file = this.app.vault.getAbstractFileByPath(candidate);
-      if (file) return file;
-    }
-
-    // Fallback: normalize and compare against vault markdown files.
-    const toKey = (value: string) =>
-      value
-        .replace(/\\/g, '/')
-        .normalize('NFC')
-        .toLowerCase();
-
-    const candidateKeys = new Set(Array.from(candidates).map(toKey));
-    const toSuperLooseKey = (value: string) =>
-      value.normalize('NFC').toLowerCase().replace(/[^a-z0-9]/g, '');
-
-    const files = this.app.vault.getMarkdownFiles();
-    
-    for (const f of files) {
-      if (candidateKeys.has(toKey(f.path))) return f;
-    }
-
-    // Fuzzy suffix/path matching for slight formatting differences in model output.
-    for (const candidate of candidates) {
-      const cKey = toKey(candidate);
-      const cLoose = toSuperLooseKey(candidate);
-      for (const f of files) {
-        const fKey = toKey(f.path);
-        const fLoose = toSuperLooseKey(f.path);
-        if (fKey.endsWith(cKey) || cKey.endsWith(fKey)) return f;
-        if (fLoose.endsWith(cLoose) || cLoose.endsWith(fLoose)) return f;
-      }
-    }
-
-    // Last resort: unique basename match (normalized).
-    const basenameCandidates = Array.from(candidates)
-      .map(c => c.split('/').pop() ?? c)
-      .filter(Boolean)
-      .map(toSuperLooseKey);
-
-    for (const base of basenameCandidates) {
-      const matches = files.filter(f => toSuperLooseKey(f.name) === base);
-      if (matches.length === 1) return matches[0];
-    }
-
-    return null;
+  private showContextStatus(status: string): void {
+    this.contextStatusEl.textContent = status;
+    this.contextStatusEl.style.display = 'block';
   }
 
-  /**
-   * Post-process a rendered markdown element to find vault-note paths
-   * (patterns ending in .md optionally inside a path) and make them
-   * clickable. Looks inside text nodes so it doesn't break existing links.
-   */
-  private makeNoteLinksClickable(el: HTMLElement): void {
-    const makeOpenInTabHandler = (resolvedPath: string) => (e: MouseEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      this.openNotes([resolvedPath]);
-    };
-
-    const toNoteAnchor = (path: string): HTMLAnchorElement => {
-      const chip = document.createElement('a');
-      chip.className = 'llama-note-link';
-      chip.textContent = path;
-      chip.title = `Open "${path}" in a new tab`;
-      chip.href = '#';
-      chip.addEventListener('click', makeOpenInTabHandler(path));
-      return chip;
-    };
-
-    // Convert inline-code note paths (e.g. `Folder/Note.md`) into clickable links.
-    for (const codeEl of Array.from(el.querySelectorAll('code'))) {
-      if (codeEl.closest('pre')) continue;
-      const raw = (codeEl.textContent ?? '').trim();
-      if (!raw || !/\.md(?:#.*)?$/i.test(raw)) continue;
-
-      const pathOnly = raw.replace(/^\.?\//, '').replace(/#.*$/, '');
-      const file = this.resolveNoteFile(pathOnly);
-      if (!file) continue;
-
-      codeEl.replaceWith(toNoteAnchor(file.path));
-    }
-
-    // Upgrade existing markdown links that point to vault markdown notes.
-    for (const anchor of Array.from(el.querySelectorAll('a'))) {
-      const href = anchor.getAttribute('href') ?? '';
-      const decoded = href ? decodeURIComponent(href) : '';
-      const raw = decoded || anchor.textContent || href;
-      if (!raw || !/\.md(?:#.*)?$/i.test(raw.trim())) continue;
-
-      const pathOnly = raw.replace(/^\.?\//, '').replace(/#.*$/, '');
-      const file = this.resolveNoteFile(pathOnly);
-      if (!file) continue;
-
-      anchor.classList.add('llama-note-link');
-      anchor.setAttribute('title', `Open "${file.path}" in a new tab`);
-      anchor.addEventListener('click', makeOpenInTabHandler(file.path));
-    }
-
-    // Regex: matches vault-relative paths ending in .md.
-    // Allows any char except /  \n  \r  and common Markdown punctuation that
-    // would never appear raw inside a path (* " < > | ?).
-    // Relies on getAbstractFileByPath() to reject false positives.
-    const NOTE_PATH_RE = /(?:[^\/\n\r"*<>|?\[\]()]+\/)*[^\/\n\r"*<>|?\[\]()]+\.md/gu;
-
-    const walkTextNodes = (node: Node) => {
-      if (node.nodeType === Node.TEXT_NODE) {
-        const text = node.textContent ?? '';
-        const matches = [...text.matchAll(NOTE_PATH_RE)];
-        if (matches.length === 0) return;
-
-        const frag = document.createDocumentFragment();
-        let lastIdx = 0;
-
-        for (const match of matches) {
-          const start = match.index!;
-          const end = start + match[0].length;
-          const matchedPath = match[0].trim();
-
-          // Only linkify if the file actually exists in the vault
-          const file = this.resolveNoteFile(matchedPath);
-          if (!file) continue;
-
-          // Text before the match
-          if (start > lastIdx) {
-            frag.appendChild(document.createTextNode(text.slice(lastIdx, start)));
-          }
-
-          // Clickable note link chip
-          const chip = toNoteAnchor(file.path);
-          frag.appendChild(chip);
-
-          lastIdx = end;
-        }
-
-        // Remainder
-        if (lastIdx < text.length) {
-          frag.appendChild(document.createTextNode(text.slice(lastIdx)));
-        }
-
-        if (lastIdx > 0) {
-          node.parentNode?.replaceChild(frag, node);
-        }
-      } else if (
-        node.nodeType === Node.ELEMENT_NODE &&
-        !['A', 'CODE', 'PRE'].includes((node as Element).tagName)
-      ) {
-        // Walk children (copy array since we may mutate the DOM)
-        for (const child of Array.from(node.childNodes)) walkTextNodes(child);
-      }
-    };
-
-    walkTextNodes(el);
+  private hideContextStatus(): void {
+    this.contextStatusEl.style.display = 'none';
+    this.contextStatusEl.textContent = '';
   }
 
-  private clearChat(): void {
-    if (this.isStreaming) return;
-    this.messages = [];
-    this.displayMessages = [];
-    const session = this.plugin.chatSessions.find(s => s.id === this.currentChatId);
-    if (session) session.title = 'New chat';
-    this.persistCurrentChat();
-    this.renderMessages();
+  // ── Token Bar ────────────────────────────────────────────────────────────
+
+  private updateTokenBar(): void {
+    const used = estimateMessagesTokens(this.messages);
+    this.tokenBudgetBar?.setMax(this.plugin.settings.contextWindowTokens);
+    this.tokenBudgetBar?.update(used);
   }
 
-  private async undoLastEdit(): Promise<void> {
-    const path = await this.plugin.toolExecutor.undoLast();
-    if (path) {
-      new Notice(`↩️ Undid last AI edit to "${path}"`);
-    } else {
-      new Notice('Nothing to undo');
-    }
-  }
+  // ── Streaming State ───────────────────────────────────────────────────────
 
   private setStreaming(streaming: boolean): void {
     this.isStreaming = streaming;
     this.sendBtn.style.display = streaming ? 'none' : 'flex';
     this.stopBtn.style.display = streaming ? 'flex' : 'none';
     this.inputArea.disabled = streaming;
-    this.refreshChatSessionControls();
+    this.refreshSessionControls();
     if (!streaming) {
-      // Re-focus so the user can type the next message immediately
       this.inputArea.focus();
+      this.updatePermBadge();
     }
   }
+
+  // ── Attachments ───────────────────────────────────────────────────────────
 
   private renderAttachmentPreviews(): void {
     this.attachmentPreviewEl.empty();
@@ -1197,6 +698,23 @@ export class ChatView extends ItemView {
         this.pendingAttachments.splice(i, 1);
         this.renderAttachmentPreviews();
       });
+    }
+  }
+
+  // ── Scroll ────────────────────────────────────────────────────────────────
+
+  private scrollToBottom(): void {
+    requestAnimationFrame(() => {
+      this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
+    });
+  }
+
+  private async undoLastEdit(): Promise<void> {
+    const path = await this.plugin.toolExecutor.undoLast();
+    if (path) {
+      new Notice(`↩️ Undid last AI edit to "${path}"`);
+    } else {
+      new Notice('Nothing to undo');
     }
   }
 }
