@@ -94732,12 +94732,9 @@ var EngramSettingTab = class extends import_obsidian8.PluginSettingTab {
         await this.save();
       })
     ).addButton(
-      (btn) => (
-        // eslint-disable-next-line obsidianmd/no-unsupported-api -- safe on modern Obsidian
-        btn.setButtonText("Open").setTooltip("Open memory file in Obsidian").onClick(() => {
-          this.plugin.openMemoryFile();
-        })
-      )
+      (btn) => btn.setButtonText("Open").setTooltip("Open memory file in Obsidian").onClick(() => {
+        this.plugin.openMemoryFile();
+      })
     );
     new import_obsidian8.Setting(containerEl).setName("Auto-extract memories").setDesc("Automatically extract and save memorable facts at the end of each conversation").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.autoExtractMemory).onChange(async (value) => {
