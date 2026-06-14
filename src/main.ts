@@ -68,7 +68,7 @@ export default class EngramPlugin extends Plugin {
   }
 
   onunload(): void {
-    this.app.workspace.detachLeavesOfType(ENGRAM_VIEW_TYPE);
+    // this.app.workspace.detachLeavesOfType(ENGRAM_VIEW_TYPE);
     if (this.indexRebuildTimer) clearTimeout(this.indexRebuildTimer);
     if (this.chatPersistTimer) clearTimeout(this.chatPersistTimer);
   }
