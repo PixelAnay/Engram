@@ -8,7 +8,4 @@ test_out.js
 test_*.js
 test_*.ts
 
-
-# Generated files
-versions.json
-scripts/
+# Generated files (keep versions.json and scripts/ tracked)
