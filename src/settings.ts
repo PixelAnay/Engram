@@ -127,6 +127,11 @@ export class EngramSettingTab extends PluginSettingTab {
       .setName('Base URL')
       .setDesc('Full base URL for the custom provider endpoint (no trailing slash)');
 
+    // Custom API Format / Type row — shown/hidden depending on selection
+    const customTypeSetting = new Setting(containerEl)
+      .setName('API Format')
+      .setDesc('The API format / protocol expected by the custom provider');
+
     // API key row — shown for non-local providers
     const apiKeySetting = new Setting(containerEl)
       .setName('API Key')
@@ -138,8 +143,22 @@ export class EngramSettingTab extends PluginSettingTab {
       const isLocal  = preset?.isLocal ?? false;
 
       customUrlSetting.settingEl.style.display = isCustom  ? '' : 'none';
+      customTypeSetting.settingEl.style.display = isCustom  ? '' : 'none';
       apiKeySetting.settingEl.style.display    = !isLocal  ? '' : 'none';
     };
+
+    let customTypeDropdown: any = null;
+    customTypeSetting.addDropdown(drop => {
+      customTypeDropdown = drop;
+      drop.addOption('openai_compat', 'OpenAI-compatible');
+      drop.addOption('anthropic', 'Anthropic (Claude)');
+      drop
+        .setValue(this.plugin.settings.providerType)
+        .onChange(async value => {
+          this.plugin.settings.providerType = value as 'openai_compat' | 'anthropic';
+          await this.save();
+        });
+    });
 
     providerSetting.addDropdown(drop => {
       for (const p of PROVIDER_PRESETS) drop.addOption(p.id, p.label);
@@ -151,6 +170,8 @@ export class EngramSettingTab extends PluginSettingTab {
           if (preset && value !== 'custom') {
             this.plugin.settings.providerType    = preset.type;
             this.plugin.settings.providerBaseUrl = preset.baseUrl;
+          } else if (value === 'custom' && customTypeDropdown) {
+            customTypeDropdown.setValue(this.plugin.settings.providerType);
           }
           applyProviderVisibility();
           await this.save();
