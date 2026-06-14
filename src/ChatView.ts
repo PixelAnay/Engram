@@ -122,7 +122,7 @@ export class ChatView extends ItemView {
     const root = this.containerEl.children[1] as HTMLElement;
     root.empty();
     root.addClass('engram-chat-root');
-    root.style.padding = '0';
+    root.setCssStyles({ padding: '0' });
 
     // ── Header ────────────────────────────────────────────────────────────────
     const header = root.createDiv('engram-header');
@@ -186,10 +186,10 @@ export class ChatView extends ItemView {
 
     // Context status + memory toast
     this.contextStatusEl = header.createDiv('engram-context-status');
-    this.contextStatusEl.style.display = 'none';
+    this.contextStatusEl.setCssStyles({ display: 'none' });
 
     this.memoryToast = header.createDiv('engram-memory-toast');
-    this.memoryToast.style.display = 'none';
+    this.memoryToast.setCssStyles({ display: 'none' });
 
     // ── Messages ──────────────────────────────────────────────────────────────
     this.messagesContainer = root.createDiv('engram-messages');
@@ -206,8 +206,8 @@ export class ChatView extends ItemView {
     });
 
     this.inputArea.addEventListener('input', () => {
-      this.inputArea.style.height = 'auto';
-      this.inputArea.style.height = Math.min(this.inputArea.scrollHeight, 160) + 'px';
+      this.inputArea.setCssStyles({ height: 'auto' });
+      this.inputArea.setCssStyles({ height: Math.min(this.inputArea.scrollHeight, 160) + 'px' });
       const consumed = this.slashCommandHandler?.handleInput();
       if (!consumed) this.mentionAutocomplete?.handleInput();
     });
@@ -254,7 +254,7 @@ export class ChatView extends ItemView {
 
     this.stopBtn = btnGroup.createEl('button', { cls: 'engram-stop-btn', text: 'Stop' });
     setIcon(this.stopBtn, 'square');
-    this.stopBtn.style.display = 'none';
+    this.stopBtn.setCssStyles({ display: 'none' });
     this.stopBtn.addEventListener('click', () => {
       this.plugin.providerFactory.abort();
       this.setStreaming(false);
@@ -428,7 +428,7 @@ export class ChatView extends ItemView {
     if ((!text && !hasAtts) || this.isStreaming) return;
 
     this.inputArea.value = '';
-    this.inputArea.style.height = 'auto';
+    this.inputArea.setCssStyles({ height: 'auto' });
 
     const attachmentsForSend = [...this.pendingAttachments];
     this.pendingAttachments = [];
@@ -540,8 +540,8 @@ export class ChatView extends ItemView {
 
   private showMemoryToast(count: number): void {
     this.memoryToast.textContent = `🧠 Saved ${count} fact${count > 1 ? 's' : ''} to memory`;
-    this.memoryToast.style.display = 'block';
-    setTimeout(() => { this.memoryToast.style.display = 'none'; }, 3000);
+    this.memoryToast.setCssStyles({ display: 'block' });
+    setTimeout(() => { this.memoryToast.setCssStyles({ display: 'none' }); }, 3000);
   }
 
   // ── Persona switcher ───────────────────────────────────────────────────────
@@ -569,7 +569,7 @@ export class ChatView extends ItemView {
     for (const persona of this.plugin.settings.personas) {
       const item = list.appendChild(document.createElement('div'));
       item.className = 'engram-undo-item';
-      if (persona.id === this.plugin.settings.activePersonaId) item.style.borderColor = 'var(--color-accent)';
+      if (persona.id === this.plugin.settings.activePersonaId) item.setCssStyles({ borderColor: 'var(--color-accent)' });
 
       const name = item.appendChild(document.createElement('span'));
       name.className = 'engram-undo-desc';
@@ -593,7 +593,7 @@ export class ChatView extends ItemView {
     const closeBtn = panel.appendChild(document.createElement('button'));
     closeBtn.className = 'engram-modal-cancel';
     closeBtn.textContent = 'Close';
-    closeBtn.style.marginTop = '8px';
+    closeBtn.setCssStyles({ marginTop: '8px' });
     closeBtn.addEventListener('click', () => overlay.remove());
     overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
 
@@ -685,7 +685,7 @@ export class ChatView extends ItemView {
     const closeBtn = panel.appendChild(document.createElement('button'));
     closeBtn.className = 'engram-modal-cancel';
     closeBtn.textContent = 'Close';
-    closeBtn.style.marginTop = '8px';
+    closeBtn.setCssStyles({ marginTop: '8px' });
     closeBtn.addEventListener('click', () => overlay.remove());
     overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
 
@@ -754,8 +754,8 @@ export class ChatView extends ItemView {
     this.displayMessages = this.displayMessages.slice(0, idx);
     this.inputArea.value = msg.content;
     this.inputArea.focus();
-    this.inputArea.style.height = 'auto';
-    this.inputArea.style.height = this.inputArea.scrollHeight + 'px';
+    this.inputArea.setCssStyles({ height: 'auto' });
+    this.inputArea.setCssStyles({ height: this.inputArea.scrollHeight + 'px' });
     if (msg.attachments) { this.pendingAttachments = [...msg.attachments]; this.renderAttachmentPreviews(); }
     this.renderMessages();
     this.sessionManager.save(this.messages);
@@ -772,11 +772,11 @@ export class ChatView extends ItemView {
 
   private showContextStatus(status: string): void {
     this.contextStatusEl.textContent = status;
-    this.contextStatusEl.style.display = 'block';
+    this.contextStatusEl.setCssStyles({ display: 'block' });
   }
 
   private hideContextStatus(): void {
-    this.contextStatusEl.style.display = 'none';
+    this.contextStatusEl.setCssStyles({ display: 'none' });
     this.contextStatusEl.textContent = '';
   }
 
@@ -788,8 +788,8 @@ export class ChatView extends ItemView {
 
   private setStreaming(streaming: boolean): void {
     this.isStreaming = streaming;
-    this.sendBtn.style.display = streaming ? 'none' : 'flex';
-    this.stopBtn.style.display = streaming ? 'flex' : 'none';
+    this.sendBtn.setCssStyles({ display: streaming ? 'none' : 'flex' });
+    this.stopBtn.setCssStyles({ display: streaming ? 'flex' : 'none' });
     this.inputArea.disabled = streaming;
     this.refreshSessionControls();
     if (!streaming) {

@@ -112,10 +112,10 @@ export class EngramSettingTab extends PluginSettingTab {
     containerEl.empty();
     containerEl.addClass('engram-settings');
 
-    containerEl.createEl('h2', { text: '🧠 Engram Settings' });
+    new Setting(containerEl).setName('🧠 Engram Settings').setHeading();
 
     // ── 1. AI Provider ──────────────────────────────────────────────────────
-    containerEl.createEl('h3', { text: '🤖 AI Provider' });
+    new Setting(containerEl).setName('🤖 AI Provider').setHeading();
 
     // Provider preset dropdown
     const providerSetting = new Setting(containerEl)
@@ -260,7 +260,7 @@ export class EngramSettingTab extends PluginSettingTab {
     });
 
     // ── 2. Persona ──────────────────────────────────────────────────────────
-    containerEl.createEl('h3', { text: '🧠 Persona' });
+    new Setting(containerEl).setName('🧠 Persona').setHeading();
 
     const getActivePersona = () =>
       this.plugin.settings.personas.find(
@@ -354,7 +354,7 @@ export class EngramSettingTab extends PluginSettingTab {
     );
 
     // ── 3. Memory ───────────────────────────────────────────────────────────
-    containerEl.createEl('h3', { text: '💾 Memory' });
+    new Setting(containerEl).setName('💾 Memory').setHeading();
 
     new Setting(containerEl)
       .setName('Enable memory system')
@@ -433,7 +433,7 @@ export class EngramSettingTab extends PluginSettingTab {
       );
 
     // ── 4. Vault Access ─────────────────────────────────────────────────────
-    containerEl.createEl('h3', { text: '🔒 Vault Access' });
+    new Setting(containerEl).setName('🔒 Vault Access').setHeading();
 
     // Scope mode dropdown
     const scopeSetting = new Setting(containerEl)
@@ -539,7 +539,7 @@ export class EngramSettingTab extends PluginSettingTab {
       );
 
     // ── 5. Context & Performance ────────────────────────────────────────────
-    containerEl.createEl('h3', { text: '💬 Context & Performance' });
+    new Setting(containerEl).setName('💬 Context & Performance').setHeading();
 
     new Setting(containerEl)
       .setName('Context window (tokens)')
@@ -617,7 +617,7 @@ export class EngramSettingTab extends PluginSettingTab {
       );
 
     // ── 6. Semantic Search ──────────────────────────────────────────────────
-    containerEl.createEl('h3', { text: '🔍 Semantic Search (optional)' });
+    new Setting(containerEl).setName('🔍 Semantic Search (optional)').setHeading();
 
     containerEl.createEl('p', {
       text:

@@ -16,7 +16,7 @@ export class MentionAutocomplete {
     private onSelect: (notePath: string) => void
   ) {
     this.dropdownEl = container.createDiv('engram-mention-dropdown');
-    this.dropdownEl.style.display = 'none';
+    this.dropdownEl.setCssStyles({ display: 'none' });
   }
 
   /** Call this from the textarea's 'input' event handler. */
@@ -50,7 +50,7 @@ export class MentionAutocomplete {
     }
 
     this.dropdownEl.empty();
-    this.dropdownEl.style.display = 'block';
+    this.dropdownEl.setCssStyles({ display: 'block' });
 
     for (let i = 0; i < filtered.length; i++) {
       const note = filtered[i];
@@ -113,7 +113,7 @@ export class MentionAutocomplete {
   }
 
   hide(): void {
-    this.dropdownEl.style.display = 'none';
+    this.dropdownEl.setCssStyles({ display: 'none' });
     this.mentionStart = -1;
   }
 

@@ -485,7 +485,7 @@ export class ToolExecutor {
         let found = false;
         updated = existing;
 
-        // eslint-disable-next-line no-constant-condition
+        // eslint-disable-next-line no-constant-condition -- intentional infinite loop
         while (true) {
           const idx = existing.indexOf(oldText, searchFrom);
           if (idx === -1) break;

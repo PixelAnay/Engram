@@ -170,7 +170,7 @@ export class MessageRenderer {
           const img = attContainer.appendChild(document.createElement('img'));
           img.src = att.dataUrl;
           img.alt = att.name;
-          img.style.cssText = 'max-width:100%;border-radius:var(--radius-s);max-height:200px;object-fit:contain';
+          img.setCssStyles({ maxWidth: '100%', borderRadius: 'var(--radius-s)', maxHeight: '200px', objectFit: 'contain' });
         } else {
           const chip = attContainer.appendChild(document.createElement('div'));
           chip.className = 'engram-attachment-chip';

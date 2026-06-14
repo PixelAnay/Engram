@@ -90749,7 +90749,7 @@ var MentionAutocomplete = class {
     this.onSelect = onSelect;
     this.mentionStart = -1;
     this.dropdownEl = container.createDiv("engram-mention-dropdown");
-    this.dropdownEl.style.display = "none";
+    this.dropdownEl.setCssStyles({ display: "none" });
   }
   /** Call this from the textarea's 'input' event handler. */
   handleInput() {
@@ -90773,7 +90773,7 @@ var MentionAutocomplete = class {
       return;
     }
     this.dropdownEl.empty();
-    this.dropdownEl.style.display = "block";
+    this.dropdownEl.setCssStyles({ display: "block" });
     for (let i = 0; i < filtered.length; i++) {
       const note = filtered[i];
       const item = this.dropdownEl.createDiv("engram-mention-item");
@@ -90831,7 +90831,7 @@ var MentionAutocomplete = class {
     return this.dropdownEl.style.display !== "none";
   }
   hide() {
-    this.dropdownEl.style.display = "none";
+    this.dropdownEl.setCssStyles({ display: "none" });
     this.mentionStart = -1;
   }
   select(notePath) {
@@ -90973,7 +90973,7 @@ var MessageRenderer = class {
           const img = attContainer.appendChild(document.createElement("img"));
           img.src = att.dataUrl;
           img.alt = att.name;
-          img.style.cssText = "max-width:100%;border-radius:var(--radius-s);max-height:200px;object-fit:contain";
+          img.setCssStyles({ maxWidth: "100%", borderRadius: "var(--radius-s)", maxHeight: "200px", objectFit: "contain" });
         } else {
           const chip = attContainer.appendChild(document.createElement("div"));
           chip.className = "engram-attachment-chip";
@@ -91622,7 +91622,7 @@ var ChatView = class extends import_obsidian3.ItemView {
     const root = this.containerEl.children[1];
     root.empty();
     root.addClass("engram-chat-root");
-    root.style.padding = "0";
+    root.setCssStyles({ padding: "0" });
     const header = root.createDiv("engram-header");
     const titleRow = header.createDiv("engram-header-title-row");
     titleRow.createSpan("engram-header-icon").textContent = "\u{1F9E0}";
@@ -91673,9 +91673,9 @@ var ChatView = class extends import_obsidian3.ItemView {
       (_b = this.app.setting) == null ? void 0 : _b.openTabById("engram-chat");
     });
     this.contextStatusEl = header.createDiv("engram-context-status");
-    this.contextStatusEl.style.display = "none";
+    this.contextStatusEl.setCssStyles({ display: "none" });
     this.memoryToast = header.createDiv("engram-memory-toast");
-    this.memoryToast.style.display = "none";
+    this.memoryToast.setCssStyles({ display: "none" });
     this.messagesContainer = root.createDiv("engram-messages");
     const inputBar = root.createDiv("engram-input-bar");
     this.attachmentPreviewEl = inputBar.createDiv("engram-input-attachments");
@@ -91686,8 +91686,8 @@ var ChatView = class extends import_obsidian3.ItemView {
     });
     this.inputArea.addEventListener("input", () => {
       var _a2, _b;
-      this.inputArea.style.height = "auto";
-      this.inputArea.style.height = Math.min(this.inputArea.scrollHeight, 160) + "px";
+      this.inputArea.setCssStyles({ height: "auto" });
+      this.inputArea.setCssStyles({ height: Math.min(this.inputArea.scrollHeight, 160) + "px" });
       const consumed = (_a2 = this.slashCommandHandler) == null ? void 0 : _a2.handleInput();
       if (!consumed)
         (_b = this.mentionAutocomplete) == null ? void 0 : _b.handleInput();
@@ -91733,7 +91733,7 @@ var ChatView = class extends import_obsidian3.ItemView {
     this.sendBtn.addEventListener("click", () => this.sendMessage());
     this.stopBtn = btnGroup.createEl("button", { cls: "engram-stop-btn", text: "Stop" });
     (0, import_obsidian3.setIcon)(this.stopBtn, "square");
-    this.stopBtn.style.display = "none";
+    this.stopBtn.setCssStyles({ display: "none" });
     this.stopBtn.addEventListener("click", () => {
       this.plugin.providerFactory.abort();
       this.setStreaming(false);
@@ -91895,7 +91895,7 @@ var ChatView = class extends import_obsidian3.ItemView {
     if (!text && !hasAtts || this.isStreaming)
       return;
     this.inputArea.value = "";
-    this.inputArea.style.height = "auto";
+    this.inputArea.setCssStyles({ height: "auto" });
     const attachmentsForSend = [...this.pendingAttachments];
     this.pendingAttachments = [];
     this.renderAttachmentPreviews();
@@ -92003,9 +92003,9 @@ var ChatView = class extends import_obsidian3.ItemView {
   }
   showMemoryToast(count) {
     this.memoryToast.textContent = `\u{1F9E0} Saved ${count} fact${count > 1 ? "s" : ""} to memory`;
-    this.memoryToast.style.display = "block";
+    this.memoryToast.setCssStyles({ display: "block" });
     setTimeout(() => {
-      this.memoryToast.style.display = "none";
+      this.memoryToast.setCssStyles({ display: "none" });
     }, 3e3);
   }
   // ── Persona switcher ───────────────────────────────────────────────────────
@@ -92027,7 +92027,7 @@ var ChatView = class extends import_obsidian3.ItemView {
       const item = list.appendChild(document.createElement("div"));
       item.className = "engram-undo-item";
       if (persona.id === this.plugin.settings.activePersonaId)
-        item.style.borderColor = "var(--color-accent)";
+        item.setCssStyles({ borderColor: "var(--color-accent)" });
       const name = item.appendChild(document.createElement("span"));
       name.className = "engram-undo-desc";
       name.textContent = persona.name;
@@ -92047,7 +92047,7 @@ var ChatView = class extends import_obsidian3.ItemView {
     const closeBtn = panel.appendChild(document.createElement("button"));
     closeBtn.className = "engram-modal-cancel";
     closeBtn.textContent = "Close";
-    closeBtn.style.marginTop = "8px";
+    closeBtn.setCssStyles({ marginTop: "8px" });
     closeBtn.addEventListener("click", () => overlay.remove());
     overlay.addEventListener("click", (e) => {
       if (e.target === overlay)
@@ -92132,7 +92132,7 @@ var ChatView = class extends import_obsidian3.ItemView {
     const closeBtn = panel.appendChild(document.createElement("button"));
     closeBtn.className = "engram-modal-cancel";
     closeBtn.textContent = "Close";
-    closeBtn.style.marginTop = "8px";
+    closeBtn.setCssStyles({ marginTop: "8px" });
     closeBtn.addEventListener("click", () => overlay.remove());
     overlay.addEventListener("click", (e) => {
       if (e.target === overlay)
@@ -92203,8 +92203,8 @@ var ChatView = class extends import_obsidian3.ItemView {
     this.displayMessages = this.displayMessages.slice(0, idx);
     this.inputArea.value = msg.content;
     this.inputArea.focus();
-    this.inputArea.style.height = "auto";
-    this.inputArea.style.height = this.inputArea.scrollHeight + "px";
+    this.inputArea.setCssStyles({ height: "auto" });
+    this.inputArea.setCssStyles({ height: this.inputArea.scrollHeight + "px" });
     if (msg.attachments) {
       this.pendingAttachments = [...msg.attachments];
       this.renderAttachmentPreviews();
@@ -92222,10 +92222,10 @@ var ChatView = class extends import_obsidian3.ItemView {
   }
   showContextStatus(status) {
     this.contextStatusEl.textContent = status;
-    this.contextStatusEl.style.display = "block";
+    this.contextStatusEl.setCssStyles({ display: "block" });
   }
   hideContextStatus() {
-    this.contextStatusEl.style.display = "none";
+    this.contextStatusEl.setCssStyles({ display: "none" });
     this.contextStatusEl.textContent = "";
   }
   updateTokenBar() {
@@ -92236,8 +92236,8 @@ var ChatView = class extends import_obsidian3.ItemView {
   }
   setStreaming(streaming) {
     this.isStreaming = streaming;
-    this.sendBtn.style.display = streaming ? "none" : "flex";
-    this.stopBtn.style.display = streaming ? "flex" : "none";
+    this.sendBtn.setCssStyles({ display: streaming ? "none" : "flex" });
+    this.stopBtn.setCssStyles({ display: streaming ? "flex" : "none" });
     this.inputArea.disabled = streaming;
     this.refreshSessionControls();
     if (!streaming) {
@@ -94553,8 +94553,8 @@ var EngramSettingTab = class extends import_obsidian8.PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
     containerEl.addClass("engram-settings");
-    containerEl.createEl("h2", { text: "\u{1F9E0} Engram Settings" });
-    containerEl.createEl("h3", { text: "\u{1F916} AI Provider" });
+    new import_obsidian8.Setting(containerEl).setName("\u{1F9E0} Engram Settings").setHeading();
+    new import_obsidian8.Setting(containerEl).setName("\u{1F916} AI Provider").setHeading();
     const providerSetting = new import_obsidian8.Setting(containerEl).setName("Provider").setDesc("Select your AI provider or endpoint");
     const customUrlSetting = new import_obsidian8.Setting(containerEl).setName("Base URL").setDesc("Full base URL for the custom provider endpoint (no trailing slash)");
     const customTypeSetting = new import_obsidian8.Setting(containerEl).setName("API Format").setDesc("The API format / protocol expected by the custom provider");
@@ -94644,7 +94644,7 @@ var EngramSettingTab = class extends import_obsidian8.PluginSettingTab {
         }
       });
     });
-    containerEl.createEl("h3", { text: "\u{1F9E0} Persona" });
+    new import_obsidian8.Setting(containerEl).setName("\u{1F9E0} Persona").setHeading();
     const getActivePersona = () => {
       var _a2;
       return (_a2 = this.plugin.settings.personas.find(
@@ -94719,7 +94719,7 @@ var EngramSettingTab = class extends import_obsidian8.PluginSettingTab {
         refreshPromptArea();
       })
     );
-    containerEl.createEl("h3", { text: "\u{1F4BE} Memory" });
+    new import_obsidian8.Setting(containerEl).setName("\u{1F4BE} Memory").setHeading();
     new import_obsidian8.Setting(containerEl).setName("Enable memory system").setDesc("Engram maintains a persistent memory file summarising important facts about you").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.memoryEnabled).onChange(async (value) => {
         this.plugin.settings.memoryEnabled = value;
@@ -94763,7 +94763,7 @@ var EngramSettingTab = class extends import_obsidian8.PluginSettingTab {
         }
       })
     );
-    containerEl.createEl("h3", { text: "\u{1F512} Vault Access" });
+    new import_obsidian8.Setting(containerEl).setName("\u{1F512} Vault Access").setHeading();
     const scopeSetting = new import_obsidian8.Setting(containerEl).setName("Knowledge scope").setDesc("Which folders Engram is allowed to read");
     const scopeFolderSetting = new import_obsidian8.Setting(containerEl).setName("Folder list").setDesc("One folder path per line (relative to vault root)");
     const applyScopeVisibility = () => {
@@ -94808,7 +94808,7 @@ var EngramSettingTab = class extends import_obsidian8.PluginSettingTab {
         await this.save();
       })
     );
-    containerEl.createEl("h3", { text: "\u{1F4AC} Context & Performance" });
+    new import_obsidian8.Setting(containerEl).setName("\u{1F4AC} Context & Performance").setHeading();
     new import_obsidian8.Setting(containerEl).setName("Context window (tokens)").setDesc("Max tokens allocated to context. Match your model's native context size.").addSlider(
       (slider) => slider.setLimits(1024, 131072, 1024).setValue(this.plugin.settings.contextWindowTokens).setDynamicTooltip().onChange(async (value) => {
         this.plugin.settings.contextWindowTokens = value;
@@ -94844,7 +94844,7 @@ var EngramSettingTab = class extends import_obsidian8.PluginSettingTab {
         await this.save();
       })
     );
-    containerEl.createEl("h3", { text: "\u{1F50D} Semantic Search (optional)" });
+    new import_obsidian8.Setting(containerEl).setName("\u{1F50D} Semantic Search (optional)").setHeading();
     containerEl.createEl("p", {
       text: "When configured, notes are embedded using Ollama and vector similarity search replaces keyword-only ranking \u2014 scaling gracefully to 500+ note vaults. Requires Ollama running locally with a text-embedding model (e.g. 'nomic-embed-text'). Leave the model blank to disable.",
       cls: "engram-section-desc"
@@ -95045,7 +95045,6 @@ var EngramPlugin = class extends import_obsidian9.Plugin {
     this.registerVaultEvents();
   }
   onunload() {
-    this.app.workspace.detachLeavesOfType(ENGRAM_VIEW_TYPE);
     if (this.indexRebuildTimer)
       clearTimeout(this.indexRebuildTimer);
     if (this.chatPersistTimer)
