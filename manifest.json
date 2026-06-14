@@ -1,8 +1,8 @@
 {
     "id": "engram-chat",
     "name": "Engram Chat",
-    "version": "5.0.10",
-    "minAppVersion": "0.15.0",
+    "version": "5.0.11",
+    "minAppVersion": "1.5.0",
     "description": "The AI that remembers you. A personal intelligence with persistent memory, multi-provider AI, and full vault access.",
     "author": "PixelAnay",
     "authorUrl": "https://github.com/PixelAnay/Engram",
