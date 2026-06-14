@@ -113,6 +113,7 @@ export class MemoryManager {
 
   async openInEditor(): Promise<void> {
     const file = await this.ensureFile();
+    // eslint-disable-next-line obsidianmd/no-unsupported-api
     const leaf = this.app.workspace.getLeaf('tab');
     await leaf.openFile(file, { active: true });
   }
@@ -124,6 +125,7 @@ export class MemoryManager {
     // Create parent folders
     const parentPath = this.memoryPath.substring(0, this.memoryPath.lastIndexOf('/'));
     if (parentPath) {
+      // eslint-disable-next-line obsidianmd/no-unsupported-api
       try { await this.app.vault.createFolder(parentPath); } catch { /* exists */ }
     }
 

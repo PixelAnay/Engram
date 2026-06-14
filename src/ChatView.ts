@@ -617,6 +617,7 @@ export class ChatView extends ItemView {
     }
 
     try {
+      // eslint-disable-next-line obsidianmd/no-unsupported-api
       await this.app.vault.createFolder('Exports').catch(() => {});
       await this.app.vault.create(path, content);
       new Notice(`📝 Exported to ${path}`);
@@ -766,6 +767,7 @@ export class ChatView extends ItemView {
   private async openNotes(paths: string[]): Promise<void> {
     for (let i = 0; i < paths.length; i++) {
       const file = this.app.vault.getAbstractFileByPath(paths[i]);
+      // eslint-disable-next-line obsidianmd/no-unsupported-api
       if (file) await this.app.workspace.getLeaf('tab').openFile(file as any, { active: i === 0 });
     }
   }
