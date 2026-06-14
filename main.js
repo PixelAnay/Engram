@@ -94733,7 +94733,7 @@ var EngramSettingTab = class extends import_obsidian8.PluginSettingTab {
       })
     ).addButton(
       (btn) => (
-        // eslint-disable-next-line obsidianmd/no-unsupported-api
+        // eslint-disable-next-line obsidianmd/no-unsupported-api -- safe on modern Obsidian
         btn.setButtonText("Open").setTooltip("Open memory file in Obsidian").onClick(() => {
           this.plugin.openMemoryFile();
         })
