@@ -1,5 +1,5 @@
 {
-  "name": "engram",
+  "name": "engram-chat",
   "version": "1.0.0",
   "description": "Sidebar chat powered by your local LLM with full vault context",
   "main": "main.js",

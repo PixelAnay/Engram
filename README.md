@@ -61,8 +61,8 @@ Engram supports all major local and cloud LLM providers out of the box:
 ### Option 2: Manual Installation
 1. Go to the [Releases](https://github.com/PixelAnay/Engram/releases) tab.
 2. Download `main.js`, `manifest.json`, and `styles.css`.
-3. Create a folder named `engram` inside your vault's plugins folder:
-   `<VaultPath>/.obsidian/plugins/engram/`
+3. Create a folder named `engram-chat` inside your vault's plugins folder:
+   `<VaultPath>/.obsidian/plugins/engram-chat/`
 4. Copy the downloaded files into that directory.
 5. Reload Obsidian and enable the plugin.
 

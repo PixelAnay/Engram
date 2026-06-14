@@ -181,7 +181,7 @@ export class ChatView extends ItemView {
     setIcon(settingsBtn, 'settings');
     settingsBtn.addEventListener('click', () => {
       (this.app as any).setting?.open();
-      (this.app as any).setting?.openTabById('engram');
+      (this.app as any).setting?.openTabById('engram-chat');
     });
 
     // Context status + memory toast
