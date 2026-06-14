@@ -69,28 +69,28 @@ export class AnthropicProvider implements AIProvider {
 
   // ── Health check ────────────────────────────────────────────────────────────
 
-  async healthCheck(): Promise<ProviderStatus> {
+  async healthCheck(model?: string): Promise<ProviderStatus> {
     const start = Date.now();
-    // Anthropic has no /models list endpoint — do a tiny completion instead
+    const testModel = model || 'claude-3-5-sonnet-latest';
     try {
       const res = await requestUrl({
         url: `${this.baseUrl}/v1/messages`,
         method: 'POST',
         headers: this.headers(),
         body: JSON.stringify({
-          model: 'claude-haiku-4-5',
+          model: testModel,
           max_tokens: 1,
           messages: [{ role: 'user', content: 'hi' }],
         }),
         throw: false,
       });
 
-      if (res.status === 200 || res.status === 400) {
-        // 400 might be model not found but connection works
-        const model = (res.json as any)?.model ?? 'claude';
-        return { ok: true, model, latencyMs: Date.now() - start };
+      if (res.status === 200) {
+        return { ok: true, model: testModel, latencyMs: Date.now() - start };
       }
-      throw new Error(`HTTP ${res.status}: ${res.text?.slice(0, 200)}`);
+
+      const errMsg = (res.json as any)?.error?.message || `HTTP ${res.status}`;
+      throw new Error(errMsg);
     } catch (e) {
       throw new Error(`Anthropic connection failed: ${(e as Error).message}`);
     }

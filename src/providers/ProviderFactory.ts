@@ -58,7 +58,7 @@ export class ProviderFactory {
   }
 
   async healthCheck(): Promise<string> {
-    const status = await this.provider.healthCheck();
+    const status = await this.provider.healthCheck(this.settings.model || undefined);
     return status.model;
   }
 
