@@ -27783,17 +27783,17 @@ function renderPdfPageToDataUrl(pdfDoc, pageNum) {
 }
 function showPdfPageRangeModal(fileName, totalPages, onConfirm, onCancel) {
   const overlay = document.createElement("div");
-  overlay.className = "llama-modal-overlay";
+  overlay.className = "engram-modal-overlay";
   const modal = overlay.appendChild(document.createElement("div"));
-  modal.className = "llama-modal";
+  modal.className = "engram-modal";
   const title = modal.appendChild(document.createElement("div"));
-  title.className = "llama-modal-title";
+  title.className = "engram-modal-title";
   title.textContent = `\u{1F4C4} PDF: ${fileName}`;
   const subtitle = modal.appendChild(document.createElement("div"));
-  subtitle.className = "llama-modal-subtitle";
+  subtitle.className = "engram-modal-subtitle";
   subtitle.textContent = `${totalPages} pages \u2014 select which pages to send`;
   const row = modal.appendChild(document.createElement("div"));
-  row.className = "llama-modal-row";
+  row.className = "engram-modal-row";
   const fromLabel = row.appendChild(document.createElement("label"));
   fromLabel.textContent = "From page";
   const fromInput = row.appendChild(document.createElement("input"));
@@ -27801,7 +27801,7 @@ function showPdfPageRangeModal(fileName, totalPages, onConfirm, onCancel) {
   fromInput.min = "1";
   fromInput.max = String(totalPages);
   fromInput.value = "1";
-  fromInput.className = "llama-modal-input";
+  fromInput.className = "engram-modal-input";
   const toLabel = row.appendChild(document.createElement("label"));
   toLabel.textContent = "To page";
   const toInput = row.appendChild(document.createElement("input"));
@@ -27809,22 +27809,22 @@ function showPdfPageRangeModal(fileName, totalPages, onConfirm, onCancel) {
   toInput.min = "1";
   toInput.max = String(totalPages);
   toInput.value = String(Math.min(totalPages, 14));
-  toInput.className = "llama-modal-input";
+  toInput.className = "engram-modal-input";
   const warning = modal.appendChild(document.createElement("div"));
-  warning.className = "llama-modal-warning";
+  warning.className = "engram-modal-warning";
   warning.textContent = "\u26A0\uFE0F Each page is sent as an image. More pages = larger context. Recommend \u2264 14.";
   const btns = modal.appendChild(document.createElement("div"));
-  btns.className = "llama-modal-btns";
+  btns.className = "engram-modal-btns";
   const cancelBtn = btns.appendChild(document.createElement("button"));
   cancelBtn.textContent = "Cancel";
-  cancelBtn.className = "llama-modal-cancel";
+  cancelBtn.className = "engram-modal-cancel";
   cancelBtn.addEventListener("click", () => {
     overlay.remove();
     onCancel();
   });
   const confirmBtn = btns.appendChild(document.createElement("button"));
   confirmBtn.textContent = "Attach pages";
-  confirmBtn.className = "llama-modal-confirm";
+  confirmBtn.className = "engram-modal-confirm";
   confirmBtn.addEventListener("click", () => {
     const from = Math.max(1, Math.min(totalPages, parseInt(fromInput.value) || 1));
     const to = Math.max(from, Math.min(totalPages, parseInt(toInput.value) || totalPages));
@@ -27886,7 +27886,7 @@ var AttachmentHandler = class {
                   dataUrl
                 });
               } catch (e) {
-                console.error(`[LLAMA Chat] Failed to render PDF page ${p}:`, e);
+                console.error(`[Engram] Failed to render PDF page ${p}:`, e);
               }
             }
             new import_obsidian.Notice(`\u2705 Loaded ${to - from + 1} pages from ${file.name}`);
@@ -27896,7 +27896,7 @@ var AttachmentHandler = class {
         );
       });
     } catch (err) {
-      console.error("[LLAMA Chat] PDF parsing error", err);
+      console.error("[Engram] PDF parsing error", err);
       new import_obsidian.Notice("Failed to parse PDF pages into images.");
     }
     return result;
@@ -27943,7 +27943,7 @@ var MentionAutocomplete = class {
     this.indexer = indexer;
     this.onSelect = onSelect;
     this.mentionStart = -1;
-    this.dropdownEl = container.createDiv("llama-mention-dropdown");
+    this.dropdownEl = container.createDiv("engram-mention-dropdown");
     this.dropdownEl.style.display = "none";
   }
   /** Call this from the textarea's 'input' event handler. */
@@ -27971,11 +27971,11 @@ var MentionAutocomplete = class {
     this.dropdownEl.style.display = "block";
     for (let i = 0; i < filtered.length; i++) {
       const note = filtered[i];
-      const item = this.dropdownEl.createDiv("llama-mention-item");
+      const item = this.dropdownEl.createDiv("engram-mention-item");
       if (i === 0)
         item.classList.add("active");
-      item.createSpan("llama-mention-name").textContent = note.title;
-      item.createSpan("llama-mention-path").textContent = note.path;
+      item.createSpan("engram-mention-name").textContent = note.title;
+      item.createSpan("engram-mention-path").textContent = note.path;
       item.addEventListener("mousedown", (e) => {
         e.preventDefault();
         this.select(note.path);
@@ -27987,9 +27987,9 @@ var MentionAutocomplete = class {
     if (this.dropdownEl.style.display === "none")
       return false;
     const items = Array.from(
-      this.dropdownEl.querySelectorAll(".llama-mention-item")
+      this.dropdownEl.querySelectorAll(".engram-mention-item")
     );
-    const active = this.dropdownEl.querySelector(".llama-mention-item.active");
+    const active = this.dropdownEl.querySelector(".engram-mention-item.active");
     const idx = active ? items.indexOf(active) : -1;
     if (e.key === "ArrowDown") {
       e.preventDefault();
@@ -28116,7 +28116,7 @@ var MessageRenderer = class {
     const wrapper = this.renderedBubbles.get(msg);
     if (!wrapper)
       return;
-    const contentEl = wrapper.querySelector(".llama-bubble-content");
+    const contentEl = wrapper.querySelector(".engram-bubble-content");
     if (!contentEl)
       return;
     if (this.streamingTextNode && contentEl.contains(this.streamingTextNode)) {
@@ -28126,7 +28126,7 @@ var MessageRenderer = class {
       this.streamingTextNode = document.createTextNode(msg.content);
       contentEl.appendChild(this.streamingTextNode);
     }
-    const cursor = wrapper.querySelector(".llama-cursor");
+    const cursor = wrapper.querySelector(".engram-cursor");
     if (cursor)
       cursor.setAttribute("style", msg.streaming ? "" : "display:none");
     this.updateToolEventsEl(wrapper, (_a2 = msg.toolEvents) != null ? _a2 : []);
@@ -28151,17 +28151,17 @@ var MessageRenderer = class {
   // ── Private rendering ─────────────────────────────────────────────────────
   renderBubble(msg) {
     const wrapper = document.createElement("div");
-    wrapper.className = `llama-msg-wrapper llama-msg-${msg.role}`;
+    wrapper.className = `engram-msg-wrapper engram-msg-${msg.role}`;
     const bubble = wrapper.appendChild(document.createElement("div"));
-    bubble.className = "llama-bubble";
+    bubble.className = "engram-bubble";
     if (msg.toolEvents && msg.toolEvents.length > 0) {
       const toolsEl = bubble.appendChild(document.createElement("div"));
-      toolsEl.className = "llama-tool-events";
+      toolsEl.className = "engram-tool-events";
       this.renderToolEvents(toolsEl, msg.toolEvents);
     }
     if (msg.attachments && msg.attachments.length > 0) {
       const attContainer = bubble.appendChild(document.createElement("div"));
-      attContainer.className = "llama-input-attachments";
+      attContainer.className = "engram-input-attachments";
       attContainer.style.marginBottom = msg.content ? "8px" : "0";
       for (const att of msg.attachments) {
         if (att.type.startsWith("image/")) {
@@ -28171,15 +28171,15 @@ var MessageRenderer = class {
           img.style.cssText = "max-width:100%;border-radius:var(--radius-s);max-height:200px;object-fit:contain";
         } else {
           const chip = attContainer.appendChild(document.createElement("div"));
-          chip.className = "llama-attachment-chip";
+          chip.className = "engram-attachment-chip";
           const nameSpan = chip.appendChild(document.createElement("span"));
-          nameSpan.className = "llama-attachment-name";
+          nameSpan.className = "engram-attachment-name";
           nameSpan.textContent = att.name;
         }
       }
     }
     const contentEl = bubble.appendChild(document.createElement("div"));
-    contentEl.className = "llama-bubble-content";
+    contentEl.className = "engram-bubble-content";
     if (msg.content) {
       if (msg.streaming) {
         this.streamingTextNode = document.createTextNode(msg.content);
@@ -28194,21 +28194,21 @@ var MessageRenderer = class {
     const hasText = msg.content.trim().length > 0;
     if (msg.streaming && !hasText) {
       const thinkingEl = contentEl.appendChild(document.createElement("div"));
-      thinkingEl.className = "llama-thinking";
+      thinkingEl.className = "engram-thinking";
       thinkingEl.appendChild(document.createElement("span")).textContent = "Thinking";
-      thinkingEl.appendChild(document.createElement("span")).className = "llama-thinking-dots";
+      thinkingEl.appendChild(document.createElement("span")).className = "engram-thinking-dots";
       thinkingEl.lastChild.textContent = "...";
     }
     if (msg.streaming) {
       const cursor = bubble.appendChild(document.createElement("span"));
-      cursor.className = "llama-cursor";
+      cursor.className = "engram-cursor";
       cursor.textContent = "\u258B";
     }
     if (!msg.streaming && msg.role !== "error") {
       const actions = wrapper.appendChild(document.createElement("div"));
-      actions.className = "llama-msg-actions";
+      actions.className = "engram-msg-actions";
       const copyBtn = actions.appendChild(document.createElement("button"));
-      copyBtn.className = "llama-msg-action-btn";
+      copyBtn.className = "engram-msg-action-btn";
       copyBtn.title = "Copy";
       (0, import_obsidian2.setIcon)(copyBtn, "copy");
       copyBtn.addEventListener("click", () => {
@@ -28219,7 +28219,7 @@ var MessageRenderer = class {
       });
       if (msg.role === "user") {
         const editBtn = actions.appendChild(document.createElement("button"));
-        editBtn.className = "llama-msg-action-btn";
+        editBtn.className = "engram-msg-action-btn";
         editBtn.title = "Edit & Resend";
         (0, import_obsidian2.setIcon)(editBtn, "pencil");
         editBtn.addEventListener("click", () => this.onEditMessage(msg));
@@ -28232,7 +28232,7 @@ var MessageRenderer = class {
     container.empty();
     for (const ev of events) {
       const evEl = container.appendChild(document.createElement("div"));
-      evEl.className = `llama-tool-event llama-tool-${ev.type}`;
+      evEl.className = `engram-tool-event engram-tool-${ev.type}`;
       const icon = (_a2 = TOOL_ICONS[ev.name]) != null ? _a2 : "\u{1F6E0}\uFE0F";
       if (ev.type === "start") {
         evEl.textContent = `${icon} ${ev.name.replace(/_/g, " ")}\u2026`;
@@ -28243,15 +28243,15 @@ var MessageRenderer = class {
     }
   }
   updateToolEventsEl(wrapper, events) {
-    const toolsEl = wrapper.querySelector(".llama-tool-events");
+    const toolsEl = wrapper.querySelector(".engram-tool-events");
     if (!toolsEl && events.length === 0)
       return;
     if (!toolsEl) {
-      const bubble = wrapper.querySelector(".llama-bubble");
+      const bubble = wrapper.querySelector(".engram-bubble");
       if (!bubble)
         return;
       const newToolsEl = document.createElement("div");
-      newToolsEl.className = "llama-tool-events";
+      newToolsEl.className = "engram-tool-events";
       bubble.insertBefore(newToolsEl, bubble.firstChild);
       this.renderToolEvents(newToolsEl, events);
     } else {
@@ -28283,7 +28283,7 @@ var MessageRenderer = class {
     };
     const toAnchor = (path) => {
       const a = document.createElement("a");
-      a.className = "llama-note-link";
+      a.className = "engram-note-link";
       a.textContent = path;
       a.title = `Open "${path}" in a new tab`;
       a.href = "#";
@@ -28311,7 +28311,7 @@ var MessageRenderer = class {
       const file = this.resolveFile(pathOnly);
       if (!file)
         continue;
-      anchor.classList.add("llama-note-link");
+      anchor.classList.add("engram-note-link");
       anchor.setAttribute("title", `Open "${file}" in a new tab`);
       anchor.addEventListener("click", makeHandler(file));
     }
@@ -28530,13 +28530,13 @@ var TokenBudgetBar = class {
   constructor(container, maxTokens) {
     this.maxTokens = Math.max(1, maxTokens);
     this.el = document.createElement("div");
-    this.el.className = "llama-token-bar";
+    this.el.className = "engram-token-bar";
     container.appendChild(this.el);
     this.fillEl = document.createElement("div");
-    this.fillEl.className = "llama-token-bar-fill";
+    this.fillEl.className = "engram-token-bar-fill";
     this.el.appendChild(this.fillEl);
     this.labelEl = document.createElement("span");
-    this.labelEl.className = "llama-token-bar-label";
+    this.labelEl.className = "engram-token-bar-label";
     this.el.appendChild(this.labelEl);
     this.update(0);
   }
@@ -30006,41 +30006,41 @@ function showConfirmDialog(options) {
     }
     document.addEventListener("keydown", onKeyDown);
     const overlay = document.createElement("div");
-    overlay.className = "llama-modal-overlay";
+    overlay.className = "engram-modal-overlay";
     overlay.addEventListener("click", (evt) => {
       if (evt.target === overlay)
         close(false);
     });
     const modal = document.createElement("div");
-    modal.className = "llama-modal";
+    modal.className = "engram-modal";
     modal.setAttribute("role", "dialog");
     modal.setAttribute("aria-modal", "true");
-    modal.setAttribute("aria-labelledby", "llama-confirm-title");
-    modal.setAttribute("aria-describedby", "llama-confirm-msg");
+    modal.setAttribute("aria-labelledby", "engram-confirm-title");
+    modal.setAttribute("aria-describedby", "engram-confirm-msg");
     modal.addEventListener("click", (evt) => evt.stopPropagation());
     overlay.appendChild(modal);
     const titleEl = document.createElement("div");
-    titleEl.id = "llama-confirm-title";
-    titleEl.className = "llama-modal-title";
+    titleEl.id = "engram-confirm-title";
+    titleEl.className = "engram-modal-title";
     titleEl.textContent = title;
     modal.appendChild(titleEl);
     const msgEl = document.createElement("div");
-    msgEl.id = "llama-confirm-msg";
-    msgEl.className = "llama-modal-subtitle";
+    msgEl.id = "engram-confirm-msg";
+    msgEl.className = "engram-modal-subtitle";
     msgEl.textContent = message;
     modal.appendChild(msgEl);
     const btns = document.createElement("div");
-    btns.className = "llama-modal-btns";
+    btns.className = "engram-modal-btns";
     modal.appendChild(btns);
     const cancelBtn = document.createElement("button");
     cancelBtn.type = "button";
-    cancelBtn.className = "llama-modal-cancel";
+    cancelBtn.className = "engram-modal-cancel";
     cancelBtn.textContent = cancelLabel;
     cancelBtn.addEventListener("click", () => close(false));
     btns.appendChild(cancelBtn);
     const confirmBtn = document.createElement("button");
     confirmBtn.type = "button";
-    confirmBtn.className = danger ? "llama-modal-confirm llama-modal-confirm-danger" : "llama-modal-confirm";
+    confirmBtn.className = danger ? "engram-modal-confirm engram-modal-confirm-danger" : "engram-modal-confirm";
     confirmBtn.textContent = confirmLabel;
     confirmBtn.addEventListener("click", () => close(true));
     btns.appendChild(confirmBtn);
