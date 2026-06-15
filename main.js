@@ -92782,19 +92782,17 @@ var EmbeddingIndex = class {
       if (exist && exist.mtime === file.stat.mtime) {
         result.push(exist);
       } else {
-        try {
-          const content = await getContent(file.path);
-          if (!content)
-            continue;
-          const text = `${file.basename}
+        const content = await getContent(file.path);
+        if (!content)
+          continue;
+        const text = `${file.basename}
 
 ${content}`.slice(0, 4e3);
-          const vector = await this.fetchEmbedding(text);
-          if (vector) {
-            result.push({ path: file.path, mtime: file.stat.mtime, vector });
-          }
-        } catch (err) {
-          console.error(`[Engram] Failed to embed ${file.path}:`, err);
+        const vector = await this.fetchEmbedding(text);
+        if (vector) {
+          result.push({ path: file.path, mtime: file.stat.mtime, vector });
+        } else {
+          throw new Error(`Failed to generate embedding for "${file.path}".`);
         }
       }
     }
@@ -92845,14 +92843,19 @@ ${content}`.slice(0, 4e3);
   async search(query, limit) {
     if (!this.isReady || this.entries.length === 0)
       return [];
-    const qVec = await this.fetchEmbedding(query.slice(0, 1e3));
-    if (!qVec)
+    try {
+      const qVec = await this.fetchEmbedding(query.slice(0, 1e3));
+      if (!qVec)
+        return [];
+      const scored = this.entries.map((e) => ({
+        path: e.path,
+        score: cosine(qVec, e.vector)
+      }));
+      return scored.sort((a, b) => b.score - a.score).slice(0, limit).filter((s) => s.score > 0.25).map((s) => s.path);
+    } catch (err) {
+      console.error("[Engram] Semantic search query embedding failed:", err);
       return [];
-    const scored = this.entries.map((e) => ({
-      path: e.path,
-      score: cosine(qVec, e.vector)
-    }));
-    return scored.sort((a, b) => b.score - a.score).slice(0, limit).filter((s) => s.score > 0.25).map((s) => s.path);
+    }
   }
   /** Serialise for persistence */
   toJSON() {
@@ -92864,7 +92867,7 @@ ${content}`.slice(0, 4e3);
   }
   // ── Private ────────────────────────────────────────────────────────────────
   async fetchEmbedding(text) {
-    var _a2, _b, _c, _d, _e;
+    var _a2, _b, _c, _d, _e, _f;
     const provider = this.settings.embedProvider || "none";
     const model = this.getEmbedModel();
     if (provider === "none" || !model)
@@ -92882,15 +92885,15 @@ ${content}`.slice(0, 4e3);
       } else if (provider === "openai") {
         url = "https://api.openai.com/v1/embeddings";
         const apiKey = ((_a2 = this.settings.openaiEmbedApiKey) == null ? void 0 : _a2.trim()) || ((_b = this.settings.providerApiKey) == null ? void 0 : _b.trim());
-        if (apiKey) {
-          headers["Authorization"] = `Bearer ${apiKey}`;
+        if (!apiKey) {
+          throw new Error("API key is missing. Please configure your OpenAI API Key.");
         }
+        headers["Authorization"] = `Bearer ${apiKey}`;
         body = { model, input: text };
       } else if (provider === "custom") {
         url = this.settings.customEmbedUrl || "";
         if (!url) {
-          clearTimeout(timer);
-          return null;
+          throw new Error("Custom embeddings URL is not configured.");
         }
         const apiKey = (_c = this.settings.customEmbedApiKey) == null ? void 0 : _c.trim();
         if (apiKey) {
@@ -92901,28 +92904,52 @@ ${content}`.slice(0, 4e3);
         clearTimeout(timer);
         return null;
       }
-      const resp = await fetch(url, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(body),
-        signal: ctrl.signal
-      });
-      clearTimeout(timer);
+      let resp;
+      try {
+        resp = await fetch(url, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(body),
+          signal: ctrl.signal
+        });
+      } catch (e) {
+        if (e.name === "AbortError") {
+          throw new Error(`Connection timed out (15s) at ${url}. Check if the server is running.`);
+        }
+        throw new Error(`Failed to connect to ${url}. Verify URL is correct and server is running. (${e.message || e})`);
+      } finally {
+        clearTimeout(timer);
+      }
       if (!resp.ok) {
-        console.error(`[Engram] Embeddings request failed with status ${resp.status}`);
-        return null;
+        let errorMsg = `Server returned status ${resp.status}`;
+        try {
+          const errData = await resp.json();
+          if ((_d = errData == null ? void 0 : errData.error) == null ? void 0 : _d.message) {
+            errorMsg += `: ${errData.error.message}`;
+          } else if (errData == null ? void 0 : errData.error) {
+            errorMsg += `: ${JSON.stringify(errData.error)}`;
+          }
+        } catch (e) {
+        }
+        throw new Error(`API error: ${errorMsg}`);
       }
       const data = await resp.json();
       if (provider === "ollama") {
-        return Array.isArray(data == null ? void 0 : data.embedding) ? data.embedding : null;
+        if (!Array.isArray(data == null ? void 0 : data.embedding)) {
+          throw new Error("Invalid response format: 'embedding' field is missing or not an array.");
+        }
+        return data.embedding;
       } else {
-        const embed = (_e = (_d = data == null ? void 0 : data.data) == null ? void 0 : _d[0]) == null ? void 0 : _e.embedding;
-        return Array.isArray(embed) ? embed : null;
+        const embed = (_f = (_e = data == null ? void 0 : data.data) == null ? void 0 : _e[0]) == null ? void 0 : _f.embedding;
+        if (!Array.isArray(embed)) {
+          throw new Error("Invalid response format: 'data[0].embedding' field is missing or not an array.");
+        }
+        return embed;
       }
     } catch (err) {
       clearTimeout(timer);
       console.error("[Engram] Error fetching embedding:", err);
-      return null;
+      throw err;
     }
   }
 };
