@@ -94733,10 +94733,13 @@ var EngramSettingTab = class extends import_obsidian9.PluginSettingTab {
         await this.save();
       });
     });
-    const tempSetting = new import_obsidian9.Setting(containerEl).setName("Temperature").setDesc("Sampling temperature \u2014 0 = deterministic, 1 = creative, 2 = chaotic").addSlider(
-      (slider) => slider.setLimits(0, 2, 0.05).setValue(this.plugin.settings.temperature).setDynamicTooltip().onChange(async (value) => {
-        this.plugin.settings.temperature = value;
-        await this.save();
+    const tempSetting = new import_obsidian9.Setting(containerEl).setName("Temperature").setDesc("Sampling temperature (0 = deterministic, 1 = creative, 2 = chaotic)").addText(
+      (text) => text.setPlaceholder("0.7").setValue(String(this.plugin.settings.temperature)).onChange(async (value) => {
+        const parsed = Number.parseFloat(value.trim());
+        if (!Number.isNaN(parsed)) {
+          this.plugin.settings.temperature = Math.max(0, Math.min(2, parsed));
+          await this.save();
+        }
       })
     );
     const testSetting = new import_obsidian9.Setting(containerEl).setName("Connection test").setDesc("Verify that Engram can reach the configured provider");
@@ -94872,10 +94875,13 @@ var EngramSettingTab = class extends import_obsidian9.PluginSettingTab {
         await this.save();
       })
     );
-    const memoryMaxTokensSetting = new import_obsidian9.Setting(containerEl).setName("Max memory tokens").setDesc("Maximum token budget reserved for injecting memory context").addSlider(
-      (slider) => slider.setLimits(500, 8e3, 100).setValue(this.plugin.settings.maxMemoryTokens).setDynamicTooltip().onChange(async (value) => {
-        this.plugin.settings.maxMemoryTokens = value;
-        await this.save();
+    const memoryMaxTokensSetting = new import_obsidian9.Setting(containerEl).setName("Max memory tokens").setDesc("Maximum token budget reserved for injecting memory context").addText(
+      (text) => text.setPlaceholder("4000").setValue(String(this.plugin.settings.maxMemoryTokens)).onChange(async (value) => {
+        const parsed = Number.parseInt(value.trim(), 10);
+        if (!Number.isNaN(parsed)) {
+          this.plugin.settings.maxMemoryTokens = Math.max(100, parsed);
+          await this.save();
+        }
       })
     );
     const memoryClearSetting = new import_obsidian9.Setting(containerEl).setName("Clear all memory").setDesc("Permanently erase all stored memories \u2014 this cannot be undone").addButton(
@@ -95021,23 +95027,32 @@ var EngramSettingTab = class extends import_obsidian9.PluginSettingTab {
         await this.save();
       })
     );
-    const diffThresholdSetting = new import_obsidian9.Setting(containerEl).setName("Diff preview threshold (chars)").setDesc("Only show diff preview when the edit changes more than this many characters").addSlider(
-      (slider) => slider.setLimits(0, 2e3, 50).setValue(this.plugin.settings.diffPreviewThreshold).setDynamicTooltip().onChange(async (value) => {
-        this.plugin.settings.diffPreviewThreshold = value;
-        await this.save();
+    const diffThresholdSetting = new import_obsidian9.Setting(containerEl).setName("Diff preview threshold (chars)").setDesc("Only show diff preview when the edit changes more than this many characters").addText(
+      (text) => text.setPlaceholder("200").setValue(String(this.plugin.settings.diffPreviewThreshold)).onChange(async (value) => {
+        const parsed = Number.parseInt(value.trim(), 10);
+        if (!Number.isNaN(parsed)) {
+          this.plugin.settings.diffPreviewThreshold = Math.max(0, parsed);
+          await this.save();
+        }
       })
     );
     const contextHeaderSetting = new import_obsidian9.Setting(containerEl).setName("\u{1F4AC} Context & Performance").setHeading();
-    const contextWindowSetting = new import_obsidian9.Setting(containerEl).setName("Context window (tokens)").setDesc("Max tokens allocated to context. Match your model's native context size.").addSlider(
-      (slider) => slider.setLimits(1024, 131072, 1024).setValue(this.plugin.settings.contextWindowTokens).setDynamicTooltip().onChange(async (value) => {
-        this.plugin.settings.contextWindowTokens = value;
-        await this.save();
+    const contextWindowSetting = new import_obsidian9.Setting(containerEl).setName("Context window (tokens)").setDesc("Max tokens allocated to context. Match your model's native context size.").addText(
+      (text) => text.setPlaceholder("32768").setValue(String(this.plugin.settings.contextWindowTokens)).onChange(async (value) => {
+        const parsed = Number.parseInt(value.trim(), 10);
+        if (!Number.isNaN(parsed)) {
+          this.plugin.settings.contextWindowTokens = Math.max(512, parsed);
+          await this.save();
+        }
       })
     );
-    const maxRecentMessagesSetting = new import_obsidian9.Setting(containerEl).setName("Max recent messages in context").setDesc("How many of the most recent chat turns to include in each request").addSlider(
-      (slider) => slider.setLimits(5, 50, 1).setValue(this.plugin.settings.maxRecentMessages).setDynamicTooltip().onChange(async (value) => {
-        this.plugin.settings.maxRecentMessages = value;
-        await this.save();
+    const maxRecentMessagesSetting = new import_obsidian9.Setting(containerEl).setName("Max recent messages in context").setDesc("How many of the most recent chat turns to include in each request").addText(
+      (text) => text.setPlaceholder("20").setValue(String(this.plugin.settings.maxRecentMessages)).onChange(async (value) => {
+        const parsed = Number.parseInt(value.trim(), 10);
+        if (!Number.isNaN(parsed)) {
+          this.plugin.settings.maxRecentMessages = Math.max(1, parsed);
+          await this.save();
+        }
       })
     );
     const autoInjectNotesSetting = new import_obsidian9.Setting(containerEl).setName("Auto-inject notes count").setDesc("Top-ranked notes auto-injected into each message (0 recommended for cloud APIs)").addText(
@@ -95057,10 +95072,13 @@ var EngramSettingTab = class extends import_obsidian9.PluginSettingTab {
         await this.save();
       })
     );
-    const toolCallDepthSetting = new import_obsidian9.Setting(containerEl).setName("Max tool call depth").setDesc("Maximum consecutive tool calls per turn (prevents infinite loops)").addSlider(
-      (slider) => slider.setLimits(1, 32, 1).setValue(this.plugin.settings.maxToolCallDepth).setDynamicTooltip().onChange(async (value) => {
-        this.plugin.settings.maxToolCallDepth = value;
-        await this.save();
+    const toolCallDepthSetting = new import_obsidian9.Setting(containerEl).setName("Max tool call depth").setDesc("Maximum consecutive tool calls per turn (prevents infinite loops)").addText(
+      (text) => text.setPlaceholder("8").setValue(String(this.plugin.settings.maxToolCallDepth)).onChange(async (value) => {
+        const parsed = Number.parseInt(value.trim(), 10);
+        if (!Number.isNaN(parsed)) {
+          this.plugin.settings.maxToolCallDepth = Math.max(1, parsed);
+          await this.save();
+        }
       })
     );
     const semanticHeaderSetting = new import_obsidian9.Setting(containerEl).setName("\u{1F50D} Semantic Search (optional)").setHeading();
