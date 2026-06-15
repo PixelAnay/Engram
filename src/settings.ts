@@ -1,6 +1,7 @@
 import { App, PluginSettingTab, Setting, Notice, TFolder } from 'obsidian';
 import type { EngramSettings } from './types';
 import { normalisePath } from './utils/pathUtils';
+import { showPromptDialog, showConfirmDialog } from './ui/ConfirmDialog';
 
 // ── Provider Presets ────────────────────────────────────────────────────────
 
@@ -323,8 +324,13 @@ export class EngramSettingTab extends PluginSettingTab {
 
     personaBtnSetting.addButton(btn =>
       btn.setButtonText('Save as new preset').onClick(async () => {
-        const name = (window as any).prompt('Preset name:', '');
-        if (!name?.trim()) return;
+        const name = await showPromptDialog({
+          title: 'Save Persona Preset',
+          message: 'Enter a name for the new persona preset:',
+          placeholder: 'e.g. Code Reviewer'
+        });
+        if (!name || !name.trim()) return;
+
         const id = name.trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
         const systemPrompt = promptTextArea?.value ?? getActivePersona().systemPrompt;
         this.plugin.settings.personas.push({ id, name: name.trim(), systemPrompt });
@@ -343,7 +349,16 @@ export class EngramSettingTab extends PluginSettingTab {
           new Notice('Cannot delete the Default persona.');
           return;
         }
-        if (!confirm(`Delete persona "${persona.name}"?`)) return;
+
+        const confirmed = await showConfirmDialog({
+          title: 'Delete Persona',
+          message: `Are you sure you want to delete the persona "${persona.name}"?`,
+          confirmLabel: 'Delete',
+          cancelLabel: 'Cancel',
+          danger: true
+        });
+        if (!confirmed) return;
+
         this.plugin.settings.personas = this.plugin.settings.personas.filter(
           (p: any) => p.id !== persona.id
         );

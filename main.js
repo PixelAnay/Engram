@@ -92940,6 +92940,93 @@ function showConfirmDialog(options) {
     confirmBtn.focus();
   });
 }
+function showPromptDialog(options) {
+  const {
+    title,
+    message,
+    placeholder = "",
+    value = "",
+    confirmLabel = "Save",
+    cancelLabel = "Cancel"
+  } = options;
+  return new Promise((resolve) => {
+    let settled = false;
+    function close(result) {
+      if (settled)
+        return;
+      settled = true;
+      document.removeEventListener("keydown", onKeyDown);
+      overlay.remove();
+      resolve(result);
+    }
+    function onKeyDown(evt) {
+      if (evt.key === "Escape") {
+        evt.preventDefault();
+        close(null);
+      } else if (evt.key === "Enter") {
+        evt.preventDefault();
+        close(inputEl.value);
+      }
+    }
+    document.addEventListener("keydown", onKeyDown);
+    const overlay = document.createElement("div");
+    overlay.className = "engram-modal-overlay";
+    overlay.addEventListener("click", (evt) => {
+      if (evt.target === overlay)
+        close(null);
+    });
+    const modal = document.createElement("div");
+    modal.className = "engram-modal";
+    modal.setAttribute("role", "dialog");
+    modal.setAttribute("aria-modal", "true");
+    modal.addEventListener("click", (evt) => evt.stopPropagation());
+    overlay.appendChild(modal);
+    const titleEl = document.createElement("div");
+    titleEl.className = "engram-modal-title";
+    titleEl.textContent = title;
+    modal.appendChild(titleEl);
+    const msgEl = document.createElement("div");
+    msgEl.className = "engram-modal-subtitle";
+    msgEl.textContent = message;
+    modal.appendChild(msgEl);
+    const inputContainer = document.createElement("div");
+    inputContainer.className = "engram-modal-input-container";
+    inputContainer.style.margin = "16px 0";
+    inputContainer.style.width = "100%";
+    modal.appendChild(inputContainer);
+    const inputEl = document.createElement("input");
+    inputEl.type = "text";
+    inputEl.placeholder = placeholder;
+    inputEl.value = value;
+    inputEl.className = "engram-modal-input";
+    inputEl.style.width = "100%";
+    inputEl.style.padding = "8px 12px";
+    inputEl.style.border = "1px solid var(--engram-border)";
+    inputEl.style.borderRadius = "var(--engram-radius-sm)";
+    inputEl.style.background = "var(--engram-bg)";
+    inputEl.style.color = "var(--engram-text)";
+    inputEl.style.fontSize = "14px";
+    inputContainer.appendChild(inputEl);
+    const btns = document.createElement("div");
+    btns.className = "engram-modal-btns";
+    modal.appendChild(btns);
+    const cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.className = "engram-modal-cancel";
+    cancelBtn.textContent = cancelLabel;
+    cancelBtn.addEventListener("click", () => close(null));
+    btns.appendChild(cancelBtn);
+    const confirmBtn = document.createElement("button");
+    confirmBtn.type = "button";
+    confirmBtn.className = "engram-modal-confirm";
+    confirmBtn.textContent = confirmLabel;
+    confirmBtn.addEventListener("click", () => close(inputEl.value));
+    btns.appendChild(confirmBtn);
+    document.body.appendChild(overlay);
+    inputEl.focus();
+    inputEl.select();
+  });
+}
 
 // src/tools.ts
 var TOOL_DEFINITIONS = [
@@ -94721,8 +94808,12 @@ var EngramSettingTab = class extends import_obsidian8.PluginSettingTab {
     personaBtnSetting.addButton(
       (btn) => btn.setButtonText("Save as new preset").onClick(async () => {
         var _a2;
-        const name = window.prompt("Preset name:", "");
-        if (!(name == null ? void 0 : name.trim()))
+        const name = await showPromptDialog({
+          title: "Save Persona Preset",
+          message: "Enter a name for the new persona preset:",
+          placeholder: "e.g. Code Reviewer"
+        });
+        if (!name || !name.trim())
           return;
         const id = name.trim().toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
         const systemPrompt = (_a2 = promptTextArea == null ? void 0 : promptTextArea.value) != null ? _a2 : getActivePersona().systemPrompt;
@@ -94740,7 +94831,14 @@ var EngramSettingTab = class extends import_obsidian8.PluginSettingTab {
           new import_obsidian8.Notice("Cannot delete the Default persona.");
           return;
         }
-        if (!confirm(`Delete persona "${persona.name}"?`))
+        const confirmed = await showConfirmDialog({
+          title: "Delete Persona",
+          message: `Are you sure you want to delete the persona "${persona.name}"?`,
+          confirmLabel: "Delete",
+          cancelLabel: "Cancel",
+          danger: true
+        });
+        if (!confirmed)
           return;
         this.plugin.settings.personas = this.plugin.settings.personas.filter(
           (p) => p.id !== persona.id
