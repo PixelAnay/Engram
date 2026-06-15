@@ -17,6 +17,7 @@ import type { App, TFile } from 'obsidian';
 import type { ChatMessage, EngramSettings } from './types';
 import type { VaultIndexer } from './indexer';
 import type { MemoryManager } from './memory/MemoryManager';
+import type { EmbeddingIndex } from './embeddings';
 import { estimateTokens } from './utils/tokenEstimator';
 
 export class ContextBuilder {
@@ -24,6 +25,7 @@ export class ContextBuilder {
   private settings: EngramSettings;
   private indexer: VaultIndexer;
   private memoryManager: MemoryManager;
+  private embeddingIndex?: EmbeddingIndex;
 
   // Cached vault map (invalidated when note count changes)
   private _cachedVaultMap: string | null = null;
@@ -33,12 +35,14 @@ export class ContextBuilder {
     app: App,
     settings: EngramSettings,
     indexer: VaultIndexer,
-    memoryManager: MemoryManager
+    memoryManager: MemoryManager,
+    embeddingIndex?: EmbeddingIndex
   ) {
     this.app = app;
     this.settings = settings;
     this.indexer = indexer;
     this.memoryManager = memoryManager;
+    this.embeddingIndex = embeddingIndex;
   }
 
   updateSettings(settings: EngramSettings): void {
@@ -105,19 +109,26 @@ ${vaultMap}`;
     // ── Layer 4: Auto-inject relevant notes (cloud: 0, local: configurable) ──
     if (this.settings.autoInjectNotes > 0 && userMessage && this.indexer.isReady) {
       onStatus?.(`Finding relevant notes…`);
-      const relevant = await this.indexer.searchAsync(userMessage, this.settings.autoInjectNotes);
+      
+      let relevantPaths: string[] = [];
+      if (this.embeddingIndex && this.embeddingIndex.isReady) {
+        relevantPaths = await this.embeddingIndex.search(userMessage, this.settings.autoInjectNotes);
+      } else {
+        const results = await this.indexer.searchAsync(userMessage, this.settings.autoInjectNotes);
+        relevantPaths = results.map(r => r.path);
+      }
 
-      if (relevant.length > 0) {
-        onStatus?.(`Loading ${relevant.length} note(s)…`);
+      if (relevantPaths.length > 0) {
+        onStatus?.(`Loading ${relevantPaths.length} note(s)…`);
         let notesContent = '\n\n## Relevant Notes\n';
         let tokenBudget = Math.floor(this.settings.contextWindowTokens * 0.25); // 25% max
 
-        for (const result of relevant) {
-          const file = this.app.vault.getAbstractFileByPath(result.path) as TFile | null;
+        for (const path of relevantPaths) {
+          const file = this.app.vault.getAbstractFileByPath(path) as TFile | null;
           if (!file) continue;
 
           const content = await this.app.vault.read(file);
-          const noteText = `\n### ${result.path}\n[VAULT DATA START]\n${content}\n[VAULT DATA END]\n`;
+          const noteText = `\n### ${path}\n[VAULT DATA START]\n${content}\n[VAULT DATA END]\n`;
           const noteTokens = estimateTokens(noteText);
 
           if (noteTokens > tokenBudget) break;

@@ -93396,10 +93396,11 @@ Format:
 </tool_call>
 `.trim();
 var ToolExecutor = class {
-  constructor(app, indexer, settings) {
+  constructor(app, indexer, settings, embeddingIndex) {
     this.app = app;
     this.indexer = indexer;
     this.settings = settings;
+    this.embeddingIndex = embeddingIndex;
     this.undoStack = [];
   }
   updateSettings(settings) {
@@ -93491,7 +93492,29 @@ var ToolExecutor = class {
     const tags = Array.isArray(args.tags) ? args.tags.map(String) : void 0;
     const fullText = Boolean(args.full_text);
     const limit = typeof args.limit === "number" ? Math.min(args.limit, 50) : 10;
-    const metaResults = this.indexer.search(query, tags, limit);
+    let metaResults = this.indexer.search(query, tags, limit);
+    if (this.embeddingIndex && this.embeddingIndex.isReady && query) {
+      try {
+        const semanticPaths = await this.embeddingIndex.search(query, limit);
+        const existing = new Set(metaResults.map((r) => r.path));
+        for (const path of semanticPaths) {
+          if (!existing.has(path)) {
+            const meta = this.indexer.getNoteMeta(path);
+            if (meta) {
+              metaResults.push({
+                path: meta.path,
+                title: meta.title,
+                tags: meta.tags,
+                score: 80
+                // High score for semantic match
+              });
+            }
+          }
+        }
+      } catch (err) {
+        console.error("[Engram] Semantic search in toolSearchVault failed:", err);
+      }
+    }
     if (fullText && query) {
       const ftResults = await this.indexer.fullTextSearch(query, limit);
       const existing = new Set(metaResults.map((r) => r.path));
@@ -93874,7 +93897,7 @@ ${oldText}
 
 // src/context.ts
 var ContextBuilder = class {
-  constructor(app, settings, indexer, memoryManager) {
+  constructor(app, settings, indexer, memoryManager, embeddingIndex) {
     // Cached vault map (invalidated when note count changes)
     this._cachedVaultMap = null;
     this._cachedNoteCount = -1;
@@ -93882,6 +93905,7 @@ var ContextBuilder = class {
     this.settings = settings;
     this.indexer = indexer;
     this.memoryManager = memoryManager;
+    this.embeddingIndex = embeddingIndex;
   }
   updateSettings(settings) {
     this.settings = settings;
@@ -93936,18 +93960,24 @@ ${vaultMap}`;
     }
     if (this.settings.autoInjectNotes > 0 && userMessage && this.indexer.isReady) {
       onStatus == null ? void 0 : onStatus(`Finding relevant notes\u2026`);
-      const relevant = await this.indexer.searchAsync(userMessage, this.settings.autoInjectNotes);
-      if (relevant.length > 0) {
-        onStatus == null ? void 0 : onStatus(`Loading ${relevant.length} note(s)\u2026`);
+      let relevantPaths = [];
+      if (this.embeddingIndex && this.embeddingIndex.isReady) {
+        relevantPaths = await this.embeddingIndex.search(userMessage, this.settings.autoInjectNotes);
+      } else {
+        const results = await this.indexer.searchAsync(userMessage, this.settings.autoInjectNotes);
+        relevantPaths = results.map((r) => r.path);
+      }
+      if (relevantPaths.length > 0) {
+        onStatus == null ? void 0 : onStatus(`Loading ${relevantPaths.length} note(s)\u2026`);
         let notesContent = "\n\n## Relevant Notes\n";
         let tokenBudget = Math.floor(this.settings.contextWindowTokens * 0.25);
-        for (const result2 of relevant) {
-          const file = this.app.vault.getAbstractFileByPath(result2.path);
+        for (const path of relevantPaths) {
+          const file = this.app.vault.getAbstractFileByPath(path);
           if (!file)
             continue;
           const content = await this.app.vault.read(file);
           const noteText = `
-### ${result2.path}
+### ${path}
 [VAULT DATA START]
 ${content}
 [VAULT DATA END]
@@ -95661,7 +95691,7 @@ var EngramPlugin = class extends import_obsidian10.Plugin {
     this.indexer = new VaultIndexer(this.app, this.settings);
     this.embeddingIndex = new EmbeddingIndex(this.app, this.settings);
     this.providerFactory = new ProviderFactory(this.settings);
-    this.toolExecutor = new ToolExecutor(this.app, this.indexer, this.settings);
+    this.toolExecutor = new ToolExecutor(this.app, this.indexer, this.settings, this.embeddingIndex);
     this.memoryManager = new MemoryManager(
       this.app,
       this.settings.memoryPath,
@@ -95671,7 +95701,8 @@ var EngramPlugin = class extends import_obsidian10.Plugin {
       this.app,
       this.settings,
       this.indexer,
-      this.memoryManager
+      this.memoryManager,
+      this.embeddingIndex
     );
     this.memoryExtractor = new MemoryExtractor(this.providerFactory, this.memoryManager);
   }

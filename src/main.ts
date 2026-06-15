@@ -199,7 +199,7 @@ export default class EngramPlugin extends Plugin {
     this.indexer = new VaultIndexer(this.app, this.settings);
     this.embeddingIndex = new EmbeddingIndex(this.app, this.settings);
     this.providerFactory = new ProviderFactory(this.settings);
-    this.toolExecutor = new ToolExecutor(this.app, this.indexer, this.settings);
+    this.toolExecutor = new ToolExecutor(this.app, this.indexer, this.settings, this.embeddingIndex);
     this.memoryManager = new MemoryManager(
       this.app,
       this.settings.memoryPath,
@@ -209,7 +209,8 @@ export default class EngramPlugin extends Plugin {
       this.app,
       this.settings,
       this.indexer,
-      this.memoryManager
+      this.memoryManager,
+      this.embeddingIndex
     );
     this.memoryExtractor = new MemoryExtractor(this.providerFactory, this.memoryManager);
   }
