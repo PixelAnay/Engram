@@ -1,6 +1,7 @@
 import { App, TFile, TFolder, Notice } from 'obsidian';
 import type { VaultIndexer } from './indexer';
 import type { EngramSettings } from './types';
+import type { EmbeddingIndex } from './embeddings';
 import { validateVaultPath, isPathAllowed } from './utils/pathUtils';
 import { showConfirmDialog } from './ui/ConfirmDialog';
 
@@ -291,7 +292,8 @@ export class ToolExecutor {
   constructor(
     private app: App,
     private indexer: VaultIndexer,
-    private settings: EngramSettings
+    private settings: EngramSettings,
+    private embeddingIndex?: EmbeddingIndex
   ) {}
 
   updateSettings(settings: EngramSettings): void {
@@ -382,7 +384,30 @@ export class ToolExecutor {
     const fullText = Boolean(args.full_text);
     const limit = typeof args.limit === 'number' ? Math.min(args.limit, 50) : 10;
 
-    const metaResults = this.indexer.search(query, tags, limit);
+    let metaResults = this.indexer.search(query, tags, limit);
+
+    // Mix in semantic search results if available
+    if (this.embeddingIndex && this.embeddingIndex.isReady && query) {
+      try {
+        const semanticPaths = await this.embeddingIndex.search(query, limit);
+        const existing = new Set(metaResults.map(r => r.path));
+        for (const path of semanticPaths) {
+          if (!existing.has(path)) {
+            const meta = this.indexer.getNoteMeta(path);
+            if (meta) {
+              metaResults.push({
+                path: meta.path,
+                title: meta.title,
+                tags: meta.tags,
+                score: 80, // High score for semantic match
+              });
+            }
+          }
+        }
+      } catch (err) {
+        console.error('[Engram] Semantic search in toolSearchVault failed:', err);
+      }
+    }
 
     if (fullText && query) {
       const ftResults = await this.indexer.fullTextSearch(query, limit);
