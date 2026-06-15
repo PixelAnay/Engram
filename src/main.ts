@@ -109,6 +109,9 @@ export default class EngramPlugin extends Plugin {
     this.indexer?.updateSettings(this.settings);
     this.memoryManager?.updateConfig(this.settings.memoryPath, this.settings.maxMemoryTokens);
 
+    // Run silent background build to immediately enforce rules on index
+    this.buildIndexInBackground();
+
     // Propagate to active views
     const leaves = this.app.workspace.getLeavesOfType(ENGRAM_VIEW_TYPE);
     for (const leaf of leaves) {

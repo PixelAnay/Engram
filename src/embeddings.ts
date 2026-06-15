@@ -1,5 +1,6 @@
 import { App, TFile } from 'obsidian';
 import type { EngramSettings } from './types';
+import { isPathAllowed } from './utils/pathUtils';
 
 // ── Cosine similarity ──────────────────────────────────────────────────────────
 
@@ -53,6 +54,8 @@ export class EmbeddingIndex {
     this.settings = settings;
     this.ollamaEndpoint = settings.ollamaEmbedEndpoint ?? 'http://localhost:11434';
     this.model = settings.embeddingModel ?? '';
+    // Strip any entries that are now excluded
+    this.entries = this.entries.filter(e => isPathAllowed(e.path, this.settings));
   }
 
   /** Load saved index and incrementally update changed files */
@@ -80,6 +83,7 @@ export class EmbeddingIndex {
     const result: EmbeddingEntry[] = [];
 
     for (const file of files) {
+      if (!isPathAllowed(file.path, this.settings)) continue;
       const existing = saved.get(file.path);
       if (existing && existing.mtime === file.stat.mtime) {
         // Not changed — reuse
@@ -109,6 +113,7 @@ export class EmbeddingIndex {
   /** Embed a single file (called after edits) */
   async embedFile(file: TFile, content: string): Promise<void> {
     if (!this.model) return;
+    if (!isPathAllowed(file.path, this.settings)) return;
     try {
       const text = `${file.basename}\n\n${content}`.slice(0, 4000);
       const vector = await this.fetchEmbedding(text);

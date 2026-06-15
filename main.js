@@ -92442,8 +92442,9 @@ var VaultIndexer = class {
       this.index = saved;
       const currentPaths = new Set(files.map((f) => f.path));
       for (const path of Object.keys(this.index.notes)) {
-        if (!currentPaths.has(path))
+        if (!currentPaths.has(path) || this.isExcluded(path)) {
           delete this.index.notes[path];
+        }
       }
       this.ready = true;
       this.invalidateCaches();
@@ -92492,6 +92493,12 @@ var VaultIndexer = class {
   updateSettings(settings) {
     this.settings = settings;
     this.rebuildExcludeRegexes();
+    for (const path of Object.keys(this.index.notes)) {
+      if (this.isExcluded(path)) {
+        delete this.index.notes[path];
+        this.contentCache.delete(path);
+      }
+    }
     this.invalidateCaches();
   }
   // ── Content Access ────────────────────────────────────────────────────────
@@ -92731,6 +92738,7 @@ var EmbeddingIndex = class {
     this.settings = settings;
     this.ollamaEndpoint = (_a2 = settings.ollamaEmbedEndpoint) != null ? _a2 : "http://localhost:11434";
     this.model = (_b = settings.embeddingModel) != null ? _b : "";
+    this.entries = this.entries.filter((e) => isPathAllowed(e.path, this.settings));
   }
   /** Load saved index and incrementally update changed files */
   async build(savedData, getContent) {
@@ -92748,6 +92756,8 @@ var EmbeddingIndex = class {
     }
     const result = [];
     for (const file of files) {
+      if (!isPathAllowed(file.path, this.settings))
+        continue;
       const existing = saved.get(file.path);
       if (existing && existing.mtime === file.stat.mtime) {
         result.push(existing);
@@ -92773,6 +92783,8 @@ ${content}`.slice(0, 4e3);
   /** Embed a single file (called after edits) */
   async embedFile(file, content) {
     if (!this.model)
+      return;
+    if (!isPathAllowed(file.path, this.settings))
       return;
     try {
       const text = `${file.basename}
@@ -94895,11 +94907,11 @@ var EngramSettingTab = class extends import_obsidian8.PluginSettingTab {
             const toggleFolder = async () => {
               const checked = checkbox.checked;
               if (checked) {
-                this.plugin.settings.scopeFolders = this.plugin.settings.scopeFolders.filter((sf) => sf !== path);
-              } else {
                 if (!this.plugin.settings.scopeFolders.includes(path)) {
                   this.plugin.settings.scopeFolders.push(path);
                 }
+              } else {
+                this.plugin.settings.scopeFolders = this.plugin.settings.scopeFolders.filter((sf) => sf !== path);
               }
               await this.save();
               renderFolderSelector();
@@ -95220,6 +95232,7 @@ var EngramPlugin = class extends import_obsidian9.Plugin {
     (_d = this.contextBuilder) == null ? void 0 : _d.updateSettings(this.settings);
     (_e = this.indexer) == null ? void 0 : _e.updateSettings(this.settings);
     (_f = this.memoryManager) == null ? void 0 : _f.updateConfig(this.settings.memoryPath, this.settings.maxMemoryTokens);
+    this.buildIndexInBackground();
     const leaves = this.app.workspace.getLeavesOfType(ENGRAM_VIEW_TYPE);
     for (const leaf of leaves) {
       if (leaf.view instanceof ChatView) {
