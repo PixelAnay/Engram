@@ -56,9 +56,9 @@ if ($Version -eq "") {
   $Version = "$($Parts[0]).$($Parts[1]).$Patch"
 }
 
-# Strip leading 'v' for semver storage, add for tag
+# Strip leading 'v' for semver storage, tag matches semver
 $SemVer = $Version -replace "^v", ""
-$Tag    = "v$SemVer"
+$Tag    = $SemVer
 
 Write-Host "Creating release $Tag..."
 
