@@ -453,11 +453,23 @@ export class ChatView extends ItemView {
     this.setStreaming(true);
 
     this.showContextStatus('Building context…');
+    let attachedNotesList: string[] = [];
     const enriched = await this.plugin.contextBuilder.prependSystemMessage(
       this.messages.slice(0, -1),
       text || 'See attachment(s)',
-      (s) => this.showContextStatus(s)
+      (s) => this.showContextStatus(s),
+      (paths) => { attachedNotesList = paths; }
     );
+
+    if (attachedNotesList.length > 0) {
+      const userMsg = this.messages[this.messages.length - 1];
+      if (userMsg) {
+        userMsg.autoAttachedNotes = attachedNotesList;
+      }
+      userDisplayMsg.autoAttachedNotes = attachedNotesList;
+      this.messageRenderer.finalizeStreamingBubble(userDisplayMsg);
+    }
+
     enriched.push({ role: 'user', content: apiContent });
     this.hideContextStatus();
 

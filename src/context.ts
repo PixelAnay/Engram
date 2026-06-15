@@ -58,7 +58,8 @@ export class ContextBuilder {
    */
   async buildSystemMessage(
     userMessage: string,
-    onStatus?: (status: string) => void
+    onStatus?: (status: string) => void,
+    onAttachedNotes?: (paths: string[]) => void
   ): Promise<ChatMessage[]> {
     const result: ChatMessage[] = [];
 
@@ -119,6 +120,7 @@ ${vaultMap}`;
       }
 
       if (relevantPaths.length > 0) {
+        onAttachedNotes?.(relevantPaths);
         onStatus?.(`Loading ${relevantPaths.length} note(s)…`);
         let notesContent = '\n\n## Relevant Notes\n';
         let tokenBudget = Math.floor(this.settings.contextWindowTokens * 0.25); // 25% max
@@ -153,9 +155,10 @@ ${vaultMap}`;
   async prependSystemMessage(
     history: ChatMessage[],
     userMessage: string,
-    onStatus?: (status: string) => void
+    onStatus?: (status: string) => void,
+    onAttachedNotes?: (paths: string[]) => void
   ): Promise<ChatMessage[]> {
-    const systemMessages = await this.buildSystemMessage(userMessage, onStatus);
+    const systemMessages = await this.buildSystemMessage(userMessage, onStatus, onAttachedNotes);
 
     // Trim history to maxRecentMessages (keep most recent)
     const maxRecent = this.settings.maxRecentMessages ?? 20;
