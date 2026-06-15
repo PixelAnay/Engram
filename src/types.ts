@@ -109,6 +109,7 @@ export interface EngramSettings {
   // Edit safety
   showDiffPreview: boolean;
   diffPreviewThreshold: number;
+  showAdvancedSettings?: boolean;
 }
 
 // ─── Persisted Chat Session ───────────────────────────────────────────────────
