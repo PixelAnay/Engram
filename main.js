@@ -90444,7 +90444,7 @@ __export(main_exports, {
   default: () => EngramPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian9 = require("obsidian");
+var import_obsidian10 = require("obsidian");
 
 // src/ChatView.ts
 var import_obsidian3 = require("obsidian");
@@ -92866,10 +92866,135 @@ ${content}`.slice(0, 4e3);
 };
 
 // src/tools.ts
-var import_obsidian5 = require("obsidian");
+var import_obsidian6 = require("obsidian");
 
 // src/ui/ConfirmDialog.ts
-function showConfirmDialog(options) {
+var import_obsidian5 = require("obsidian");
+var ConfirmModal = class extends import_obsidian5.Modal {
+  constructor(app, title, message, confirmLabel, cancelLabel, danger, onSubmit) {
+    super(app);
+    this.result = false;
+    this.titleEl.setText(title);
+    this.message = message;
+    this.confirmLabel = confirmLabel;
+    this.cancelLabel = cancelLabel;
+    this.danger = danger;
+    this.onSubmit = onSubmit;
+  }
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("p", { text: this.message, cls: "engram-modal-subtitle" });
+    const buttonContainer = contentEl.createDiv({ cls: "engram-modal-btns" });
+    buttonContainer.style.display = "flex";
+    buttonContainer.style.justifyContent = "flex-end";
+    buttonContainer.style.gap = "8px";
+    buttonContainer.style.marginTop = "16px";
+    const cancelBtn = buttonContainer.createEl("button", {
+      text: this.cancelLabel,
+      cls: "engram-modal-cancel"
+    });
+    cancelBtn.addEventListener("click", () => {
+      this.close();
+    });
+    const confirmBtn = buttonContainer.createEl("button", {
+      text: this.confirmLabel,
+      cls: this.danger ? "engram-modal-confirm engram-modal-confirm-danger mod-warning" : "engram-modal-confirm mod-cta"
+    });
+    confirmBtn.addEventListener("click", () => {
+      this.result = true;
+      this.close();
+    });
+    setTimeout(() => confirmBtn.focus(), 50);
+  }
+  onClose() {
+    this.onSubmit(this.result);
+  }
+};
+var PromptModal = class extends import_obsidian5.Modal {
+  constructor(app, title, message, placeholder, value, confirmLabel, cancelLabel, onSubmit) {
+    super(app);
+    this.result = null;
+    this.titleEl.setText(title);
+    this.message = message;
+    this.placeholder = placeholder;
+    this.value = value;
+    this.confirmLabel = confirmLabel;
+    this.cancelLabel = cancelLabel;
+    this.onSubmit = onSubmit;
+  }
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("p", { text: this.message, cls: "engram-modal-subtitle" });
+    const inputContainer = contentEl.createDiv({ cls: "engram-modal-input-container" });
+    inputContainer.style.margin = "16px 0";
+    inputContainer.style.width = "100%";
+    const inputEl = inputContainer.createEl("input", {
+      type: "text",
+      placeholder: this.placeholder,
+      value: this.value,
+      cls: "engram-modal-input"
+    });
+    inputEl.style.width = "100%";
+    inputEl.style.padding = "8px 12px";
+    inputEl.style.border = "1px solid var(--engram-border)";
+    inputEl.style.borderRadius = "var(--engram-radius-sm)";
+    inputEl.style.background = "var(--engram-bg)";
+    inputEl.style.color = "var(--engram-text)";
+    inputEl.style.fontSize = "14px";
+    const buttonContainer = contentEl.createDiv({ cls: "engram-modal-btns" });
+    buttonContainer.style.display = "flex";
+    buttonContainer.style.justifyContent = "flex-end";
+    buttonContainer.style.gap = "8px";
+    const cancelBtn = buttonContainer.createEl("button", {
+      text: this.cancelLabel,
+      cls: "engram-modal-cancel"
+    });
+    cancelBtn.addEventListener("click", () => {
+      this.close();
+    });
+    const confirmBtn = buttonContainer.createEl("button", {
+      text: this.confirmLabel,
+      cls: "engram-modal-confirm mod-cta"
+    });
+    confirmBtn.addEventListener("click", () => {
+      this.result = inputEl.value;
+      this.close();
+    });
+    const stopPropagation = (e) => {
+      if (e.key !== "Escape") {
+        e.stopPropagation();
+      }
+    };
+    inputEl.addEventListener("keydown", (e) => {
+      if (e.key === "Escape")
+        return;
+      e.stopPropagation();
+      if (e.key === "Enter") {
+        e.preventDefault();
+        this.result = inputEl.value;
+        this.close();
+      }
+    });
+    inputEl.addEventListener("keypress", stopPropagation);
+    inputEl.addEventListener("keyup", stopPropagation);
+    inputEl.focus();
+    inputEl.select();
+    setTimeout(() => {
+      inputEl.focus();
+      inputEl.select();
+    }, 50);
+    setTimeout(() => {
+      inputEl.focus();
+      inputEl.select();
+    }, 150);
+  }
+  onClose() {
+    this.onSubmit(this.result);
+  }
+};
+function showConfirmDialog(app, options) {
   const {
     title,
     message,
@@ -92878,69 +93003,10 @@ function showConfirmDialog(options) {
     danger = false
   } = options;
   return new Promise((resolve) => {
-    let settled = false;
-    function close(confirmed) {
-      if (settled)
-        return;
-      settled = true;
-      document.removeEventListener("keydown", onKeyDown);
-      overlay.remove();
-      resolve(confirmed);
-    }
-    function onKeyDown(evt) {
-      if (evt.key === "Escape") {
-        evt.preventDefault();
-        close(false);
-      } else if (evt.key === "Enter") {
-        evt.preventDefault();
-        close(true);
-      }
-    }
-    document.addEventListener("keydown", onKeyDown);
-    const overlay = document.createElement("div");
-    overlay.className = "engram-modal-overlay";
-    overlay.addEventListener("click", (evt) => {
-      if (evt.target === overlay)
-        close(false);
-    });
-    const modal = document.createElement("div");
-    modal.className = "engram-modal";
-    modal.setAttribute("role", "dialog");
-    modal.setAttribute("aria-modal", "true");
-    modal.setAttribute("aria-labelledby", "engram-confirm-title");
-    modal.setAttribute("aria-describedby", "engram-confirm-msg");
-    modal.addEventListener("click", (evt) => evt.stopPropagation());
-    overlay.appendChild(modal);
-    const titleEl = document.createElement("div");
-    titleEl.id = "engram-confirm-title";
-    titleEl.className = "engram-modal-title";
-    titleEl.textContent = title;
-    modal.appendChild(titleEl);
-    const msgEl = document.createElement("div");
-    msgEl.id = "engram-confirm-msg";
-    msgEl.className = "engram-modal-subtitle";
-    msgEl.textContent = message;
-    modal.appendChild(msgEl);
-    const btns = document.createElement("div");
-    btns.className = "engram-modal-btns";
-    modal.appendChild(btns);
-    const cancelBtn = document.createElement("button");
-    cancelBtn.type = "button";
-    cancelBtn.className = "engram-modal-cancel";
-    cancelBtn.textContent = cancelLabel;
-    cancelBtn.addEventListener("click", () => close(false));
-    btns.appendChild(cancelBtn);
-    const confirmBtn = document.createElement("button");
-    confirmBtn.type = "button";
-    confirmBtn.className = danger ? "engram-modal-confirm engram-modal-confirm-danger" : "engram-modal-confirm";
-    confirmBtn.textContent = confirmLabel;
-    confirmBtn.addEventListener("click", () => close(true));
-    btns.appendChild(confirmBtn);
-    document.body.appendChild(overlay);
-    confirmBtn.focus();
+    new ConfirmModal(app, title, message, confirmLabel, cancelLabel, danger, resolve).open();
   });
 }
-function showPromptDialog(options) {
+function showPromptDialog(app, options) {
   const {
     title,
     message,
@@ -92950,81 +93016,7 @@ function showPromptDialog(options) {
     cancelLabel = "Cancel"
   } = options;
   return new Promise((resolve) => {
-    let settled = false;
-    function close(result) {
-      if (settled)
-        return;
-      settled = true;
-      document.removeEventListener("keydown", onKeyDown);
-      overlay.remove();
-      resolve(result);
-    }
-    function onKeyDown(evt) {
-      if (evt.key === "Escape") {
-        evt.preventDefault();
-        close(null);
-      } else if (evt.key === "Enter") {
-        evt.preventDefault();
-        close(inputEl.value);
-      }
-    }
-    document.addEventListener("keydown", onKeyDown);
-    const overlay = document.createElement("div");
-    overlay.className = "engram-modal-overlay";
-    overlay.addEventListener("click", (evt) => {
-      if (evt.target === overlay)
-        close(null);
-    });
-    const modal = document.createElement("div");
-    modal.className = "engram-modal";
-    modal.setAttribute("role", "dialog");
-    modal.setAttribute("aria-modal", "true");
-    modal.addEventListener("click", (evt) => evt.stopPropagation());
-    overlay.appendChild(modal);
-    const titleEl = document.createElement("div");
-    titleEl.className = "engram-modal-title";
-    titleEl.textContent = title;
-    modal.appendChild(titleEl);
-    const msgEl = document.createElement("div");
-    msgEl.className = "engram-modal-subtitle";
-    msgEl.textContent = message;
-    modal.appendChild(msgEl);
-    const inputContainer = document.createElement("div");
-    inputContainer.className = "engram-modal-input-container";
-    inputContainer.style.margin = "16px 0";
-    inputContainer.style.width = "100%";
-    modal.appendChild(inputContainer);
-    const inputEl = document.createElement("input");
-    inputEl.type = "text";
-    inputEl.placeholder = placeholder;
-    inputEl.value = value;
-    inputEl.className = "engram-modal-input";
-    inputEl.style.width = "100%";
-    inputEl.style.padding = "8px 12px";
-    inputEl.style.border = "1px solid var(--engram-border)";
-    inputEl.style.borderRadius = "var(--engram-radius-sm)";
-    inputEl.style.background = "var(--engram-bg)";
-    inputEl.style.color = "var(--engram-text)";
-    inputEl.style.fontSize = "14px";
-    inputContainer.appendChild(inputEl);
-    const btns = document.createElement("div");
-    btns.className = "engram-modal-btns";
-    modal.appendChild(btns);
-    const cancelBtn = document.createElement("button");
-    cancelBtn.type = "button";
-    cancelBtn.className = "engram-modal-cancel";
-    cancelBtn.textContent = cancelLabel;
-    cancelBtn.addEventListener("click", () => close(null));
-    btns.appendChild(cancelBtn);
-    const confirmBtn = document.createElement("button");
-    confirmBtn.type = "button";
-    confirmBtn.className = "engram-modal-confirm";
-    confirmBtn.textContent = confirmLabel;
-    confirmBtn.addEventListener("click", () => close(inputEl.value));
-    btns.appendChild(confirmBtn);
-    document.body.appendChild(overlay);
-    inputEl.focus();
-    inputEl.select();
+    new PromptModal(app, title, message, placeholder, value, confirmLabel, cancelLabel, resolve).open();
   });
 }
 
@@ -93354,7 +93346,7 @@ var ToolExecutor = class {
       return entry.path;
     }
     let file = this.app.vault.getAbstractFileByPath(entry.path);
-    if (file instanceof import_obsidian5.TFile) {
+    if (file instanceof import_obsidian6.TFile) {
       await this.app.vault.modify(file, entry.previousContent);
       await this.indexer.updateFile(file);
     } else {
@@ -93362,7 +93354,7 @@ var ToolExecutor = class {
         await this.ensureParentFolder(entry.path);
         await this.app.vault.create(entry.path, entry.previousContent);
         const newFile = this.app.vault.getAbstractFileByPath(entry.path);
-        if (newFile instanceof import_obsidian5.TFile)
+        if (newFile instanceof import_obsidian6.TFile)
           await this.indexer.updateFile(newFile);
       } catch (e) {
         return null;
@@ -93442,7 +93434,7 @@ ${lines.join("\n")}`;
     if (!content.trim())
       return "Error: Content to append is empty";
     const file = this.app.vault.getAbstractFileByPath(path);
-    if (!(file instanceof import_obsidian5.TFile))
+    if (!(file instanceof import_obsidian6.TFile))
       return `Error: Note not found: ${path}`;
     const existing = await this.app.vault.read(file);
     this.pushUndo(path, existing, `append to ${path}`);
@@ -93464,7 +93456,7 @@ ${lines.join("\n")}`;
     }
     const mode = String((_a2 = args.mode) != null ? _a2 : "");
     const file = this.app.vault.getAbstractFileByPath(path);
-    if (!(file instanceof import_obsidian5.TFile))
+    if (!(file instanceof import_obsidian6.TFile))
       return `Error: Note not found: ${path}`;
     const existing = await this.app.vault.read(file);
     if (mode === "replace_block") {
@@ -93513,7 +93505,7 @@ ${oldText}
         return 'Error: Full overwrite requires "full_edit" permission in plugin settings.';
       }
       const newContent = String((_d = args.new_content) != null ? _d : "");
-      const confirmed = await showConfirmDialog({
+      const confirmed = await showConfirmDialog(this.app, {
         title: "Overwrite Note",
         message: `The AI wants to completely overwrite "${path}". This will replace all existing content. Proceed?`,
         confirmLabel: "Overwrite",
@@ -93549,8 +93541,8 @@ ${oldText}
     if (existing && !overwrite) {
       return `Error: Note already exists at "${path}". Set overwrite: true to replace it.`;
     }
-    if (existing instanceof import_obsidian5.TFile && overwrite) {
-      const confirmed = await showConfirmDialog({
+    if (existing instanceof import_obsidian6.TFile && overwrite) {
+      const confirmed = await showConfirmDialog(this.app, {
         title: "Overwrite Note",
         message: `The AI wants to overwrite the existing note "${path}". Proceed?`,
         confirmLabel: "Overwrite",
@@ -93568,7 +93560,7 @@ ${oldText}
       this.pushUndo(path, null, `create ${path}`);
     }
     const file = this.app.vault.getAbstractFileByPath(path);
-    if (file instanceof import_obsidian5.TFile)
+    if (file instanceof import_obsidian6.TFile)
       await this.indexer.updateFile(file);
     return `\u2705 Created "${path}" (${content.length} chars)`;
   }
@@ -93585,7 +93577,7 @@ ${oldText}
         continue;
       }
       const file = this.app.vault.getAbstractFileByPath(validated);
-      if (!(file instanceof import_obsidian5.TFile)) {
+      if (!(file instanceof import_obsidian6.TFile)) {
         missing.push(p);
         continue;
       }
@@ -93614,7 +93606,7 @@ ${oldText}
     const file = this.app.vault.getAbstractFileByPath(source);
     if (!file)
       return `Error: File not found: ${source}`;
-    const confirmed = await showConfirmDialog({
+    const confirmed = await showConfirmDialog(this.app, {
       title: "Move Note",
       message: `The AI wants to move "${source}" \u2192 "${destination}". Proceed?`,
       confirmLabel: "Move",
@@ -93622,14 +93614,14 @@ ${oldText}
     });
     if (!confirmed)
       return "Cancelled: User declined the move operation.";
-    if (file instanceof import_obsidian5.TFile) {
+    if (file instanceof import_obsidian6.TFile) {
       const content = await this.app.vault.read(file);
       this.pushUndo(source, content, `move ${source} \u2192 ${destination}`);
     }
     await this.ensureParentFolder(destination);
     await this.app.fileManager.renameFile(file, destination);
     const newFile = this.app.vault.getAbstractFileByPath(destination);
-    if (newFile instanceof import_obsidian5.TFile)
+    if (newFile instanceof import_obsidian6.TFile)
       await this.indexer.updateFile(newFile);
     this.indexer.removeFile(source);
     return `\u2705 Moved "${source}" \u2192 "${destination}"`;
@@ -93652,13 +93644,13 @@ ${oldText}
     const newPath = parentFolder + newName;
     if (!isPathAllowed(newPath, this.settings))
       return `Error: Access denied. Renamed path is not within allowed knowledge scope: ${newPath}`;
-    if (file instanceof import_obsidian5.TFile) {
+    if (file instanceof import_obsidian6.TFile) {
       const content = await this.app.vault.read(file);
       this.pushUndo(path, content, `rename ${path} \u2192 ${newPath}`);
     }
     await this.app.fileManager.renameFile(file, newPath);
     const newFile = this.app.vault.getAbstractFileByPath(newPath);
-    if (newFile instanceof import_obsidian5.TFile)
+    if (newFile instanceof import_obsidian6.TFile)
       await this.indexer.updateFile(newFile);
     this.indexer.removeFile(path);
     return `\u2705 Renamed "${path}" \u2192 "${newPath}"`;
@@ -93674,7 +93666,7 @@ ${oldText}
     if (!destination || !isPathAllowed(destination, this.settings))
       return `Error: Access denied or invalid destination path: ${destination}`;
     const file = this.app.vault.getAbstractFileByPath(source);
-    if (!(file instanceof import_obsidian5.TFile))
+    if (!(file instanceof import_obsidian6.TFile))
       return `Error: Note not found: ${source}`;
     const content = await this.app.vault.read(file);
     await this.ensureParentFolder(destination);
@@ -93684,7 +93676,7 @@ ${oldText}
     await this.app.vault.create(destination, content);
     this.pushUndo(destination, null, `copy ${source} \u2192 ${destination}`);
     const newFile = this.app.vault.getAbstractFileByPath(destination);
-    if (newFile instanceof import_obsidian5.TFile)
+    if (newFile instanceof import_obsidian6.TFile)
       await this.indexer.updateFile(newFile);
     return `\u2705 Copied "${source}" \u2192 "${destination}"`;
   }
@@ -93700,7 +93692,7 @@ ${oldText}
     const file = this.app.vault.getAbstractFileByPath(path);
     if (!file)
       return `Error: File not found: ${path}`;
-    const confirmed = await showConfirmDialog({
+    const confirmed = await showConfirmDialog(this.app, {
       title: "Delete Note",
       message: `The AI wants to permanently delete "${path}". This will move the file to the system trash.`,
       confirmLabel: "Delete",
@@ -93709,7 +93701,7 @@ ${oldText}
     });
     if (!confirmed)
       return "Cancelled: User declined the delete operation.";
-    if (file instanceof import_obsidian5.TFile) {
+    if (file instanceof import_obsidian6.TFile) {
       const content = await this.app.vault.read(file);
       this.pushUndo(path, content, `delete ${path}`);
     }
@@ -93725,7 +93717,7 @@ ${oldText}
     if (!path || !isPathAllowed(path, this.settings))
       return `Error: Access denied or invalid path: ${path}`;
     const existing = this.app.vault.getAbstractFileByPath(path);
-    if (existing instanceof import_obsidian5.TFolder)
+    if (existing instanceof import_obsidian6.TFolder)
       return `Error: Folder already exists: ${path}`;
     if (existing)
       return `Error: A file exists at that path: ${path}`;
@@ -94142,7 +94134,7 @@ Extract new, memorable facts from this recent conversation. DO NOT extract any f
 };
 
 // src/providers/OpenAIProvider.ts
-var import_obsidian6 = require("obsidian");
+var import_obsidian7 = require("obsidian");
 var OpenAIProvider = class {
   constructor(name, baseUrl, apiKey) {
     this.supportsTools = true;
@@ -94156,7 +94148,7 @@ var OpenAIProvider = class {
     const start = Date.now();
     try {
       if (model) {
-        const res2 = await (0, import_obsidian6.requestUrl)({
+        const res2 = await (0, import_obsidian7.requestUrl)({
           url: `${this.baseUrl}/chat/completions`,
           method: "POST",
           headers: {
@@ -94176,7 +94168,7 @@ var OpenAIProvider = class {
         const errMsg = ((_b = (_a2 = res2.json) == null ? void 0 : _a2.error) == null ? void 0 : _b.message) || `HTTP ${res2.status}`;
         throw new Error(errMsg);
       }
-      const res = await (0, import_obsidian6.requestUrl)({
+      const res = await (0, import_obsidian7.requestUrl)({
         url: `${this.baseUrl}/models`,
         method: "GET",
         headers: this.headers(),
@@ -94196,7 +94188,7 @@ var OpenAIProvider = class {
   async listModels() {
     var _a2;
     try {
-      const res = await (0, import_obsidian6.requestUrl)({
+      const res = await (0, import_obsidian7.requestUrl)({
         url: `${this.baseUrl}/models`,
         method: "GET",
         headers: this.headers(),
@@ -94335,7 +94327,7 @@ var OpenAIProvider = class {
 };
 
 // src/providers/AnthropicProvider.ts
-var import_obsidian7 = require("obsidian");
+var import_obsidian8 = require("obsidian");
 var ANTHROPIC_VERSION = "2023-06-01";
 var DEFAULT_MAX_TOKENS = 4096;
 var AnthropicProvider = class {
@@ -94351,7 +94343,7 @@ var AnthropicProvider = class {
     const start = Date.now();
     const testModel = model || "claude-fable-5";
     try {
-      const res = await (0, import_obsidian7.requestUrl)({
+      const res = await (0, import_obsidian8.requestUrl)({
         url: `${this.baseUrl}/v1/messages`,
         method: "POST",
         headers: this.headers(),
@@ -94588,7 +94580,7 @@ var AnthropicProvider = class {
 };
 
 // src/settings.ts
-var import_obsidian8 = require("obsidian");
+var import_obsidian9 = require("obsidian");
 var PROVIDER_PRESETS = [
   { id: "local_llamacpp", label: "Local \u2014 llama.cpp", type: "openai_compat", baseUrl: "http://localhost:8080", isLocal: true },
   { id: "local_ollama", label: "Local \u2014 Ollama", type: "openai_compat", baseUrl: "http://localhost:11434/v1", isLocal: true },
@@ -94659,7 +94651,7 @@ var DEFAULT_SETTINGS = {
   showDiffPreview: true,
   diffPreviewThreshold: 200
 };
-var EngramSettingTab = class extends import_obsidian8.PluginSettingTab {
+var EngramSettingTab = class extends import_obsidian9.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
@@ -94672,12 +94664,12 @@ var EngramSettingTab = class extends import_obsidian8.PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
     containerEl.addClass("engram-settings");
-    new import_obsidian8.Setting(containerEl).setName("\u{1F9E0} Engram").setHeading();
-    new import_obsidian8.Setting(containerEl).setName("\u{1F916} AI Provider").setHeading();
-    const providerSetting = new import_obsidian8.Setting(containerEl).setName("Provider").setDesc("Select your AI provider or endpoint");
-    const customUrlSetting = new import_obsidian8.Setting(containerEl).setName("Base URL").setDesc("Full base URL for the custom provider endpoint (no trailing slash)");
-    const customTypeSetting = new import_obsidian8.Setting(containerEl).setName("API Format").setDesc("The API format / protocol expected by the custom provider");
-    const apiKeySetting = new import_obsidian8.Setting(containerEl).setName("API Key").setDesc("\u26A0\uFE0F Stored in data.json \u2014 do not sync to public git repos");
+    new import_obsidian9.Setting(containerEl).setName("\u{1F9E0} Engram").setHeading();
+    new import_obsidian9.Setting(containerEl).setName("\u{1F916} AI Provider").setHeading();
+    const providerSetting = new import_obsidian9.Setting(containerEl).setName("Provider").setDesc("Select your AI provider or endpoint");
+    const customUrlSetting = new import_obsidian9.Setting(containerEl).setName("Base URL").setDesc("Full base URL for the custom provider endpoint (no trailing slash)");
+    const customTypeSetting = new import_obsidian9.Setting(containerEl).setName("API Format").setDesc("The API format / protocol expected by the custom provider");
+    const apiKeySetting = new import_obsidian9.Setting(containerEl).setName("API Key").setDesc("\u26A0\uFE0F Stored in data.json \u2014 do not sync to public git repos");
     const applyProviderVisibility = () => {
       var _a2;
       const preset = PROVIDER_PRESETS.find((p) => p.id === this.plugin.settings.activeProviderId);
@@ -94727,19 +94719,19 @@ var EngramSettingTab = class extends import_obsidian8.PluginSettingTab {
       text.inputEl.type = "password";
     });
     applyProviderVisibility();
-    new import_obsidian8.Setting(containerEl).setName("Model").setDesc("Model identifier to request (leave blank to auto-detect from server)").addText(
+    new import_obsidian9.Setting(containerEl).setName("Model").setDesc("Model identifier to request (leave blank to auto-detect from server)").addText(
       (text) => text.setPlaceholder("auto-detect").setValue(this.plugin.settings.model).onChange(async (value) => {
         this.plugin.settings.model = value.trim();
         await this.save();
       })
     );
-    new import_obsidian8.Setting(containerEl).setName("Temperature").setDesc("Sampling temperature \u2014 0 = deterministic, 1 = creative, 2 = chaotic").addSlider(
+    new import_obsidian9.Setting(containerEl).setName("Temperature").setDesc("Sampling temperature \u2014 0 = deterministic, 1 = creative, 2 = chaotic").addSlider(
       (slider) => slider.setLimits(0, 2, 0.05).setValue(this.plugin.settings.temperature).setDynamicTooltip().onChange(async (value) => {
         this.plugin.settings.temperature = value;
         await this.save();
       })
     );
-    const testSetting = new import_obsidian8.Setting(containerEl).setName("Connection test").setDesc("Verify that Engram can reach the configured provider");
+    const testSetting = new import_obsidian9.Setting(containerEl).setName("Connection test").setDesc("Verify that Engram can reach the configured provider");
     let testResultEl = null;
     testSetting.addButton((btn) => {
       btn.setButtonText("Test connection").setCta().onClick(async () => {
@@ -94763,15 +94755,15 @@ var EngramSettingTab = class extends import_obsidian8.PluginSettingTab {
         }
       });
     });
-    new import_obsidian8.Setting(containerEl).setName("\u{1F9E0} Persona").setHeading();
+    new import_obsidian9.Setting(containerEl).setName("\u{1F9E0} Persona").setHeading();
     const getActivePersona = () => {
       var _a2;
       return (_a2 = this.plugin.settings.personas.find(
         (p) => p.id === this.plugin.settings.activePersonaId
       )) != null ? _a2 : this.plugin.settings.personas[0];
     };
-    const personaDropSetting = new import_obsidian8.Setting(containerEl).setName("Active persona").setDesc("Choose the personality and system prompt for Engram");
-    const promptSetting = new import_obsidian8.Setting(containerEl).setName("System prompt").setDesc("Edit the system prompt for the currently selected persona. Changes save automatically.");
+    const personaDropSetting = new import_obsidian9.Setting(containerEl).setName("Active persona").setDesc("Choose the personality and system prompt for Engram");
+    const promptSetting = new import_obsidian9.Setting(containerEl).setName("System prompt").setDesc("Edit the system prompt for the currently selected persona. Changes save automatically.");
     let promptTextArea = null;
     const refreshPromptArea = () => {
       const persona = getActivePersona();
@@ -94804,11 +94796,11 @@ var EngramSettingTab = class extends import_obsidian8.PluginSettingTab {
         await this.save();
       });
     });
-    const personaBtnSetting = new import_obsidian8.Setting(containerEl);
+    const personaBtnSetting = new import_obsidian9.Setting(containerEl);
     personaBtnSetting.addButton(
       (btn) => btn.setButtonText("Save as new preset").onClick(async () => {
         var _a2;
-        const name = await showPromptDialog({
+        const name = await showPromptDialog(this.app, {
           title: "Save Persona Preset",
           message: "Enter a name for the new persona preset:",
           placeholder: "e.g. Code Reviewer"
@@ -94821,17 +94813,17 @@ var EngramSettingTab = class extends import_obsidian8.PluginSettingTab {
         this.plugin.settings.activePersonaId = id;
         await this.save();
         buildPersonaDropdown(personaDrop);
-        new import_obsidian8.Notice(`Persona "${name.trim()}" saved.`);
+        new import_obsidian9.Notice(`Persona "${name.trim()}" saved.`);
       })
     );
     personaBtnSetting.addButton(
       (btn) => btn.setButtonText("Delete this preset").setWarning().onClick(async () => {
         const persona = getActivePersona();
         if (persona.id === "default") {
-          new import_obsidian8.Notice("Cannot delete the Default persona.");
+          new import_obsidian9.Notice("Cannot delete the Default persona.");
           return;
         }
-        const confirmed = await showConfirmDialog({
+        const confirmed = await showConfirmDialog(this.app, {
           title: "Delete Persona",
           message: `Are you sure you want to delete the persona "${persona.name}"?`,
           confirmLabel: "Delete",
@@ -94849,14 +94841,14 @@ var EngramSettingTab = class extends import_obsidian8.PluginSettingTab {
         refreshPromptArea();
       })
     );
-    new import_obsidian8.Setting(containerEl).setName("\u{1F4BE} Memory").setHeading();
-    new import_obsidian8.Setting(containerEl).setName("Enable memory system").setDesc("Engram maintains a persistent memory file summarising important facts about you").addToggle(
+    new import_obsidian9.Setting(containerEl).setName("\u{1F4BE} Memory").setHeading();
+    new import_obsidian9.Setting(containerEl).setName("Enable memory system").setDesc("Engram maintains a persistent memory file summarising important facts about you").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.memoryEnabled).onChange(async (value) => {
         this.plugin.settings.memoryEnabled = value;
         await this.save();
       })
     );
-    new import_obsidian8.Setting(containerEl).setName("Memory file path").setDesc("Vault-relative path to the memory markdown file").addText(
+    new import_obsidian9.Setting(containerEl).setName("Memory file path").setDesc("Vault-relative path to the memory markdown file").addText(
       (text) => text.setPlaceholder("Intelligence/Memory.md").setValue(this.plugin.settings.memoryPath).onChange(async (value) => {
         this.plugin.settings.memoryPath = value.trim();
         await this.save();
@@ -94866,19 +94858,19 @@ var EngramSettingTab = class extends import_obsidian8.PluginSettingTab {
         this.plugin.openMemoryFile();
       })
     );
-    new import_obsidian8.Setting(containerEl).setName("Auto-extract memories").setDesc("Automatically extract and save memorable facts at the end of each conversation").addToggle(
+    new import_obsidian9.Setting(containerEl).setName("Auto-extract memories").setDesc("Automatically extract and save memorable facts at the end of each conversation").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.autoExtractMemory).onChange(async (value) => {
         this.plugin.settings.autoExtractMemory = value;
         await this.save();
       })
     );
-    new import_obsidian8.Setting(containerEl).setName("Max memory tokens").setDesc("Maximum token budget reserved for injecting memory context").addSlider(
+    new import_obsidian9.Setting(containerEl).setName("Max memory tokens").setDesc("Maximum token budget reserved for injecting memory context").addSlider(
       (slider) => slider.setLimits(500, 8e3, 100).setValue(this.plugin.settings.maxMemoryTokens).setDynamicTooltip().onChange(async (value) => {
         this.plugin.settings.maxMemoryTokens = value;
         await this.save();
       })
     );
-    new import_obsidian8.Setting(containerEl).setName("Clear all memory").setDesc("Permanently erase all stored memories \u2014 this cannot be undone").addButton(
+    new import_obsidian9.Setting(containerEl).setName("Clear all memory").setDesc("Permanently erase all stored memories \u2014 this cannot be undone").addButton(
       (btn) => btn.setButtonText("Clear all memory").setWarning().onClick(async () => {
         if (!confirm("Clear ALL memories? This cannot be undone."))
           return;
@@ -94887,14 +94879,14 @@ var EngramSettingTab = class extends import_obsidian8.PluginSettingTab {
           const file = vault.getAbstractFileByPath(this.plugin.settings.memoryPath);
           if (file)
             await vault.modify(file, "");
-          new import_obsidian8.Notice("Memory cleared.");
+          new import_obsidian9.Notice("Memory cleared.");
         } catch (e) {
-          new import_obsidian8.Notice("Could not clear memory file.");
+          new import_obsidian9.Notice("Could not clear memory file.");
         }
       })
     );
-    new import_obsidian8.Setting(containerEl).setName("\u{1F512} Vault Access").setHeading();
-    const scopeSetting = new import_obsidian8.Setting(containerEl).setName("Knowledge scope").setDesc("Which folders Engram is allowed to read");
+    new import_obsidian9.Setting(containerEl).setName("\u{1F512} Vault Access").setHeading();
+    const scopeSetting = new import_obsidian9.Setting(containerEl).setName("Knowledge scope").setDesc("Which folders Engram is allowed to read");
     const folderSelectorContainer = containerEl.createDiv({ cls: "engram-folder-list-container" });
     const applyScopeVisibility = () => {
       const isAll = this.plugin.settings.scopeMode === "all";
@@ -94920,8 +94912,16 @@ var EngramSettingTab = class extends import_obsidian8.PluginSettingTab {
         placeholder: "Search folders...",
         cls: "engram-folder-search"
       });
+      const stopProp = (e) => {
+        if (e.key !== "Escape") {
+          e.stopPropagation();
+        }
+      };
+      searchInput.addEventListener("keydown", stopProp);
+      searchInput.addEventListener("keypress", stopProp);
+      searchInput.addEventListener("keyup", stopProp);
       const scrollBox = folderSelectorContainer.createDiv({ cls: "engram-folder-scrollbox" });
-      const folders = this.app.vault.getAllLoadedFiles().filter((f) => f instanceof import_obsidian8.TFolder).filter((f) => f.path !== "/" && f.path !== "");
+      const folders = this.app.vault.getAllLoadedFiles().filter((f) => f instanceof import_obsidian9.TFolder).filter((f) => f.path !== "/" && f.path !== "");
       folders.sort((a, b) => a.path.localeCompare(b.path));
       const renderList = (filterText = "") => {
         scrollBox.empty();
@@ -94994,44 +94994,44 @@ var EngramSettingTab = class extends import_obsidian8.PluginSettingTab {
     };
     renderFolderSelector();
     applyScopeVisibility();
-    new import_obsidian8.Setting(containerEl).setName("Edit permission level").setDesc("Controls what Engram is allowed to do in your vault").addDropdown(
+    new import_obsidian9.Setting(containerEl).setName("Edit permission level").setDesc("Controls what Engram is allowed to do in your vault").addDropdown(
       (drop) => drop.addOption("read_only", "\u{1F50D} Read only \u2014 search & read notes").addOption("read_append", "\u270F\uFE0F Read + Append \u2014 add content to notes").addOption("full_edit", "\u26A0\uFE0F Full edit \u2014 create, modify, overwrite").setValue(this.plugin.settings.editPermission).onChange(async (value) => {
         this.plugin.settings.editPermission = value;
         await this.save();
       })
     );
-    new import_obsidian8.Setting(containerEl).setName("Exclude patterns").setDesc("Glob patterns for notes/folders hidden from Engram (comma-separated)").addTextArea(
+    new import_obsidian9.Setting(containerEl).setName("Exclude patterns").setDesc("Glob patterns for notes/folders hidden from Engram (comma-separated)").addTextArea(
       (text) => text.setPlaceholder("Private/**, Diary/**, *.secret.md").setValue(this.plugin.settings.excludePatterns.join(", ")).onChange(async (value) => {
         this.plugin.settings.excludePatterns = value.split(",").map((p) => p.trim()).filter(Boolean);
         await this.save();
       })
     );
-    new import_obsidian8.Setting(containerEl).setName("Show diff preview before edits").setDesc("Display a change preview in chat before any vault modification is applied").addToggle(
+    new import_obsidian9.Setting(containerEl).setName("Show diff preview before edits").setDesc("Display a change preview in chat before any vault modification is applied").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.showDiffPreview).onChange(async (value) => {
         this.plugin.settings.showDiffPreview = value;
         await this.save();
       })
     );
-    new import_obsidian8.Setting(containerEl).setName("Diff preview threshold (chars)").setDesc("Only show diff preview when the edit changes more than this many characters").addSlider(
+    new import_obsidian9.Setting(containerEl).setName("Diff preview threshold (chars)").setDesc("Only show diff preview when the edit changes more than this many characters").addSlider(
       (slider) => slider.setLimits(0, 2e3, 50).setValue(this.plugin.settings.diffPreviewThreshold).setDynamicTooltip().onChange(async (value) => {
         this.plugin.settings.diffPreviewThreshold = value;
         await this.save();
       })
     );
-    new import_obsidian8.Setting(containerEl).setName("\u{1F4AC} Context & Performance").setHeading();
-    new import_obsidian8.Setting(containerEl).setName("Context window (tokens)").setDesc("Max tokens allocated to context. Match your model's native context size.").addSlider(
+    new import_obsidian9.Setting(containerEl).setName("\u{1F4AC} Context & Performance").setHeading();
+    new import_obsidian9.Setting(containerEl).setName("Context window (tokens)").setDesc("Max tokens allocated to context. Match your model's native context size.").addSlider(
       (slider) => slider.setLimits(1024, 131072, 1024).setValue(this.plugin.settings.contextWindowTokens).setDynamicTooltip().onChange(async (value) => {
         this.plugin.settings.contextWindowTokens = value;
         await this.save();
       })
     );
-    new import_obsidian8.Setting(containerEl).setName("Max recent messages in context").setDesc("How many of the most recent chat turns to include in each request").addSlider(
+    new import_obsidian9.Setting(containerEl).setName("Max recent messages in context").setDesc("How many of the most recent chat turns to include in each request").addSlider(
       (slider) => slider.setLimits(5, 50, 1).setValue(this.plugin.settings.maxRecentMessages).setDynamicTooltip().onChange(async (value) => {
         this.plugin.settings.maxRecentMessages = value;
         await this.save();
       })
     );
-    new import_obsidian8.Setting(containerEl).setName("Auto-inject notes count").setDesc("Top-ranked notes auto-injected into each message (0 recommended for cloud APIs)").addText(
+    new import_obsidian9.Setting(containerEl).setName("Auto-inject notes count").setDesc("Top-ranked notes auto-injected into each message (0 recommended for cloud APIs)").addText(
       (text) => text.setPlaceholder("0").setValue(String(this.plugin.settings.autoInjectNotes)).onChange(async (value) => {
         const parsed = Number.parseInt(value.trim(), 10);
         if (Number.isNaN(parsed))
@@ -95040,7 +95040,7 @@ var EngramSettingTab = class extends import_obsidian8.PluginSettingTab {
         await this.save();
       })
     );
-    new import_obsidian8.Setting(containerEl).setName("Tool calling mode").setDesc(
+    new import_obsidian9.Setting(containerEl).setName("Tool calling mode").setDesc(
       "Native: OpenAI-style function calling (requires a compatible model). Prompt injection: works with any model. Disabled: no vault tools."
     ).addDropdown(
       (drop) => drop.addOption("native", "\u26A1 Native function calling").addOption("prompt_injection", "\u{1F4DD} Prompt injection (universal)").addOption("disabled", "\u{1F6AB} Disabled").setValue(this.plugin.settings.toolCallingMode).onChange(async (value) => {
@@ -95048,18 +95048,18 @@ var EngramSettingTab = class extends import_obsidian8.PluginSettingTab {
         await this.save();
       })
     );
-    new import_obsidian8.Setting(containerEl).setName("Max tool call depth").setDesc("Maximum consecutive tool calls per turn (prevents infinite loops)").addSlider(
+    new import_obsidian9.Setting(containerEl).setName("Max tool call depth").setDesc("Maximum consecutive tool calls per turn (prevents infinite loops)").addSlider(
       (slider) => slider.setLimits(1, 32, 1).setValue(this.plugin.settings.maxToolCallDepth).setDynamicTooltip().onChange(async (value) => {
         this.plugin.settings.maxToolCallDepth = value;
         await this.save();
       })
     );
-    new import_obsidian8.Setting(containerEl).setName("\u{1F50D} Semantic Search (optional)").setHeading();
+    new import_obsidian9.Setting(containerEl).setName("\u{1F50D} Semantic Search (optional)").setHeading();
     containerEl.createEl("p", {
       text: "When configured, notes are embedded using Ollama and vector similarity search replaces keyword-only ranking \u2014 scaling gracefully to 500+ note vaults. Requires Ollama running locally with a text-embedding model (e.g. 'nomic-embed-text'). Leave the model blank to disable.",
       cls: "engram-section-desc"
     });
-    new import_obsidian8.Setting(containerEl).setName("Ollama embeddings URL").setDesc("Base URL of your Ollama instance").addText(
+    new import_obsidian9.Setting(containerEl).setName("Ollama embeddings URL").setDesc("Base URL of your Ollama instance").addText(
       (text) => text.setPlaceholder("http://localhost:11434").setValue(this.plugin.settings.ollamaEmbedEndpoint).onChange(async (value) => {
         var _a2;
         this.plugin.settings.ollamaEmbedEndpoint = value.replace(/\/$/, "") || "http://localhost:11434";
@@ -95069,7 +95069,7 @@ var EngramSettingTab = class extends import_obsidian8.PluginSettingTab {
         }
       })
     );
-    new import_obsidian8.Setting(containerEl).setName("Embedding model").setDesc("Ollama model name for embeddings (leave blank to disable). e.g. nomic-embed-text").addText(
+    new import_obsidian9.Setting(containerEl).setName("Embedding model").setDesc("Ollama model name for embeddings (leave blank to disable). e.g. nomic-embed-text").addText(
       (text) => text.setPlaceholder("nomic-embed-text").setValue(this.plugin.settings.embeddingModel).onChange(async (value) => {
         var _a2;
         this.plugin.settings.embeddingModel = value.trim();
@@ -95221,7 +95221,7 @@ function parseInjectionToolCalls(text) {
 }
 
 // src/main.ts
-var EngramPlugin = class extends import_obsidian9.Plugin {
+var EngramPlugin = class extends import_obsidian10.Plugin {
   constructor() {
     super(...arguments);
     this.chatSessions = [];
@@ -95397,20 +95397,20 @@ var EngramPlugin = class extends import_obsidian9.Plugin {
     await this.saveData(update);
   }
   async rebuildIndex() {
-    new import_obsidian9.Notice("\u{1F9E0} Engram: Re-indexing vault\u2026");
+    new import_obsidian10.Notice("\u{1F9E0} Engram: Re-indexing vault\u2026");
     await this.indexer.build(null);
     if (this.settings.embeddingModel) {
-      new import_obsidian9.Notice("\u{1F9E0} Engram: Building embeddings\u2026");
+      new import_obsidian10.Notice("\u{1F9E0} Engram: Building embeddings\u2026");
       await this.embeddingIndex.build(null, (path) => this.indexer.readNote(path));
     }
     await this.persistIndex();
-    new import_obsidian9.Notice(`\u{1F9E0} Engram: ${this.indexer.noteCount} notes indexed`);
+    new import_obsidian10.Notice(`\u{1F9E0} Engram: ${this.indexer.noteCount} notes indexed`);
   }
   // ── Vault Events ──────────────────────────────────────────────────────────────
   registerVaultEvents() {
     this.registerEvent(
       this.app.vault.on("create", async (file) => {
-        if (file instanceof import_obsidian9.TFile && file.extension === "md") {
+        if (file instanceof import_obsidian10.TFile && file.extension === "md") {
           await this.indexer.updateFile(file);
           if (this.settings.embeddingModel) {
             const content = await this.indexer.readNote(file.path);
@@ -95423,7 +95423,7 @@ var EngramPlugin = class extends import_obsidian9.Plugin {
     );
     this.registerEvent(
       this.app.vault.on("modify", async (file) => {
-        if (file instanceof import_obsidian9.TFile && file.extension === "md") {
+        if (file instanceof import_obsidian10.TFile && file.extension === "md") {
           await this.indexer.updateFile(file);
           if (this.settings.embeddingModel) {
             const content = await this.indexer.readNote(file.path);
@@ -95436,7 +95436,7 @@ var EngramPlugin = class extends import_obsidian9.Plugin {
     );
     this.registerEvent(
       this.app.vault.on("delete", (file) => {
-        if (file instanceof import_obsidian9.TFile && file.extension === "md") {
+        if (file instanceof import_obsidian10.TFile && file.extension === "md") {
           this.indexer.removeFile(file.path);
           this.embeddingIndex.removeFile(file.path);
           this.schedulePersist();
@@ -95445,7 +95445,7 @@ var EngramPlugin = class extends import_obsidian9.Plugin {
     );
     this.registerEvent(
       this.app.vault.on("rename", async (file, oldPath) => {
-        if (file instanceof import_obsidian9.TFile && file.extension === "md") {
+        if (file instanceof import_obsidian10.TFile && file.extension === "md") {
           await this.indexer.renameFile(file, oldPath);
           this.embeddingIndex.renameFile(oldPath, file.path, file.stat.mtime);
           this.schedulePersist();

@@ -324,7 +324,7 @@ export class EngramSettingTab extends PluginSettingTab {
 
     personaBtnSetting.addButton(btn =>
       btn.setButtonText('Save as new preset').onClick(async () => {
-        const name = await showPromptDialog({
+        const name = await showPromptDialog(this.app, {
           title: 'Save Persona Preset',
           message: 'Enter a name for the new persona preset:',
           placeholder: 'e.g. Code Reviewer'
@@ -350,7 +350,7 @@ export class EngramSettingTab extends PluginSettingTab {
           return;
         }
 
-        const confirmed = await showConfirmDialog({
+        const confirmed = await showConfirmDialog(this.app, {
           title: 'Delete Persona',
           message: `Are you sure you want to delete the persona "${persona.name}"?`,
           confirmLabel: 'Delete',
@@ -496,6 +496,15 @@ export class EngramSettingTab extends PluginSettingTab {
         placeholder: 'Search folders...',
         cls: 'engram-folder-search'
       });
+
+      const stopProp = (e: KeyboardEvent) => {
+        if (e.key !== 'Escape') {
+          e.stopPropagation();
+        }
+      };
+      searchInput.addEventListener('keydown', stopProp);
+      searchInput.addEventListener('keypress', stopProp);
+      searchInput.addEventListener('keyup', stopProp);
 
       // Scroll box
       const scrollBox = folderSelectorContainer.createDiv({ cls: 'engram-folder-scrollbox' });
