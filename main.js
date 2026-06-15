@@ -92721,46 +92721,66 @@ var EmbeddingIndex = class {
     this.settings = settings;
     this.entries = [];
     this.ready = false;
-    this.ollamaEndpoint = "http://localhost:11434";
-    this.model = "";
-    var _a2, _b;
-    this.ollamaEndpoint = (_a2 = settings.ollamaEmbedEndpoint) != null ? _a2 : "http://localhost:11434";
-    this.model = (_b = settings.embeddingModel) != null ? _b : "";
   }
   get isReady() {
-    return this.ready && this.model !== "";
+    const provider = this.settings.embedProvider || "none";
+    return this.ready && provider !== "none" && this.getEmbedModel() !== "";
   }
   get entryCount() {
     return this.entries.length;
   }
+  getEmbedModel() {
+    const provider = this.settings.embedProvider || "none";
+    if (provider === "ollama")
+      return this.settings.ollamaEmbedModel || "nomic-embed-text";
+    if (provider === "openai")
+      return this.settings.openaiEmbedModel || "text-embedding-3-small";
+    if (provider === "custom")
+      return this.settings.customEmbedModel || "";
+    return "";
+  }
   updateSettings(settings) {
-    var _a2, _b;
     this.settings = settings;
-    this.ollamaEndpoint = (_a2 = settings.ollamaEmbedEndpoint) != null ? _a2 : "http://localhost:11434";
-    this.model = (_b = settings.embeddingModel) != null ? _b : "";
     this.entries = this.entries.filter((e) => isPathAllowed(e.path, this.settings));
   }
+  /** Load saved index data on startup without calling any API */
+  load(savedData) {
+    const model = this.getEmbedModel();
+    const provider = this.settings.embedProvider || "none";
+    if (provider === "none" || !model) {
+      this.entries = [];
+      this.ready = false;
+      return;
+    }
+    if (savedData && savedData.version === EMBED_INDEX_VERSION && savedData.model === model) {
+      this.entries = savedData.entries.filter((e) => isPathAllowed(e.path, this.settings));
+      this.ready = true;
+    } else {
+      this.entries = [];
+      this.ready = true;
+    }
+  }
   /** Load saved index and incrementally update changed files */
-  async build(savedData, getContent) {
-    if (!this.model) {
+  async build(getContent) {
+    const model = this.getEmbedModel();
+    const provider = this.settings.embedProvider || "none";
+    if (provider === "none" || !model) {
       this.entries = [];
       this.ready = false;
       return;
     }
     const files = this.app.vault.getMarkdownFiles();
-    const saved = /* @__PURE__ */ new Map();
-    if (savedData && savedData.version === EMBED_INDEX_VERSION && savedData.model === this.model) {
-      for (const e of savedData.entries) {
-        saved.set(e.path, e);
-      }
+    const existing = /* @__PURE__ */ new Map();
+    for (const e of this.entries) {
+      existing.set(e.path, e);
     }
     const result = [];
     for (const file of files) {
       if (!isPathAllowed(file.path, this.settings))
         continue;
-      const existing = saved.get(file.path);
-      if (existing && existing.mtime === file.stat.mtime) {
-        result.push(existing);
+      const exist = existing.get(file.path);
+      if (exist && exist.mtime === file.stat.mtime) {
+        result.push(exist);
       } else {
         try {
           const content = await getContent(file.path);
@@ -92773,16 +92793,19 @@ ${content}`.slice(0, 4e3);
           if (vector) {
             result.push({ path: file.path, mtime: file.stat.mtime, vector });
           }
-        } catch (e) {
+        } catch (err) {
+          console.error(`[Engram] Failed to embed ${file.path}:`, err);
         }
       }
     }
     this.entries = result;
     this.ready = true;
   }
-  /** Embed a single file (called after edits) */
+  /** Embed a single file */
   async embedFile(file, content) {
-    if (!this.model)
+    const model = this.getEmbedModel();
+    const provider = this.settings.embedProvider || "none";
+    if (provider === "none" || !model)
       return;
     if (!isPathAllowed(file.path, this.settings))
       return;
@@ -92793,10 +92816,10 @@ ${content}`.slice(0, 4e3);
       const vector = await this.fetchEmbedding(text);
       if (!vector)
         return;
-      const existing = this.entries.findIndex((e) => e.path === file.path);
+      const existingIndex = this.entries.findIndex((e) => e.path === file.path);
       const entry = { path: file.path, mtime: file.stat.mtime, vector };
-      if (existing >= 0) {
-        this.entries[existing] = entry;
+      if (existingIndex >= 0) {
+        this.entries[existingIndex] = entry;
       } else {
         this.entries.push(entry);
       }
@@ -92835,31 +92858,70 @@ ${content}`.slice(0, 4e3);
   toJSON() {
     return {
       version: EMBED_INDEX_VERSION,
-      model: this.model,
+      model: this.getEmbedModel(),
       entries: this.entries
     };
   }
   // ── Private ────────────────────────────────────────────────────────────────
   async fetchEmbedding(text) {
-    if (!this.model)
+    var _a2, _b, _c, _d, _e;
+    const provider = this.settings.embedProvider || "none";
+    const model = this.getEmbedModel();
+    if (provider === "none" || !model)
       return null;
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 15e3);
     try {
-      const base = this.ollamaEndpoint.replace(/\/$/, "");
-      const resp = await fetch(`${base}/api/embeddings`, {
+      let url = "";
+      const headers = { "Content-Type": "application/json" };
+      let body = {};
+      if (provider === "ollama") {
+        const base = (this.settings.ollamaEmbedUrl || "http://localhost:11434").replace(/\/$/, "");
+        url = `${base}/api/embeddings`;
+        body = { model, prompt: text };
+      } else if (provider === "openai") {
+        url = "https://api.openai.com/v1/embeddings";
+        const apiKey = ((_a2 = this.settings.openaiEmbedApiKey) == null ? void 0 : _a2.trim()) || ((_b = this.settings.providerApiKey) == null ? void 0 : _b.trim());
+        if (apiKey) {
+          headers["Authorization"] = `Bearer ${apiKey}`;
+        }
+        body = { model, input: text };
+      } else if (provider === "custom") {
+        url = this.settings.customEmbedUrl || "";
+        if (!url) {
+          clearTimeout(timer);
+          return null;
+        }
+        const apiKey = (_c = this.settings.customEmbedApiKey) == null ? void 0 : _c.trim();
+        if (apiKey) {
+          headers["Authorization"] = `Bearer ${apiKey}`;
+        }
+        body = { model, input: text };
+      } else {
+        clearTimeout(timer);
+        return null;
+      }
+      const resp = await fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: this.model, prompt: text }),
+        headers,
+        body: JSON.stringify(body),
         signal: ctrl.signal
       });
       clearTimeout(timer);
-      if (!resp.ok)
+      if (!resp.ok) {
+        console.error(`[Engram] Embeddings request failed with status ${resp.status}`);
         return null;
+      }
       const data = await resp.json();
-      return Array.isArray(data == null ? void 0 : data.embedding) ? data.embedding : null;
-    } catch (e) {
+      if (provider === "ollama") {
+        return Array.isArray(data == null ? void 0 : data.embedding) ? data.embedding : null;
+      } else {
+        const embed = (_e = (_d = data == null ? void 0 : data.data) == null ? void 0 : _d[0]) == null ? void 0 : _e.embedding;
+        return Array.isArray(embed) ? embed : null;
+      }
+    } catch (err) {
       clearTimeout(timer);
+      console.error("[Engram] Error fetching embedding:", err);
       return null;
     }
   }
@@ -94652,6 +94714,14 @@ var DEFAULT_SETTINGS = {
   // Embeddings
   ollamaEmbedEndpoint: "http://localhost:11434",
   embeddingModel: "",
+  embedProvider: "none",
+  ollamaEmbedUrl: "http://localhost:11434",
+  ollamaEmbedModel: "nomic-embed-text",
+  openaiEmbedModel: "text-embedding-3-small",
+  openaiEmbedApiKey: "",
+  customEmbedUrl: "",
+  customEmbedModel: "",
+  customEmbedApiKey: "",
   // Edit safety
   showDiffPreview: true,
   diffPreviewThreshold: 200,
@@ -95088,29 +95158,123 @@ var EngramSettingTab = class extends import_obsidian9.PluginSettingTab {
     );
     const semanticHeaderSetting = new import_obsidian9.Setting(containerEl).setName("\u{1F50D} Semantic Search (optional)").setHeading();
     const semanticDescEl = containerEl.createEl("p", {
-      text: "When configured, notes are embedded using Ollama and vector similarity search replaces keyword-only ranking \u2014 scaling gracefully to 500+ note vaults. Requires Ollama running locally with a text-embedding model (e.g. 'nomic-embed-text'). Leave the model blank to disable.",
+      text: "Compare notes conceptually using vector embeddings. This allows the AI to find relevant journals and notes by meaning rather than exact keywords. Select a provider and build the index manually below.",
       cls: "engram-section-desc"
     });
-    const ollamaEmbedUrlSetting = new import_obsidian9.Setting(containerEl).setName("Ollama embeddings URL").setDesc("Base URL of your Ollama instance").addText(
-      (text) => text.setPlaceholder("http://localhost:11434").setValue(this.plugin.settings.ollamaEmbedEndpoint).onChange(async (value) => {
+    const embedProviderSetting = new import_obsidian9.Setting(containerEl).setName("Embedding provider").setDesc("Select the API/service to generate note embeddings").addDropdown(
+      (drop) => drop.addOption("none", "Disabled").addOption("ollama", "Local \u2014 Ollama").addOption("openai", "OpenAI").addOption("custom", "Custom OpenAI-compatible").setValue(this.plugin.settings.embedProvider || "none").onChange(async (value) => {
         var _a2;
-        this.plugin.settings.ollamaEmbedEndpoint = value.replace(/\/$/, "") || "http://localhost:11434";
-        await this.save();
+        this.plugin.settings.embedProvider = value;
         if ((_a2 = this.plugin.embeddingIndex) == null ? void 0 : _a2.updateSettings) {
           this.plugin.embeddingIndex.updateSettings(this.plugin.settings);
         }
+        applyVisibility();
+        await this.save();
       })
     );
-    const embeddingModelSetting = new import_obsidian9.Setting(containerEl).setName("Embedding model").setDesc("Ollama model name for embeddings (leave blank to disable). e.g. nomic-embed-text").addText(
-      (text) => text.setPlaceholder("nomic-embed-text").setValue(this.plugin.settings.embeddingModel).onChange(async (value) => {
+    const ollamaUrlSetting = new import_obsidian9.Setting(containerEl).setName("Ollama embeddings URL").setDesc("Base URL of your Ollama instance").addText(
+      (text) => text.setPlaceholder("http://localhost:11434").setValue(this.plugin.settings.ollamaEmbedUrl || "http://localhost:11434").onChange(async (value) => {
         var _a2;
-        this.plugin.settings.embeddingModel = value.trim();
-        await this.save();
+        this.plugin.settings.ollamaEmbedUrl = value.trim();
         if ((_a2 = this.plugin.embeddingIndex) == null ? void 0 : _a2.updateSettings) {
           this.plugin.embeddingIndex.updateSettings(this.plugin.settings);
         }
+        await this.save();
       })
     );
+    const ollamaModelSetting = new import_obsidian9.Setting(containerEl).setName("Ollama embedding model").setDesc("Ollama model name (e.g. nomic-embed-text)").addText(
+      (text) => text.setPlaceholder("nomic-embed-text").setValue(this.plugin.settings.ollamaEmbedModel || "nomic-embed-text").onChange(async (value) => {
+        var _a2;
+        this.plugin.settings.ollamaEmbedModel = value.trim();
+        if ((_a2 = this.plugin.embeddingIndex) == null ? void 0 : _a2.updateSettings) {
+          this.plugin.embeddingIndex.updateSettings(this.plugin.settings);
+        }
+        await this.save();
+      })
+    );
+    const openaiApiKeySetting = new import_obsidian9.Setting(containerEl).setName("OpenAI embeddings API Key").setDesc("Optional. Reuses your main provider API key if left blank").addText((text) => {
+      text.setPlaceholder("sk-...").setValue(this.plugin.settings.openaiEmbedApiKey || "").onChange(async (value) => {
+        var _a2;
+        this.plugin.settings.openaiEmbedApiKey = value.trim();
+        if ((_a2 = this.plugin.embeddingIndex) == null ? void 0 : _a2.updateSettings) {
+          this.plugin.embeddingIndex.updateSettings(this.plugin.settings);
+        }
+        await this.save();
+      });
+      text.inputEl.type = "password";
+    });
+    const openaiModelSetting = new import_obsidian9.Setting(containerEl).setName("OpenAI embedding model").setDesc("OpenAI model name (e.g. text-embedding-3-small)").addText(
+      (text) => text.setPlaceholder("text-embedding-3-small").setValue(this.plugin.settings.openaiEmbedModel || "text-embedding-3-small").onChange(async (value) => {
+        var _a2;
+        this.plugin.settings.openaiEmbedModel = value.trim();
+        if ((_a2 = this.plugin.embeddingIndex) == null ? void 0 : _a2.updateSettings) {
+          this.plugin.embeddingIndex.updateSettings(this.plugin.settings);
+        }
+        await this.save();
+      })
+    );
+    const customEmbedUrlSetting = new import_obsidian9.Setting(containerEl).setName("Custom embeddings URL").setDesc("Full endpoint URL for generating custom embeddings").addText(
+      (text) => text.setPlaceholder("http://localhost:8080/v1/embeddings").setValue(this.plugin.settings.customEmbedUrl || "").onChange(async (value) => {
+        var _a2;
+        this.plugin.settings.customEmbedUrl = value.trim();
+        if ((_a2 = this.plugin.embeddingIndex) == null ? void 0 : _a2.updateSettings) {
+          this.plugin.embeddingIndex.updateSettings(this.plugin.settings);
+        }
+        await this.save();
+      })
+    );
+    const customEmbedModelSetting = new import_obsidian9.Setting(containerEl).setName("Custom embedding model").setDesc("Model identifier for custom embeddings").addText(
+      (text) => text.setPlaceholder("my-embedding-model").setValue(this.plugin.settings.customEmbedModel || "").onChange(async (value) => {
+        var _a2;
+        this.plugin.settings.customEmbedModel = value.trim();
+        if ((_a2 = this.plugin.embeddingIndex) == null ? void 0 : _a2.updateSettings) {
+          this.plugin.embeddingIndex.updateSettings(this.plugin.settings);
+        }
+        await this.save();
+      })
+    );
+    const customEmbedApiKeySetting = new import_obsidian9.Setting(containerEl).setName("Custom embeddings API Key").setDesc("API key if required by the custom embeddings endpoint").addText((text) => {
+      text.setPlaceholder("Optional API key").setValue(this.plugin.settings.customEmbedApiKey || "").onChange(async (value) => {
+        var _a2;
+        this.plugin.settings.customEmbedApiKey = value.trim();
+        if ((_a2 = this.plugin.embeddingIndex) == null ? void 0 : _a2.updateSettings) {
+          this.plugin.embeddingIndex.updateSettings(this.plugin.settings);
+        }
+        await this.save();
+      });
+      text.inputEl.type = "password";
+    });
+    const indexEmbeddingsSetting = new import_obsidian9.Setting(containerEl).setName("Build semantic index").setDesc("Scan and generate embeddings for all notes. This is required for semantic search to work.");
+    let indexStatusEl = null;
+    indexEmbeddingsSetting.addButton((btn) => {
+      btn.setButtonText("Index Vault").setCta().onClick(async () => {
+        btn.setButtonText("Indexing\u2026").setDisabled(true);
+        if (indexStatusEl)
+          indexStatusEl.remove();
+        try {
+          new import_obsidian9.Notice("\u{1F9E0} Engram: Indexing vault embeddings\u2026");
+          await this.plugin.embeddingIndex.build(
+            (path) => this.plugin.indexer.readNote(path)
+          );
+          await this.plugin.persistIndex();
+          new import_obsidian9.Notice(`\u{1F9E0} Engram: Indexing complete! ${this.plugin.embeddingIndex.entryCount} notes indexed.`);
+          indexStatusEl = indexEmbeddingsSetting.settingEl.createEl("span", {
+            text: `\u2705 ${this.plugin.embeddingIndex.entryCount} notes indexed`,
+            cls: "engram-test-result engram-test-ok"
+          });
+          indexStatusEl.style.marginLeft = "12px";
+        } catch (err) {
+          new import_obsidian9.Notice(`\u274C Indexing failed: ${(err == null ? void 0 : err.message) || err}`);
+          indexStatusEl = indexEmbeddingsSetting.settingEl.createEl("span", {
+            text: `\u274C Indexing failed`,
+            cls: "engram-test-result engram-test-err"
+          });
+          indexStatusEl.style.marginLeft = "12px";
+        } finally {
+          btn.setButtonText("Index Vault").setDisabled(false);
+        }
+      });
+    });
     const applyVisibility = () => {
       var _a2, _b;
       const advanced = (_a2 = this.plugin.settings.showAdvancedSettings) != null ? _a2 : false;
@@ -95136,10 +95300,21 @@ var EngramSettingTab = class extends import_obsidian9.PluginSettingTab {
       autoInjectNotesSetting.settingEl.style.display = advanced ? "" : "none";
       toolCallingSetting.settingEl.style.display = advanced ? "" : "none";
       toolCallDepthSetting.settingEl.style.display = advanced ? "" : "none";
+      const showEmbed = advanced && (this.plugin.settings.embedProvider !== void 0 && this.plugin.settings.embedProvider !== "none");
+      const isOllamaEmbed = advanced && this.plugin.settings.embedProvider === "ollama";
+      const isOpenAIEmbed = advanced && this.plugin.settings.embedProvider === "openai";
+      const isCustomEmbed = advanced && this.plugin.settings.embedProvider === "custom";
       semanticHeaderSetting.settingEl.style.display = advanced ? "" : "none";
       semanticDescEl.style.display = advanced ? "" : "none";
-      ollamaEmbedUrlSetting.settingEl.style.display = advanced ? "" : "none";
-      embeddingModelSetting.settingEl.style.display = advanced ? "" : "none";
+      embedProviderSetting.settingEl.style.display = advanced ? "" : "none";
+      ollamaUrlSetting.settingEl.style.display = isOllamaEmbed ? "" : "none";
+      ollamaModelSetting.settingEl.style.display = isOllamaEmbed ? "" : "none";
+      openaiApiKeySetting.settingEl.style.display = isOpenAIEmbed ? "" : "none";
+      openaiModelSetting.settingEl.style.display = isOpenAIEmbed ? "" : "none";
+      customEmbedUrlSetting.settingEl.style.display = isCustomEmbed ? "" : "none";
+      customEmbedModelSetting.settingEl.style.display = isCustomEmbed ? "" : "none";
+      customEmbedApiKeySetting.settingEl.style.display = isCustomEmbed ? "" : "none";
+      indexEmbeddingsSetting.settingEl.style.display = showEmbed ? "" : "none";
     };
     applyVisibility();
   }
@@ -95342,6 +95517,17 @@ var EngramPlugin = class extends import_obsidian10.Plugin {
     } else if (this.settings.scopeMode === "block") {
       this.settings.scopeMode = "denylist";
     }
+    if (!this.settings.embedProvider) {
+      if (this.settings.embeddingModel) {
+        this.settings.embedProvider = "ollama";
+        this.settings.ollamaEmbedModel = this.settings.embeddingModel;
+      } else {
+        this.settings.embedProvider = "none";
+      }
+    }
+    if (this.settings.ollamaEmbedEndpoint && !this.settings.ollamaEmbedUrl) {
+      this.settings.ollamaEmbedUrl = this.settings.ollamaEmbedEndpoint;
+    }
   }
   async saveSettings() {
     var _a2, _b, _c, _d, _e, _f;
@@ -95438,10 +95624,8 @@ var EngramPlugin = class extends import_obsidian10.Plugin {
     try {
       await this.indexer.build(savedIndex);
       console.log(`[Engram] Vault indexed: ${this.indexer.noteCount} notes`);
-      if (this.settings.embeddingModel) {
-        await this.embeddingIndex.build(savedEmbeds, (path) => this.indexer.readNote(path));
-        console.log(`[Engram] Embeddings: ${this.embeddingIndex.entryCount} notes embedded`);
-      }
+      this.embeddingIndex.load(savedEmbeds);
+      console.log(`[Engram] Embeddings loaded: ${this.embeddingIndex.entryCount} notes in index`);
       await this.persistIndex();
     } catch (e) {
       console.error("[Engram] Indexing error:", e);
@@ -95462,10 +95646,6 @@ var EngramPlugin = class extends import_obsidian10.Plugin {
   async rebuildIndex() {
     new import_obsidian10.Notice("\u{1F9E0} Engram: Re-indexing vault\u2026");
     await this.indexer.build(null);
-    if (this.settings.embeddingModel) {
-      new import_obsidian10.Notice("\u{1F9E0} Engram: Building embeddings\u2026");
-      await this.embeddingIndex.build(null, (path) => this.indexer.readNote(path));
-    }
     await this.persistIndex();
     new import_obsidian10.Notice(`\u{1F9E0} Engram: ${this.indexer.noteCount} notes indexed`);
   }
@@ -95475,11 +95655,6 @@ var EngramPlugin = class extends import_obsidian10.Plugin {
       this.app.vault.on("create", async (file) => {
         if (file instanceof import_obsidian10.TFile && file.extension === "md") {
           await this.indexer.updateFile(file);
-          if (this.settings.embeddingModel) {
-            const content = await this.indexer.readNote(file.path);
-            if (content)
-              this.embeddingIndex.embedFile(file, content);
-          }
           this.schedulePersist();
         }
       })
@@ -95488,11 +95663,6 @@ var EngramPlugin = class extends import_obsidian10.Plugin {
       this.app.vault.on("modify", async (file) => {
         if (file instanceof import_obsidian10.TFile && file.extension === "md") {
           await this.indexer.updateFile(file);
-          if (this.settings.embeddingModel) {
-            const content = await this.indexer.readNote(file.path);
-            if (content)
-              this.embeddingIndex.embedFile(file, content);
-          }
           this.schedulePersist();
         }
       })

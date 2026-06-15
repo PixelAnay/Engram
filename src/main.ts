@@ -96,6 +96,19 @@ export default class EngramPlugin extends Plugin {
     } else if ((this.settings.scopeMode as string) === 'block') {
       this.settings.scopeMode = 'denylist';
     }
+
+    // Migrate old embedding model/endpoint settings to new provider structure
+    if (!this.settings.embedProvider) {
+      if (this.settings.embeddingModel) {
+        this.settings.embedProvider = 'ollama';
+        this.settings.ollamaEmbedModel = this.settings.embeddingModel;
+      } else {
+        this.settings.embedProvider = 'none';
+      }
+    }
+    if (this.settings.ollamaEmbedEndpoint && !this.settings.ollamaEmbedUrl) {
+      this.settings.ollamaEmbedUrl = this.settings.ollamaEmbedEndpoint;
+    }
   }
 
   async saveSettings(): Promise<void> {
@@ -212,10 +225,8 @@ export default class EngramPlugin extends Plugin {
       await this.indexer.build(savedIndex);
       console.log(`[Engram] Vault indexed: ${this.indexer.noteCount} notes`);
 
-      if (this.settings.embeddingModel) {
-        await this.embeddingIndex.build(savedEmbeds, path => this.indexer.readNote(path));
-        console.log(`[Engram] Embeddings: ${this.embeddingIndex.entryCount} notes embedded`);
-      }
+      this.embeddingIndex.load(savedEmbeds);
+      console.log(`[Engram] Embeddings loaded: ${this.embeddingIndex.entryCount} notes in index`);
 
       await this.persistIndex();
     } catch (e) {
@@ -238,10 +249,6 @@ export default class EngramPlugin extends Plugin {
   private async rebuildIndex(): Promise<void> {
     new Notice('🧠 Engram: Re-indexing vault…');
     await this.indexer.build(null);
-    if (this.settings.embeddingModel) {
-      new Notice('🧠 Engram: Building embeddings…');
-      await this.embeddingIndex.build(null, path => this.indexer.readNote(path));
-    }
     await this.persistIndex();
     new Notice(`🧠 Engram: ${this.indexer.noteCount} notes indexed`);
   }
@@ -253,10 +260,6 @@ export default class EngramPlugin extends Plugin {
       this.app.vault.on('create', async file => {
         if (file instanceof TFile && file.extension === 'md') {
           await this.indexer.updateFile(file);
-          if (this.settings.embeddingModel) {
-            const content = await this.indexer.readNote(file.path);
-            if (content) this.embeddingIndex.embedFile(file, content);
-          }
           this.schedulePersist();
         }
       })
@@ -266,10 +269,6 @@ export default class EngramPlugin extends Plugin {
       this.app.vault.on('modify', async file => {
         if (file instanceof TFile && file.extension === 'md') {
           await this.indexer.updateFile(file);
-          if (this.settings.embeddingModel) {
-            const content = await this.indexer.readNote(file.path);
-            if (content) this.embeddingIndex.embedFile(file, content);
-          }
           this.schedulePersist();
         }
       })

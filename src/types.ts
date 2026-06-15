@@ -105,6 +105,14 @@ export interface EngramSettings {
   // Embeddings
   ollamaEmbedEndpoint: string;
   embeddingModel: string;
+  embedProvider?: 'none' | 'ollama' | 'openai' | 'custom';
+  ollamaEmbedUrl?: string;
+  ollamaEmbedModel?: string;
+  openaiEmbedModel?: string;
+  openaiEmbedApiKey?: string;
+  customEmbedUrl?: string;
+  customEmbedModel?: string;
+  customEmbedApiKey?: string;
 
   // Edit safety
   showDiffPreview: boolean;
