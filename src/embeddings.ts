@@ -36,6 +36,9 @@ const EMBED_INDEX_VERSION = 1;
 export class EmbeddingIndex {
   private entries: EmbeddingEntry[] = [];
   private ready = false;
+  private activeModel = '';
+  private activeProvider = '';
+  private activeUrl = '';
 
   constructor(
     private app: App,
@@ -57,6 +60,14 @@ export class EmbeddingIndex {
     return '';
   }
 
+  getEmbedUrl(): string {
+    const provider = this.settings.embedProvider || 'none';
+    if (provider === 'ollama') return this.settings.ollamaEmbedUrl || 'http://localhost:11434';
+    if (provider === 'openai') return 'https://api.openai.com/v1';
+    if (provider === 'custom') return this.settings.customEmbedUrl || '';
+    return '';
+  }
+
   updateSettings(settings: EngramSettings): void {
     this.settings = settings;
     // Strip any entries that are now excluded
@@ -67,18 +78,35 @@ export class EmbeddingIndex {
   load(savedData: EmbeddingIndexData | null): void {
     const model = this.getEmbedModel();
     const provider = this.settings.embedProvider || 'none';
+    const url = this.getEmbedUrl();
     if (provider === 'none' || !model) {
       this.entries = [];
       this.ready = false;
+      this.activeModel = '';
+      this.activeProvider = '';
+      this.activeUrl = '';
       return;
     }
 
-    if (savedData && savedData.version === EMBED_INDEX_VERSION && savedData.model === model) {
-      this.entries = savedData.entries.filter(e => isPathAllowed(e.path, this.settings));
+    const saved = savedData as any;
+    if (
+      saved &&
+      saved.version === EMBED_INDEX_VERSION &&
+      saved.model === model &&
+      saved.provider === provider &&
+      saved.url === url
+    ) {
+      this.entries = saved.entries.filter((e: any) => isPathAllowed(e.path, this.settings));
       this.ready = true;
+      this.activeModel = model;
+      this.activeProvider = provider;
+      this.activeUrl = url;
     } else {
       this.entries = [];
       this.ready = true; // Mark as ready so they can build it
+      this.activeModel = model;
+      this.activeProvider = provider;
+      this.activeUrl = url;
     }
   }
 
@@ -88,10 +116,23 @@ export class EmbeddingIndex {
   ): Promise<void> {
     const model = this.getEmbedModel();
     const provider = this.settings.embedProvider || 'none';
+    const url = this.getEmbedUrl();
     if (provider === 'none' || !model) {
       this.entries = [];
       this.ready = false;
       return;
+    }
+
+    // Invalidate cache if configuration has changed
+    if (
+      this.activeModel !== model ||
+      this.activeProvider !== provider ||
+      this.activeUrl !== url
+    ) {
+      this.entries = [];
+      this.activeModel = model;
+      this.activeProvider = provider;
+      this.activeUrl = url;
     }
 
     const files = this.app.vault.getMarkdownFiles();
@@ -194,10 +235,12 @@ export class EmbeddingIndex {
   }
 
   /** Serialise for persistence */
-  toJSON(): EmbeddingIndexData {
+  toJSON(): any {
     return {
       version: EMBED_INDEX_VERSION,
       model: this.getEmbedModel(),
+      provider: this.settings.embedProvider || 'none',
+      url: this.getEmbedUrl(),
       entries: this.entries,
     };
   }

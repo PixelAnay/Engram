@@ -92721,6 +92721,9 @@ var EmbeddingIndex = class {
     this.settings = settings;
     this.entries = [];
     this.ready = false;
+    this.activeModel = "";
+    this.activeProvider = "";
+    this.activeUrl = "";
   }
   get isReady() {
     const provider = this.settings.embedProvider || "none";
@@ -92739,6 +92742,16 @@ var EmbeddingIndex = class {
       return this.settings.customEmbedModel || "";
     return "";
   }
+  getEmbedUrl() {
+    const provider = this.settings.embedProvider || "none";
+    if (provider === "ollama")
+      return this.settings.ollamaEmbedUrl || "http://localhost:11434";
+    if (provider === "openai")
+      return "https://api.openai.com/v1";
+    if (provider === "custom")
+      return this.settings.customEmbedUrl || "";
+    return "";
+  }
   updateSettings(settings) {
     this.settings = settings;
     this.entries = this.entries.filter((e) => isPathAllowed(e.path, this.settings));
@@ -92747,27 +92760,45 @@ var EmbeddingIndex = class {
   load(savedData) {
     const model = this.getEmbedModel();
     const provider = this.settings.embedProvider || "none";
+    const url = this.getEmbedUrl();
     if (provider === "none" || !model) {
       this.entries = [];
       this.ready = false;
+      this.activeModel = "";
+      this.activeProvider = "";
+      this.activeUrl = "";
       return;
     }
-    if (savedData && savedData.version === EMBED_INDEX_VERSION && savedData.model === model) {
-      this.entries = savedData.entries.filter((e) => isPathAllowed(e.path, this.settings));
+    const saved = savedData;
+    if (saved && saved.version === EMBED_INDEX_VERSION && saved.model === model && saved.provider === provider && saved.url === url) {
+      this.entries = saved.entries.filter((e) => isPathAllowed(e.path, this.settings));
       this.ready = true;
+      this.activeModel = model;
+      this.activeProvider = provider;
+      this.activeUrl = url;
     } else {
       this.entries = [];
       this.ready = true;
+      this.activeModel = model;
+      this.activeProvider = provider;
+      this.activeUrl = url;
     }
   }
   /** Load saved index and incrementally update changed files */
   async build(getContent) {
     const model = this.getEmbedModel();
     const provider = this.settings.embedProvider || "none";
+    const url = this.getEmbedUrl();
     if (provider === "none" || !model) {
       this.entries = [];
       this.ready = false;
       return;
+    }
+    if (this.activeModel !== model || this.activeProvider !== provider || this.activeUrl !== url) {
+      this.entries = [];
+      this.activeModel = model;
+      this.activeProvider = provider;
+      this.activeUrl = url;
     }
     const files = this.app.vault.getMarkdownFiles();
     const existing = /* @__PURE__ */ new Map();
@@ -92862,6 +92893,8 @@ ${content}`.slice(0, 4e3);
     return {
       version: EMBED_INDEX_VERSION,
       model: this.getEmbedModel(),
+      provider: this.settings.embedProvider || "none",
+      url: this.getEmbedUrl(),
       entries: this.entries
     };
   }
