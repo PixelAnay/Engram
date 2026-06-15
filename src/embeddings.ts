@@ -36,35 +36,59 @@ const EMBED_INDEX_VERSION = 1;
 export class EmbeddingIndex {
   private entries: EmbeddingEntry[] = [];
   private ready = false;
-  private ollamaEndpoint = 'http://localhost:11434';
-  private model = '';
 
   constructor(
     private app: App,
     private settings: EngramSettings
-  ) {
-    this.ollamaEndpoint = settings.ollamaEmbedEndpoint ?? 'http://localhost:11434';
-    this.model = settings.embeddingModel ?? '';
+  ) {}
+
+  get isReady(): boolean {
+    const provider = this.settings.embedProvider || 'none';
+    return this.ready && provider !== 'none' && this.getEmbedModel() !== '';
   }
 
-  get isReady(): boolean { return this.ready && this.model !== ''; }
   get entryCount(): number { return this.entries.length; }
+
+  getEmbedModel(): string {
+    const provider = this.settings.embedProvider || 'none';
+    if (provider === 'ollama') return this.settings.ollamaEmbedModel || 'nomic-embed-text';
+    if (provider === 'openai') return this.settings.openaiEmbedModel || 'text-embedding-3-small';
+    if (provider === 'custom') return this.settings.customEmbedModel || '';
+    return '';
+  }
 
   updateSettings(settings: EngramSettings): void {
     this.settings = settings;
-    this.ollamaEndpoint = settings.ollamaEmbedEndpoint ?? 'http://localhost:11434';
-    this.model = settings.embeddingModel ?? '';
     // Strip any entries that are now excluded
     this.entries = this.entries.filter(e => isPathAllowed(e.path, this.settings));
   }
 
+  /** Load saved index data on startup without calling any API */
+  load(savedData: EmbeddingIndexData | null): void {
+    const model = this.getEmbedModel();
+    const provider = this.settings.embedProvider || 'none';
+    if (provider === 'none' || !model) {
+      this.entries = [];
+      this.ready = false;
+      return;
+    }
+
+    if (savedData && savedData.version === EMBED_INDEX_VERSION && savedData.model === model) {
+      this.entries = savedData.entries.filter(e => isPathAllowed(e.path, this.settings));
+      this.ready = true;
+    } else {
+      this.entries = [];
+      this.ready = true; // Mark as ready so they can build it
+    }
+  }
+
   /** Load saved index and incrementally update changed files */
   async build(
-    savedData: EmbeddingIndexData | null,
     getContent: (path: string) => Promise<string | null>
   ): Promise<void> {
-    if (!this.model) {
-      // Embeddings disabled — clear index
+    const model = this.getEmbedModel();
+    const provider = this.settings.embedProvider || 'none';
+    if (provider === 'none' || !model) {
       this.entries = [];
       this.ready = false;
       return;
@@ -72,22 +96,20 @@ export class EmbeddingIndex {
 
     const files = this.app.vault.getMarkdownFiles();
 
-    // Restore valid entries from the saved index
-    const saved: Map<string, EmbeddingEntry> = new Map();
-    if (savedData && savedData.version === EMBED_INDEX_VERSION && savedData.model === this.model) {
-      for (const e of savedData.entries) {
-        saved.set(e.path, e);
-      }
+    // Map existing entries for fast lookup
+    const existing: Map<string, EmbeddingEntry> = new Map();
+    for (const e of this.entries) {
+      existing.set(e.path, e);
     }
 
     const result: EmbeddingEntry[] = [];
 
     for (const file of files) {
       if (!isPathAllowed(file.path, this.settings)) continue;
-      const existing = saved.get(file.path);
-      if (existing && existing.mtime === file.stat.mtime) {
+      const exist = existing.get(file.path);
+      if (exist && exist.mtime === file.stat.mtime) {
         // Not changed — reuse
-        result.push(existing);
+        result.push(exist);
       } else {
         // Changed or new — embed
         try {
@@ -100,8 +122,8 @@ export class EmbeddingIndex {
           if (vector) {
             result.push({ path: file.path, mtime: file.stat.mtime, vector });
           }
-        } catch {
-          // Silently skip failed embeds — fall through to keyword search
+        } catch (err) {
+          console.error(`[Engram] Failed to embed ${file.path}:`, err);
         }
       }
     }
@@ -110,19 +132,21 @@ export class EmbeddingIndex {
     this.ready = true;
   }
 
-  /** Embed a single file (called after edits) */
+  /** Embed a single file */
   async embedFile(file: TFile, content: string): Promise<void> {
-    if (!this.model) return;
+    const model = this.getEmbedModel();
+    const provider = this.settings.embedProvider || 'none';
+    if (provider === 'none' || !model) return;
     if (!isPathAllowed(file.path, this.settings)) return;
     try {
       const text = `${file.basename}\n\n${content}`.slice(0, 4000);
       const vector = await this.fetchEmbedding(text);
       if (!vector) return;
 
-      const existing = this.entries.findIndex(e => e.path === file.path);
+      const existingIndex = this.entries.findIndex(e => e.path === file.path);
       const entry: EmbeddingEntry = { path: file.path, mtime: file.stat.mtime, vector };
-      if (existing >= 0) {
-        this.entries[existing] = entry;
+      if (existingIndex >= 0) {
+        this.entries[existingIndex] = entry;
       } else {
         this.entries.push(entry);
       }
@@ -170,7 +194,7 @@ export class EmbeddingIndex {
   toJSON(): EmbeddingIndexData {
     return {
       version: EMBED_INDEX_VERSION,
-      model: this.model,
+      model: this.getEmbedModel(),
       entries: this.entries,
     };
   }
@@ -178,23 +202,69 @@ export class EmbeddingIndex {
   // ── Private ────────────────────────────────────────────────────────────────
 
   private async fetchEmbedding(text: string): Promise<number[] | null> {
-    if (!this.model) return null;
+    const provider = this.settings.embedProvider || 'none';
+    const model = this.getEmbedModel();
+    if (provider === 'none' || !model) return null;
+
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 15_000);
+
     try {
-      const base = this.ollamaEndpoint.replace(/\/$/, '');
-      const resp = await fetch(`${base}/api/embeddings`, {
+      let url = '';
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      let body: any = {};
+
+      if (provider === 'ollama') {
+        const base = (this.settings.ollamaEmbedUrl || 'http://localhost:11434').replace(/\/$/, '');
+        url = `${base}/api/embeddings`;
+        body = { model, prompt: text };
+      } else if (provider === 'openai') {
+        url = 'https://api.openai.com/v1/embeddings';
+        const apiKey = this.settings.openaiEmbedApiKey?.trim() || this.settings.providerApiKey?.trim();
+        if (apiKey) {
+          headers['Authorization'] = `Bearer ${apiKey}`;
+        }
+        body = { model, input: text };
+      } else if (provider === 'custom') {
+        url = this.settings.customEmbedUrl || '';
+        if (!url) {
+          clearTimeout(timer);
+          return null;
+        }
+        const apiKey = this.settings.customEmbedApiKey?.trim();
+        if (apiKey) {
+          headers['Authorization'] = `Bearer ${apiKey}`;
+        }
+        body = { model, input: text };
+      } else {
+        clearTimeout(timer);
+        return null;
+      }
+
+      const resp = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: this.model, prompt: text }),
+        headers,
+        body: JSON.stringify(body),
         signal: ctrl.signal,
       });
       clearTimeout(timer);
-      if (!resp.ok) return null;
+
+      if (!resp.ok) {
+        console.error(`[Engram] Embeddings request failed with status ${resp.status}`);
+        return null;
+      }
+
       const data = await resp.json();
-      return Array.isArray(data?.embedding) ? data.embedding : null;
-    } catch {
+
+      if (provider === 'ollama') {
+        return Array.isArray(data?.embedding) ? data.embedding : null;
+      } else {
+        const embed = data?.data?.[0]?.embedding;
+        return Array.isArray(embed) ? embed : null;
+      }
+    } catch (err) {
       clearTimeout(timer);
+      console.error('[Engram] Error fetching embedding:', err);
       return null;
     }
   }

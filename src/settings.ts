@@ -98,6 +98,14 @@ export const DEFAULT_SETTINGS: EngramSettings = {
   // Embeddings
   ollamaEmbedEndpoint: 'http://localhost:11434',
   embeddingModel: '',
+  embedProvider: 'none',
+  ollamaEmbedUrl: 'http://localhost:11434',
+  ollamaEmbedModel: 'nomic-embed-text',
+  openaiEmbedModel: 'text-embedding-3-small',
+  openaiEmbedApiKey: '',
+  customEmbedUrl: '',
+  customEmbedModel: '',
+  customEmbedApiKey: '',
 
   // Edit safety
   showDiffPreview: true,
@@ -789,44 +797,181 @@ export class EngramSettingTab extends PluginSettingTab {
 
     const semanticDescEl = containerEl.createEl('p', {
       text:
-        'When configured, notes are embedded using Ollama and vector similarity search replaces ' +
-        'keyword-only ranking — scaling gracefully to 500+ note vaults. Requires Ollama running ' +
-        "locally with a text-embedding model (e.g. 'nomic-embed-text'). Leave the model blank to disable.",
+        'Compare notes conceptually using vector embeddings. This allows the AI to find relevant journals ' +
+        'and notes by meaning rather than exact keywords. Select a provider and build the index manually below.',
       cls: 'engram-section-desc',
     });
 
-    const ollamaEmbedUrlSetting = new Setting(containerEl)
+    const embedProviderSetting = new Setting(containerEl)
+      .setName('Embedding provider')
+      .setDesc('Select the API/service to generate note embeddings')
+      .addDropdown(drop =>
+        drop
+          .addOption('none', 'Disabled')
+          .addOption('ollama', 'Local — Ollama')
+          .addOption('openai', 'OpenAI')
+          .addOption('custom', 'Custom OpenAI-compatible')
+          .setValue(this.plugin.settings.embedProvider || 'none')
+          .onChange(async value => {
+            this.plugin.settings.embedProvider = value as any;
+            if (this.plugin.embeddingIndex?.updateSettings) {
+              this.plugin.embeddingIndex.updateSettings(this.plugin.settings);
+            }
+            applyVisibility();
+            await this.save();
+          })
+      );
+
+    const ollamaUrlSetting = new Setting(containerEl)
       .setName('Ollama embeddings URL')
       .setDesc('Base URL of your Ollama instance')
       .addText(text =>
         text
           .setPlaceholder('http://localhost:11434')
-          .setValue(this.plugin.settings.ollamaEmbedEndpoint)
+          .setValue(this.plugin.settings.ollamaEmbedUrl || 'http://localhost:11434')
           .onChange(async value => {
-            this.plugin.settings.ollamaEmbedEndpoint =
-              value.replace(/\/$/, '') || 'http://localhost:11434';
-            await this.save();
+            this.plugin.settings.ollamaEmbedUrl = value.trim();
             if (this.plugin.embeddingIndex?.updateSettings) {
               this.plugin.embeddingIndex.updateSettings(this.plugin.settings);
             }
+            await this.save();
           })
       );
 
-    const embeddingModelSetting = new Setting(containerEl)
-      .setName('Embedding model')
-      .setDesc('Ollama model name for embeddings (leave blank to disable). e.g. nomic-embed-text')
+    const ollamaModelSetting = new Setting(containerEl)
+      .setName('Ollama embedding model')
+      .setDesc('Ollama model name (e.g. nomic-embed-text)')
       .addText(text =>
         text
           .setPlaceholder('nomic-embed-text')
-          .setValue(this.plugin.settings.embeddingModel)
+          .setValue(this.plugin.settings.ollamaEmbedModel || 'nomic-embed-text')
           .onChange(async value => {
-            this.plugin.settings.embeddingModel = value.trim();
-            await this.save();
+            this.plugin.settings.ollamaEmbedModel = value.trim();
             if (this.plugin.embeddingIndex?.updateSettings) {
               this.plugin.embeddingIndex.updateSettings(this.plugin.settings);
             }
+            await this.save();
           })
       );
+
+    const openaiApiKeySetting = new Setting(containerEl)
+      .setName('OpenAI embeddings API Key')
+      .setDesc('Optional. Reuses your main provider API key if left blank')
+      .addText(text => {
+        text
+          .setPlaceholder('sk-...')
+          .setValue(this.plugin.settings.openaiEmbedApiKey || '')
+          .onChange(async value => {
+            this.plugin.settings.openaiEmbedApiKey = value.trim();
+            if (this.plugin.embeddingIndex?.updateSettings) {
+              this.plugin.embeddingIndex.updateSettings(this.plugin.settings);
+            }
+            await this.save();
+          });
+        text.inputEl.type = 'password';
+      });
+
+    const openaiModelSetting = new Setting(containerEl)
+      .setName('OpenAI embedding model')
+      .setDesc('OpenAI model name (e.g. text-embedding-3-small)')
+      .addText(text =>
+        text
+          .setPlaceholder('text-embedding-3-small')
+          .setValue(this.plugin.settings.openaiEmbedModel || 'text-embedding-3-small')
+          .onChange(async value => {
+            this.plugin.settings.openaiEmbedModel = value.trim();
+            if (this.plugin.embeddingIndex?.updateSettings) {
+              this.plugin.embeddingIndex.updateSettings(this.plugin.settings);
+            }
+            await this.save();
+          })
+      );
+
+    const customEmbedUrlSetting = new Setting(containerEl)
+      .setName('Custom embeddings URL')
+      .setDesc('Full endpoint URL for generating custom embeddings')
+      .addText(text =>
+        text
+          .setPlaceholder('http://localhost:8080/v1/embeddings')
+          .setValue(this.plugin.settings.customEmbedUrl || '')
+          .onChange(async value => {
+            this.plugin.settings.customEmbedUrl = value.trim();
+            if (this.plugin.embeddingIndex?.updateSettings) {
+              this.plugin.embeddingIndex.updateSettings(this.plugin.settings);
+            }
+            await this.save();
+          })
+      );
+
+    const customEmbedModelSetting = new Setting(containerEl)
+      .setName('Custom embedding model')
+      .setDesc('Model identifier for custom embeddings')
+      .addText(text =>
+        text
+          .setPlaceholder('my-embedding-model')
+          .setValue(this.plugin.settings.customEmbedModel || '')
+          .onChange(async value => {
+            this.plugin.settings.customEmbedModel = value.trim();
+            if (this.plugin.embeddingIndex?.updateSettings) {
+              this.plugin.embeddingIndex.updateSettings(this.plugin.settings);
+            }
+            await this.save();
+          })
+      );
+
+    const customEmbedApiKeySetting = new Setting(containerEl)
+      .setName('Custom embeddings API Key')
+      .setDesc('API key if required by the custom embeddings endpoint')
+      .addText(text => {
+        text
+          .setPlaceholder('Optional API key')
+          .setValue(this.plugin.settings.customEmbedApiKey || '')
+          .onChange(async value => {
+            this.plugin.settings.customEmbedApiKey = value.trim();
+            if (this.plugin.embeddingIndex?.updateSettings) {
+              this.plugin.embeddingIndex.updateSettings(this.plugin.settings);
+            }
+            await this.save();
+          });
+        text.inputEl.type = 'password';
+      });
+
+    const indexEmbeddingsSetting = new Setting(containerEl)
+      .setName('Build semantic index')
+      .setDesc('Scan and generate embeddings for all notes. This is required for semantic search to work.');
+
+    let indexStatusEl: HTMLElement | null = null;
+    indexEmbeddingsSetting.addButton(btn => {
+      btn
+        .setButtonText('Index Vault')
+        .setCta()
+        .onClick(async () => {
+          btn.setButtonText('Indexing…').setDisabled(true);
+          if (indexStatusEl) indexStatusEl.remove();
+          try {
+            new Notice('🧠 Engram: Indexing vault embeddings…');
+            await this.plugin.embeddingIndex.build(
+              (path: string) => this.plugin.indexer.readNote(path)
+            );
+            await this.plugin.persistIndex();
+            new Notice(`🧠 Engram: Indexing complete! ${this.plugin.embeddingIndex.entryCount} notes indexed.`);
+            indexStatusEl = indexEmbeddingsSetting.settingEl.createEl('span', {
+              text: `✅ ${this.plugin.embeddingIndex.entryCount} notes indexed`,
+              cls: 'engram-test-result engram-test-ok'
+            });
+            indexStatusEl.style.marginLeft = '12px';
+          } catch (err: any) {
+            new Notice(`❌ Indexing failed: ${err?.message || err}`);
+            indexStatusEl = indexEmbeddingsSetting.settingEl.createEl('span', {
+              text: `❌ Indexing failed`,
+              cls: 'engram-test-result engram-test-err'
+            });
+            indexStatusEl.style.marginLeft = '12px';
+          } finally {
+            btn.setButtonText('Index Vault').setDisabled(false);
+          }
+        });
+    });
 
     // ── Unified Visibility Handler ───────────────────────────────────────────
     const applyVisibility = () => {
@@ -869,10 +1014,26 @@ export class EngramSettingTab extends PluginSettingTab {
       toolCallDepthSetting.settingEl.style.display = advanced ? '' : 'none';
 
       // 6. Semantic Search
+      const showEmbed = advanced && (this.plugin.settings.embedProvider !== undefined && this.plugin.settings.embedProvider !== 'none');
+      const isOllamaEmbed = advanced && this.plugin.settings.embedProvider === 'ollama';
+      const isOpenAIEmbed = advanced && this.plugin.settings.embedProvider === 'openai';
+      const isCustomEmbed = advanced && this.plugin.settings.embedProvider === 'custom';
+
       semanticHeaderSetting.settingEl.style.display = advanced ? '' : 'none';
       semanticDescEl.style.display = advanced ? '' : 'none';
-      ollamaEmbedUrlSetting.settingEl.style.display = advanced ? '' : 'none';
-      embeddingModelSetting.settingEl.style.display = advanced ? '' : 'none';
+      embedProviderSetting.settingEl.style.display = advanced ? '' : 'none';
+
+      ollamaUrlSetting.settingEl.style.display = isOllamaEmbed ? '' : 'none';
+      ollamaModelSetting.settingEl.style.display = isOllamaEmbed ? '' : 'none';
+
+      openaiApiKeySetting.settingEl.style.display = isOpenAIEmbed ? '' : 'none';
+      openaiModelSetting.settingEl.style.display = isOpenAIEmbed ? '' : 'none';
+
+      customEmbedUrlSetting.settingEl.style.display = isCustomEmbed ? '' : 'none';
+      customEmbedModelSetting.settingEl.style.display = isCustomEmbed ? '' : 'none';
+      customEmbedApiKeySetting.settingEl.style.display = isCustomEmbed ? '' : 'none';
+
+      indexEmbeddingsSetting.settingEl.style.display = showEmbed ? '' : 'none';
     };
 
     applyVisibility();
