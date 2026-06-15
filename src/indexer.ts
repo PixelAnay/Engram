@@ -118,7 +118,9 @@ export class VaultIndexer {
       this.index = saved;
       const currentPaths = new Set(files.map(f => f.path));
       for (const path of Object.keys(this.index.notes)) {
-        if (!currentPaths.has(path)) delete this.index.notes[path];
+        if (!currentPaths.has(path) || this.isExcluded(path)) {
+          delete this.index.notes[path];
+        }
       }
       this.ready = true;
       this.invalidateCaches();
@@ -175,6 +177,15 @@ export class VaultIndexer {
   updateSettings(settings: EngramSettings): void {
     this.settings = settings;
     this.rebuildExcludeRegexes();
+    
+    // Clean memory index of any now-excluded notes
+    for (const path of Object.keys(this.index.notes)) {
+      if (this.isExcluded(path)) {
+        delete this.index.notes[path];
+        this.contentCache.delete(path);
+      }
+    }
+    
     this.invalidateCaches();
   }
 

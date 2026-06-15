@@ -550,13 +550,13 @@ export class EngramSettingTab extends PluginSettingTab {
             const toggleFolder = async () => {
               const checked = checkbox.checked;
               if (checked) {
-                // Was checked -> uncheck -> remove from list
-                this.plugin.settings.scopeFolders = this.plugin.settings.scopeFolders.filter((sf: string) => sf !== path);
-              } else {
-                // Was unchecked -> check -> add to list
+                // User checked it -> add to list
                 if (!this.plugin.settings.scopeFolders.includes(path)) {
                   this.plugin.settings.scopeFolders.push(path);
                 }
+              } else {
+                // User unchecked it -> remove from list
+                this.plugin.settings.scopeFolders = this.plugin.settings.scopeFolders.filter((sf: string) => sf !== path);
               }
               await this.save();
               renderFolderSelector(); // Re-render to cascade states
