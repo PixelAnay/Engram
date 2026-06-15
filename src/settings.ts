@@ -1,5 +1,6 @@
-import { App, PluginSettingTab, Setting, Notice } from 'obsidian';
+import { App, PluginSettingTab, Setting, Notice, TFolder } from 'obsidian';
 import type { EngramSettings } from './types';
+import { normalisePath } from './utils/pathUtils';
 
 // ── Provider Presets ────────────────────────────────────────────────────────
 
@@ -440,41 +441,151 @@ export class EngramSettingTab extends PluginSettingTab {
       .setName('Knowledge scope')
       .setDesc('Which folders Engram is allowed to read');
 
-    const scopeFolderSetting = new Setting(containerEl)
-      .setName('Folder list')
-      .setDesc('One folder path per line (relative to vault root)');
+    // Container for the structured folder selection UI
+    const folderSelectorContainer = containerEl.createDiv({ cls: 'engram-folder-list-container' });
 
     const applyScopeVisibility = () => {
       const isAll = this.plugin.settings.scopeMode === 'all';
-      scopeFolderSetting.settingEl.style.display = isAll ? 'none' : '';
+      folderSelectorContainer.style.display = isAll ? 'none' : 'flex';
     };
 
     scopeSetting.addDropdown(drop =>
       drop
         .addOption('all',       'All folders')
-        .addOption('allow',     'Allow these folders only')
-        .addOption('block',     'Block these folders')
+        .addOption('allowlist', 'Allow these folders only')
+        .addOption('denylist',  'Block these folders')
         .setValue(this.plugin.settings.scopeMode)
         .onChange(async value => {
           this.plugin.settings.scopeMode = value as EngramSettings['scopeMode'];
           applyScopeVisibility();
           await this.save();
+          renderFolderSelector();
         })
     );
 
-    scopeFolderSetting.addTextArea(ta =>
-      ta
-        .setPlaceholder('Projects/\nWork/\nResearch/')
-        .setValue(this.plugin.settings.scopeFolders.join('\n'))
-        .onChange(async value => {
-          this.plugin.settings.scopeFolders = value
-            .split('\n')
-            .map(l => l.trim())
-            .filter(Boolean);
-          await this.save();
-        })
-    );
+    const renderFolderSelector = () => {
+      folderSelectorContainer.empty();
 
+      // Description label
+      folderSelectorContainer.createEl('div', {
+        text: this.plugin.settings.scopeMode === 'allowlist'
+          ? 'Select folders to ALLOW access to (and their subfolders):'
+          : 'Select folders to BLOCK access to (and their subfolders):',
+        cls: 'setting-item-description'
+      });
+
+      // Search bar
+      const searchContainer = folderSelectorContainer.createDiv({ cls: 'engram-folder-search-container' });
+      const searchInput = searchContainer.createEl('input', {
+        type: 'text',
+        placeholder: 'Search folders...',
+        cls: 'engram-folder-search'
+      });
+
+      // Scroll box
+      const scrollBox = folderSelectorContainer.createDiv({ cls: 'engram-folder-scrollbox' });
+
+      // Gather folders
+      const folders = this.app.vault.getAllLoadedFiles()
+        .filter((f): f is TFolder => f instanceof TFolder)
+        .filter(f => f.path !== '/' && f.path !== '');
+
+      folders.sort((a, b) => a.path.localeCompare(b.path));
+
+      const renderList = (filterText: string = '') => {
+        scrollBox.empty();
+
+        const query = filterText.toLowerCase().trim();
+        const filteredFolders = folders.filter(f => f.path.toLowerCase().includes(query));
+
+        if (filteredFolders.length === 0) {
+          scrollBox.createDiv({ text: 'No folders found', cls: 'engram-no-folders-msg' });
+          return;
+        }
+
+        for (const folder of filteredFolders) {
+          const path = folder.path;
+          const segments = path.split('/');
+          const name = segments[segments.length - 1];
+          const depth = segments.length - 1;
+
+          // Check explicit and inherited status
+          const isExplicit = this.plugin.settings.scopeFolders.includes(path);
+          const isInherited = this.plugin.settings.scopeFolders.some((sf: string) =>
+            path.startsWith(sf + '/')
+          );
+
+          const itemEl = scrollBox.createDiv({
+            cls: 'engram-folder-item' + (isInherited ? ' is-inherited' : '')
+          });
+
+          // Indentation spacer
+          for (let d = 0; d < depth; d++) {
+            itemEl.createDiv({ cls: 'engram-folder-indent' });
+          }
+
+          // Checkbox
+          const checkbox = itemEl.createEl('input', {
+            type: 'checkbox',
+            cls: 'engram-folder-checkbox'
+          });
+          checkbox.checked = isExplicit || isInherited;
+
+          if (isInherited) {
+            checkbox.disabled = true;
+          }
+
+          // Icon and label
+          itemEl.createEl('span', { text: '📁 ', cls: 'engram-folder-icon' });
+          const nameEl = itemEl.createEl('span', { text: name, cls: 'engram-folder-name' });
+          nameEl.title = path;
+
+          // Inherited badge
+          if (isInherited) {
+            itemEl.createEl('span', { text: 'Inherited', cls: 'engram-folder-badge' });
+          }
+
+          // Toggle event
+          if (!isInherited) {
+            const toggleFolder = async () => {
+              const checked = checkbox.checked;
+              if (checked) {
+                // Was checked -> uncheck -> remove from list
+                this.plugin.settings.scopeFolders = this.plugin.settings.scopeFolders.filter((sf: string) => sf !== path);
+              } else {
+                // Was unchecked -> check -> add to list
+                if (!this.plugin.settings.scopeFolders.includes(path)) {
+                  this.plugin.settings.scopeFolders.push(path);
+                }
+              }
+              await this.save();
+              renderFolderSelector(); // Re-render to cascade states
+            };
+
+            checkbox.addEventListener('change', async (e) => {
+              e.stopPropagation();
+              await toggleFolder();
+            });
+
+            itemEl.style.cursor = 'pointer';
+            itemEl.addEventListener('click', async (e) => {
+              if (e.target !== checkbox) {
+                checkbox.checked = !checkbox.checked;
+                await toggleFolder();
+              }
+            });
+          }
+        }
+      };
+
+      searchInput.addEventListener('input', () => {
+        renderList(searchInput.value);
+      });
+
+      renderList();
+    };
+
+    renderFolderSelector();
     applyScopeVisibility();
 
     // Edit permission level

@@ -1,6 +1,6 @@
 import { App, TFile, getAllTags, CachedMetadata } from 'obsidian';
 import type { NoteMetadata, SearchResult, EngramSettings } from './types';
-import { normalisePath } from './utils/pathUtils';
+import { normalisePath, isPathAllowed } from './utils/pathUtils';
 
 /** Local-only index shape — not exported from types.ts */
 interface VaultIndex {
@@ -383,7 +383,7 @@ export class VaultIndexer {
   // ── Private Helpers ───────────────────────────────────────────────────────
 
   private isExcluded(path: string): boolean {
-    return this.excludeRegexes.some(re => re.test(path));
+    return !isPathAllowed(path, this.settings);
   }
 
   private rebuildExcludeRegexes(): void {

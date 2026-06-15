@@ -92311,6 +92311,50 @@ function validateVaultPath(raw) {
     return null;
   return normalised || null;
 }
+function isPathAllowed(path, settings) {
+  const normalised = normalisePath(path);
+  if (!normalised)
+    return false;
+  if (isObsidianInternal(normalised))
+    return false;
+  const matchesGlob = (p, pattern) => {
+    const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*\*/g, "<<<DS>>>").replace(/\*/g, "[^/]*").replace(/<<<DS>>>/g, ".*");
+    try {
+      const regex = new RegExp(`^${escaped}$`, "i");
+      return regex.test(p);
+    } catch (e) {
+      return false;
+    }
+  };
+  if (settings.excludePatterns && settings.excludePatterns.some((pat) => matchesGlob(normalised, pat))) {
+    return false;
+  }
+  let mode = settings.scopeMode;
+  if (mode === "allow")
+    mode = "allowlist";
+  if (mode === "block")
+    mode = "denylist";
+  if (mode === "allowlist") {
+    if (!settings.scopeFolders || settings.scopeFolders.length === 0) {
+      return false;
+    }
+    return settings.scopeFolders.some((f) => {
+      const normFolder = normalisePath(f);
+      return normalised === normFolder || normalised.startsWith(normFolder + "/");
+    });
+  }
+  if (mode === "denylist") {
+    if (settings.scopeFolders && settings.scopeFolders.length > 0) {
+      const isBlocked = settings.scopeFolders.some((f) => {
+        const normFolder = normalisePath(f);
+        return normalised === normFolder || normalised.startsWith(normFolder + "/");
+      });
+      if (isBlocked)
+        return false;
+    }
+  }
+  return true;
+}
 
 // src/indexer.ts
 var INDEX_VERSION = 2;
@@ -92623,7 +92667,7 @@ var VaultIndexer = class {
   }
   // ── Private Helpers ───────────────────────────────────────────────────────
   isExcluded(path) {
-    return this.excludeRegexes.some((re) => re.test(path));
+    return !isPathAllowed(path, this.settings);
   }
   rebuildExcludeRegexes() {
     this.excludeRegexes = this.settings.excludePatterns.map(globToRegex);
@@ -93258,6 +93302,9 @@ ${lines.join("\n")}`;
     const path = validateVaultPath(args.path);
     if (!path)
       return "Error: Invalid or missing path";
+    if (!isPathAllowed(path, this.settings)) {
+      return `Error: Access denied. Path is not within allowed knowledge scope: ${path}`;
+    }
     const content = await this.indexer.readNote(path);
     if (content === null)
       return `Error: Note not found or excluded: ${path}`;
@@ -93268,6 +93315,9 @@ ${content}`;
   toolListFolder(args) {
     var _a2;
     const path = String((_a2 = args.path) != null ? _a2 : "").trim();
+    if (path && !isPathAllowed(path, this.settings)) {
+      return `Error: Access denied. Path is not within allowed knowledge scope: ${path}`;
+    }
     const notes = this.indexer.listFolder(path);
     if (notes.length === 0)
       return `No notes found in folder: "${path || "vault root"}"`;
@@ -93286,6 +93336,9 @@ ${lines.join("\n")}`;
     const path = validateVaultPath(args.path);
     if (!path)
       return "Error: Invalid or missing path";
+    if (!isPathAllowed(path, this.settings)) {
+      return `Error: Access denied. Path is not within allowed knowledge scope: ${path}`;
+    }
     const content = String((_a2 = args.content) != null ? _a2 : "");
     if (!content.trim())
       return "Error: Content to append is empty";
@@ -93307,6 +93360,9 @@ ${lines.join("\n")}`;
     const path = validateVaultPath(args.path);
     if (!path)
       return "Error: Invalid or missing path";
+    if (!isPathAllowed(path, this.settings)) {
+      return `Error: Access denied. Path is not within allowed knowledge scope: ${path}`;
+    }
     const mode = String((_a2 = args.mode) != null ? _a2 : "");
     const file = this.app.vault.getAbstractFileByPath(path);
     if (!(file instanceof import_obsidian5.TFile))
@@ -93385,6 +93441,9 @@ ${oldText}
     const path = validateVaultPath(args.path);
     if (!path)
       return "Error: Invalid or missing path";
+    if (!isPathAllowed(path, this.settings)) {
+      return `Error: Access denied. Path is not within allowed knowledge scope: ${path}`;
+    }
     const content = String((_a2 = args.content) != null ? _a2 : "");
     const overwrite = Boolean((_b = args.overwrite) != null ? _b : false);
     const existing = this.app.vault.getAbstractFileByPath(path);
@@ -93422,7 +93481,7 @@ ${oldText}
     const missing = [];
     for (const p of rawPaths) {
       const validated = validateVaultPath(p);
-      if (!validated) {
+      if (!validated || !isPathAllowed(validated, this.settings)) {
         missing.push(p);
         continue;
       }
@@ -93449,10 +93508,10 @@ ${oldText}
     }
     const source = validateVaultPath(args.source);
     const destination = validateVaultPath(args.destination);
-    if (!source)
-      return "Error: Invalid or missing source path";
-    if (!destination)
-      return "Error: Invalid or missing destination path";
+    if (!source || !isPathAllowed(source, this.settings))
+      return `Error: Access denied or invalid source path: ${source}`;
+    if (!destination || !isPathAllowed(destination, this.settings))
+      return `Error: Access denied or invalid destination path: ${destination}`;
     const file = this.app.vault.getAbstractFileByPath(source);
     if (!file)
       return `Error: File not found: ${source}`;
@@ -93483,8 +93542,8 @@ ${oldText}
     }
     const path = validateVaultPath(args.path);
     const newName = String((_a2 = args.new_name) != null ? _a2 : "").trim();
-    if (!path)
-      return "Error: Invalid or missing path";
+    if (!path || !isPathAllowed(path, this.settings))
+      return `Error: Access denied or invalid path: ${path}`;
     if (!newName)
       return "Error: Invalid or missing new_name";
     const file = this.app.vault.getAbstractFileByPath(path);
@@ -93492,6 +93551,8 @@ ${oldText}
       return `Error: File not found: ${path}`;
     const parentFolder = path.includes("/") ? path.substring(0, path.lastIndexOf("/") + 1) : "";
     const newPath = parentFolder + newName;
+    if (!isPathAllowed(newPath, this.settings))
+      return `Error: Access denied. Renamed path is not within allowed knowledge scope: ${newPath}`;
     if (file instanceof import_obsidian5.TFile) {
       const content = await this.app.vault.read(file);
       this.pushUndo(path, content, `rename ${path} \u2192 ${newPath}`);
@@ -93509,10 +93570,10 @@ ${oldText}
     }
     const source = validateVaultPath(args.source);
     const destination = validateVaultPath(args.destination);
-    if (!source)
-      return "Error: Invalid or missing source path";
-    if (!destination)
-      return "Error: Invalid or missing destination path";
+    if (!source || !isPathAllowed(source, this.settings))
+      return `Error: Access denied or invalid source path: ${source}`;
+    if (!destination || !isPathAllowed(destination, this.settings))
+      return `Error: Access denied or invalid destination path: ${destination}`;
     const file = this.app.vault.getAbstractFileByPath(source);
     if (!(file instanceof import_obsidian5.TFile))
       return `Error: Note not found: ${source}`;
@@ -93533,8 +93594,8 @@ ${oldText}
       return 'Error: Deleting notes requires "full_edit" permission in plugin settings.';
     }
     const path = validateVaultPath(args.path);
-    if (!path)
-      return "Error: Invalid or missing path";
+    if (!path || !isPathAllowed(path, this.settings))
+      return `Error: Access denied or invalid path: ${path}`;
     if (!args.confirm)
       return "Error: confirm must be set to true to delete a note.";
     const file = this.app.vault.getAbstractFileByPath(path);
@@ -93562,8 +93623,8 @@ ${oldText}
       return "Error: Edit permission is set to read-only. Change it in plugin settings.";
     }
     const path = validateVaultPath(args.path);
-    if (!path)
-      return "Error: Invalid or missing path";
+    if (!path || !isPathAllowed(path, this.settings))
+      return `Error: Access denied or invalid path: ${path}`;
     const existing = this.app.vault.getAbstractFileByPath(path);
     if (existing instanceof import_obsidian5.TFolder)
       return `Error: Folder already exists: ${path}`;
@@ -94765,24 +94826,104 @@ var EngramSettingTab = class extends import_obsidian8.PluginSettingTab {
     );
     new import_obsidian8.Setting(containerEl).setName("\u{1F512} Vault Access").setHeading();
     const scopeSetting = new import_obsidian8.Setting(containerEl).setName("Knowledge scope").setDesc("Which folders Engram is allowed to read");
-    const scopeFolderSetting = new import_obsidian8.Setting(containerEl).setName("Folder list").setDesc("One folder path per line (relative to vault root)");
+    const folderSelectorContainer = containerEl.createDiv({ cls: "engram-folder-list-container" });
     const applyScopeVisibility = () => {
       const isAll = this.plugin.settings.scopeMode === "all";
-      scopeFolderSetting.settingEl.style.display = isAll ? "none" : "";
+      folderSelectorContainer.style.display = isAll ? "none" : "flex";
     };
     scopeSetting.addDropdown(
-      (drop) => drop.addOption("all", "All folders").addOption("allow", "Allow these folders only").addOption("block", "Block these folders").setValue(this.plugin.settings.scopeMode).onChange(async (value) => {
+      (drop) => drop.addOption("all", "All folders").addOption("allowlist", "Allow these folders only").addOption("denylist", "Block these folders").setValue(this.plugin.settings.scopeMode).onChange(async (value) => {
         this.plugin.settings.scopeMode = value;
         applyScopeVisibility();
         await this.save();
+        renderFolderSelector();
       })
     );
-    scopeFolderSetting.addTextArea(
-      (ta) => ta.setPlaceholder("Projects/\nWork/\nResearch/").setValue(this.plugin.settings.scopeFolders.join("\n")).onChange(async (value) => {
-        this.plugin.settings.scopeFolders = value.split("\n").map((l) => l.trim()).filter(Boolean);
-        await this.save();
-      })
-    );
+    const renderFolderSelector = () => {
+      folderSelectorContainer.empty();
+      folderSelectorContainer.createEl("div", {
+        text: this.plugin.settings.scopeMode === "allowlist" ? "Select folders to ALLOW access to (and their subfolders):" : "Select folders to BLOCK access to (and their subfolders):",
+        cls: "setting-item-description"
+      });
+      const searchContainer = folderSelectorContainer.createDiv({ cls: "engram-folder-search-container" });
+      const searchInput = searchContainer.createEl("input", {
+        type: "text",
+        placeholder: "Search folders...",
+        cls: "engram-folder-search"
+      });
+      const scrollBox = folderSelectorContainer.createDiv({ cls: "engram-folder-scrollbox" });
+      const folders = this.app.vault.getAllLoadedFiles().filter((f) => f instanceof import_obsidian8.TFolder).filter((f) => f.path !== "/" && f.path !== "");
+      folders.sort((a, b) => a.path.localeCompare(b.path));
+      const renderList = (filterText = "") => {
+        scrollBox.empty();
+        const query = filterText.toLowerCase().trim();
+        const filteredFolders = folders.filter((f) => f.path.toLowerCase().includes(query));
+        if (filteredFolders.length === 0) {
+          scrollBox.createDiv({ text: "No folders found", cls: "engram-no-folders-msg" });
+          return;
+        }
+        for (const folder of filteredFolders) {
+          const path = folder.path;
+          const segments = path.split("/");
+          const name = segments[segments.length - 1];
+          const depth = segments.length - 1;
+          const isExplicit = this.plugin.settings.scopeFolders.includes(path);
+          const isInherited = this.plugin.settings.scopeFolders.some(
+            (sf) => path.startsWith(sf + "/")
+          );
+          const itemEl = scrollBox.createDiv({
+            cls: "engram-folder-item" + (isInherited ? " is-inherited" : "")
+          });
+          for (let d = 0; d < depth; d++) {
+            itemEl.createDiv({ cls: "engram-folder-indent" });
+          }
+          const checkbox = itemEl.createEl("input", {
+            type: "checkbox",
+            cls: "engram-folder-checkbox"
+          });
+          checkbox.checked = isExplicit || isInherited;
+          if (isInherited) {
+            checkbox.disabled = true;
+          }
+          itemEl.createEl("span", { text: "\u{1F4C1} ", cls: "engram-folder-icon" });
+          const nameEl = itemEl.createEl("span", { text: name, cls: "engram-folder-name" });
+          nameEl.title = path;
+          if (isInherited) {
+            itemEl.createEl("span", { text: "Inherited", cls: "engram-folder-badge" });
+          }
+          if (!isInherited) {
+            const toggleFolder = async () => {
+              const checked = checkbox.checked;
+              if (checked) {
+                this.plugin.settings.scopeFolders = this.plugin.settings.scopeFolders.filter((sf) => sf !== path);
+              } else {
+                if (!this.plugin.settings.scopeFolders.includes(path)) {
+                  this.plugin.settings.scopeFolders.push(path);
+                }
+              }
+              await this.save();
+              renderFolderSelector();
+            };
+            checkbox.addEventListener("change", async (e) => {
+              e.stopPropagation();
+              await toggleFolder();
+            });
+            itemEl.style.cursor = "pointer";
+            itemEl.addEventListener("click", async (e) => {
+              if (e.target !== checkbox) {
+                checkbox.checked = !checkbox.checked;
+                await toggleFolder();
+              }
+            });
+          }
+        }
+      };
+      searchInput.addEventListener("input", () => {
+        renderList(searchInput.value);
+      });
+      renderList();
+    };
+    renderFolderSelector();
     applyScopeVisibility();
     new import_obsidian8.Setting(containerEl).setName("Edit permission level").setDesc("Controls what Engram is allowed to do in your vault").addDropdown(
       (drop) => drop.addOption("read_only", "\u{1F50D} Read only \u2014 search & read notes").addOption("read_append", "\u270F\uFE0F Read + Append \u2014 add content to notes").addOption("full_edit", "\u26A0\uFE0F Full edit \u2014 create, modify, overwrite").setValue(this.plugin.settings.editPermission).onChange(async (value) => {
@@ -95063,6 +95204,11 @@ var EngramPlugin = class extends import_obsidian9.Plugin {
     }
     if (!this.settings.activePersonaId) {
       this.settings.activePersonaId = "default";
+    }
+    if (this.settings.scopeMode === "allow") {
+      this.settings.scopeMode = "allowlist";
+    } else if (this.settings.scopeMode === "block") {
+      this.settings.scopeMode = "denylist";
     }
   }
   async saveSettings() {

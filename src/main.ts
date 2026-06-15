@@ -89,6 +89,13 @@ export default class EngramPlugin extends Plugin {
     if (!(this.settings as any).activePersonaId) {
       this.settings.activePersonaId = 'default';
     }
+
+    // Migrate old scopeMode values
+    if ((this.settings.scopeMode as string) === 'allow') {
+      this.settings.scopeMode = 'allowlist';
+    } else if ((this.settings.scopeMode as string) === 'block') {
+      this.settings.scopeMode = 'denylist';
+    }
   }
 
   async saveSettings(): Promise<void> {

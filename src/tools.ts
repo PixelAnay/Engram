@@ -1,7 +1,7 @@
 import { App, TFile, TFolder, Notice } from 'obsidian';
 import type { VaultIndexer } from './indexer';
 import type { EngramSettings } from './types';
-import { validateVaultPath } from './utils/pathUtils';
+import { validateVaultPath, isPathAllowed } from './utils/pathUtils';
 import { showConfirmDialog } from './ui/ConfirmDialog';
 
 // ─── Tool Definitions (OpenAI schema) ────────────────────────────────────────
@@ -406,6 +406,9 @@ export class ToolExecutor {
   private async toolReadNote(args: Record<string, unknown>): Promise<string> {
     const path = validateVaultPath(args.path);
     if (!path) return 'Error: Invalid or missing path';
+    if (!isPathAllowed(path, this.settings)) {
+      return `Error: Access denied. Path is not within allowed knowledge scope: ${path}`;
+    }
 
     const content = await this.indexer.readNote(path);
     if (content === null) return `Error: Note not found or excluded: ${path}`;
@@ -415,6 +418,9 @@ export class ToolExecutor {
 
   private toolListFolder(args: Record<string, unknown>): string {
     const path = String(args.path ?? '').trim();
+    if (path && !isPathAllowed(path, this.settings)) {
+      return `Error: Access denied. Path is not within allowed knowledge scope: ${path}`;
+    }
     const notes = this.indexer.listFolder(path);
 
     if (notes.length === 0) return `No notes found in folder: "${path || 'vault root'}"`;
@@ -433,6 +439,9 @@ export class ToolExecutor {
 
     const path = validateVaultPath(args.path);
     if (!path) return 'Error: Invalid or missing path';
+    if (!isPathAllowed(path, this.settings)) {
+      return `Error: Access denied. Path is not within allowed knowledge scope: ${path}`;
+    }
     const content = String(args.content ?? '');
     if (!content.trim()) return 'Error: Content to append is empty';
 
@@ -456,6 +465,9 @@ export class ToolExecutor {
 
     const path = validateVaultPath(args.path);
     if (!path) return 'Error: Invalid or missing path';
+    if (!isPathAllowed(path, this.settings)) {
+      return `Error: Access denied. Path is not within allowed knowledge scope: ${path}`;
+    }
     const mode = String(args.mode ?? '');
 
     const file = this.app.vault.getAbstractFileByPath(path);
@@ -545,6 +557,9 @@ export class ToolExecutor {
 
     const path = validateVaultPath(args.path);
     if (!path) return 'Error: Invalid or missing path';
+    if (!isPathAllowed(path, this.settings)) {
+      return `Error: Access denied. Path is not within allowed knowledge scope: ${path}`;
+    }
     const content = String(args.content ?? '');
     const overwrite = Boolean(args.overwrite ?? false);
 
@@ -590,7 +605,7 @@ export class ToolExecutor {
 
     for (const p of rawPaths) {
       const validated = validateVaultPath(p);
-      if (!validated) { missing.push(p); continue; }
+      if (!validated || !isPathAllowed(validated, this.settings)) { missing.push(p); continue; }
       const file = this.app.vault.getAbstractFileByPath(validated);
       if (!(file instanceof TFile)) { missing.push(p); continue; }
       opened.push(validated);
@@ -617,8 +632,8 @@ export class ToolExecutor {
     }
     const source = validateVaultPath(args.source);
     const destination = validateVaultPath(args.destination);
-    if (!source) return 'Error: Invalid or missing source path';
-    if (!destination) return 'Error: Invalid or missing destination path';
+    if (!source || !isPathAllowed(source, this.settings)) return `Error: Access denied or invalid source path: ${source}`;
+    if (!destination || !isPathAllowed(destination, this.settings)) return `Error: Access denied or invalid destination path: ${destination}`;
 
     const file = this.app.vault.getAbstractFileByPath(source);
     if (!file) return `Error: File not found: ${source}`;
@@ -658,7 +673,7 @@ export class ToolExecutor {
     }
     const path = validateVaultPath(args.path);
     const newName = String(args.new_name ?? '').trim();
-    if (!path) return 'Error: Invalid or missing path';
+    if (!path || !isPathAllowed(path, this.settings)) return `Error: Access denied or invalid path: ${path}`;
     if (!newName) return 'Error: Invalid or missing new_name';
 
     const file = this.app.vault.getAbstractFileByPath(path);
@@ -669,6 +684,7 @@ export class ToolExecutor {
       ? path.substring(0, path.lastIndexOf('/') + 1)
       : '';
     const newPath = parentFolder + newName;
+    if (!isPathAllowed(newPath, this.settings)) return `Error: Access denied. Renamed path is not within allowed knowledge scope: ${newPath}`;
 
     // Save undo snapshot
     if (file instanceof TFile) {
@@ -691,8 +707,8 @@ export class ToolExecutor {
     }
     const source = validateVaultPath(args.source);
     const destination = validateVaultPath(args.destination);
-    if (!source) return 'Error: Invalid or missing source path';
-    if (!destination) return 'Error: Invalid or missing destination path';
+    if (!source || !isPathAllowed(source, this.settings)) return `Error: Access denied or invalid source path: ${source}`;
+    if (!destination || !isPathAllowed(destination, this.settings)) return `Error: Access denied or invalid destination path: ${destination}`;
 
     const file = this.app.vault.getAbstractFileByPath(source);
     if (!(file instanceof TFile)) return `Error: Note not found: ${source}`;
@@ -720,7 +736,7 @@ export class ToolExecutor {
       return 'Error: Deleting notes requires "full_edit" permission in plugin settings.';
     }
     const path = validateVaultPath(args.path);
-    if (!path) return 'Error: Invalid or missing path';
+    if (!path || !isPathAllowed(path, this.settings)) return `Error: Access denied or invalid path: ${path}`;
     if (!args.confirm) return 'Error: confirm must be set to true to delete a note.';
 
     const file = this.app.vault.getAbstractFileByPath(path);
@@ -753,7 +769,7 @@ export class ToolExecutor {
       return 'Error: Edit permission is set to read-only. Change it in plugin settings.';
     }
     const path = validateVaultPath(args.path);
-    if (!path) return 'Error: Invalid or missing path';
+    if (!path || !isPathAllowed(path, this.settings)) return `Error: Access denied or invalid path: ${path}`;
 
     const existing = this.app.vault.getAbstractFileByPath(path);
     if (existing instanceof TFolder) return `Error: Folder already exists: ${path}`;

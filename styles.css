@@ -1357,6 +1357,110 @@
   padding-bottom: 4px;
 }
 
+/* ── Settings Folder List ─────────────────────────────────────────────────── */
+.engram-folder-list-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+  margin-bottom: 16px;
+}
+
+.engram-folder-search-container {
+  width: 100%;
+}
+
+.engram-folder-search {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--engram-border);
+  border-radius: var(--engram-radius-sm);
+  background: var(--engram-bg);
+  color: var(--engram-text);
+  font-size: 13px;
+}
+
+.engram-folder-search:focus {
+  border-color: var(--engram-accent);
+  outline: none;
+}
+
+.engram-folder-scrollbox {
+  border: 1px solid var(--engram-border);
+  border-radius: var(--engram-radius-sm);
+  background: var(--engram-surface);
+  max-height: 250px;
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.engram-folder-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--engram-radius-sm);
+  transition: background var(--engram-transition);
+}
+
+.engram-folder-item:hover {
+  background: var(--background-modifier-hover);
+}
+
+.engram-folder-item.is-inherited {
+  opacity: 0.65;
+}
+
+.engram-folder-indent {
+  display: inline-block;
+  width: 16px;
+  height: 100%;
+  flex-shrink: 0;
+  border-left: 1px dashed var(--engram-border);
+  margin-left: 8px;
+}
+
+.engram-folder-checkbox {
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.engram-folder-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.engram-folder-name {
+  font-size: 13px;
+  color: var(--text-normal);
+  flex-grow: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.engram-folder-badge {
+  font-size: 9px;
+  color: var(--engram-accent);
+  background: var(--engram-accent-dim);
+  padding: 2px 6px;
+  border-radius: 10px;
+  white-space: nowrap;
+  font-weight: 600;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.engram-no-folders-msg {
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
+  padding: 16px;
+}
+
 /* ── Responsive narrow sidebar ────────────────────────────────────────────── */
 @media (max-width: 280px) {
   .engram-welcome-chips { display: none; }
