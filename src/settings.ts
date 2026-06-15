@@ -6,18 +6,18 @@ import { showPromptDialog, showConfirmDialog } from './ui/ConfirmDialog';
 // ── Provider Presets ────────────────────────────────────────────────────────
 
 export const PROVIDER_PRESETS = [
-  { id: 'local_llamacpp',  label: 'Local — llama.cpp',       type: 'openai_compat', baseUrl: 'http://localhost:8080',                                       isLocal: true  },
-  { id: 'local_ollama',    label: 'Local — Ollama',           type: 'openai_compat', baseUrl: 'http://localhost:11434/v1',                                   isLocal: true  },
-  { id: 'local_lmstudio',  label: 'Local — LM Studio',        type: 'openai_compat', baseUrl: 'http://localhost:1234/v1',                                    isLocal: true  },
-  { id: 'openai',          label: 'OpenAI',                   type: 'openai_compat', baseUrl: 'https://api.openai.com/v1',                                   isLocal: false },
-  { id: 'anthropic',       label: 'Anthropic (Claude)',        type: 'anthropic',     baseUrl: 'https://api.anthropic.com',                                   isLocal: false },
-  { id: 'deepseek',        label: 'DeepSeek',                 type: 'openai_compat', baseUrl: 'https://api.deepseek.com',                                    isLocal: false },
-  { id: 'gemini',          label: 'Google Gemini',            type: 'openai_compat', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/',    isLocal: false },
-  { id: 'groq',            label: 'Groq',                     type: 'openai_compat', baseUrl: 'https://api.groq.com/openai/v1',                              isLocal: false },
-  { id: 'mistral',         label: 'Mistral',                  type: 'openai_compat', baseUrl: 'https://api.mistral.ai/v1',                                   isLocal: false },
-  { id: 'xai',             label: 'xAI (Grok)',               type: 'openai_compat', baseUrl: 'https://api.x.ai/v1',                                         isLocal: false },
-  { id: 'openrouter',      label: 'OpenRouter ⭐',            type: 'openai_compat', baseUrl: 'https://openrouter.ai/api/v1',                                isLocal: false },
-  { id: 'custom',          label: 'Custom...',                type: 'openai_compat', baseUrl: '',                                                             isLocal: false },
+  { id: 'local_llamacpp',  label: 'Local — llama.cpp',       type: 'openai_compat', baseUrl: 'http://localhost:8080',                                       isLocal: true,  defaultModel: '' },
+  { id: 'local_ollama',    label: 'Local — Ollama',           type: 'openai_compat', baseUrl: 'http://localhost:11434/v1',                                   isLocal: true,  defaultModel: 'llama3' },
+  { id: 'local_lmstudio',  label: 'Local — LM Studio',        type: 'openai_compat', baseUrl: 'http://localhost:1234/v1',                                    isLocal: true,  defaultModel: '' },
+  { id: 'openai',          label: 'OpenAI',                   type: 'openai_compat', baseUrl: 'https://api.openai.com/v1',                                   isLocal: false, defaultModel: 'gpt-4o-mini' },
+  { id: 'anthropic',       label: 'Anthropic (Claude)',        type: 'anthropic',     baseUrl: 'https://api.anthropic.com',                                   isLocal: false, defaultModel: 'claude-3-5-sonnet-20241022' },
+  { id: 'deepseek',        label: 'DeepSeek',                 type: 'openai_compat', baseUrl: 'https://api.deepseek.com',                                    isLocal: false, defaultModel: 'deepseek-chat' },
+  { id: 'gemini',          label: 'Google Gemini',            type: 'openai_compat', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/',    isLocal: false, defaultModel: 'gemini-1.5-flash' },
+  { id: 'groq',            label: 'Groq',                     type: 'openai_compat', baseUrl: 'https://api.groq.com/openai/v1',                              isLocal: false, defaultModel: 'llama-3.1-70b-versatile' },
+  { id: 'mistral',         label: 'Mistral',                  type: 'openai_compat', baseUrl: 'https://api.mistral.ai/v1',                                   isLocal: false, defaultModel: 'mistral-large-latest' },
+  { id: 'xai',             label: 'xAI (Grok)',               type: 'openai_compat', baseUrl: 'https://api.x.ai/v1',                                         isLocal: false, defaultModel: 'grok-beta' },
+  { id: 'openrouter',      label: 'OpenRouter ⭐',            type: 'openai_compat', baseUrl: 'https://openrouter.ai/api/v1',                                isLocal: false, defaultModel: 'google/gemini-flash-1.5' },
+  { id: 'custom',          label: 'Custom...',                type: 'openai_compat', baseUrl: '',                                                             isLocal: false, defaultModel: '' },
 ];
 
 // ── Default Settings ────────────────────────────────────────────────────────
@@ -91,6 +91,7 @@ export const DEFAULT_SETTINGS: EngramSettings = {
   // Edit safety
   showDiffPreview: true,
   diffPreviewThreshold: 200,
+  showAdvancedSettings: false,
 };
 
 // ── Settings Tab ────────────────────────────────────────────────────────────
@@ -116,6 +117,19 @@ export class EngramSettingTab extends PluginSettingTab {
 
     new Setting(containerEl).setName('🧠 Engram').setHeading();
 
+    const advancedSetting = new Setting(containerEl)
+      .setName('Advanced settings')
+      .setDesc('Reveal configuration for context size, token limits, semantic search, and diff previews')
+      .addToggle(toggle =>
+        toggle
+          .setValue(this.plugin.settings.showAdvancedSettings ?? false)
+          .onChange(async value => {
+            this.plugin.settings.showAdvancedSettings = value;
+            await this.save();
+            applyVisibility();
+          })
+      );
+
     // ── 1. AI Provider ──────────────────────────────────────────────────────
     new Setting(containerEl).setName('🤖 AI Provider').setHeading();
 
@@ -139,16 +153,6 @@ export class EngramSettingTab extends PluginSettingTab {
       .setName('API Key')
       .setDesc('⚠️ Stored in data.json — do not sync to public git repos');
 
-    const applyProviderVisibility = () => {
-      const preset = PROVIDER_PRESETS.find(p => p.id === this.plugin.settings.activeProviderId);
-      const isCustom = this.plugin.settings.activeProviderId === 'custom';
-      const isLocal  = preset?.isLocal ?? false;
-
-      customUrlSetting.settingEl.style.display = isCustom  ? '' : 'none';
-      customTypeSetting.settingEl.style.display = isCustom  ? '' : 'none';
-      apiKeySetting.settingEl.style.display    = !isLocal  ? '' : 'none';
-    };
-
     let customTypeDropdown: any = null;
     customTypeSetting.addDropdown(drop => {
       customTypeDropdown = drop;
@@ -162,6 +166,8 @@ export class EngramSettingTab extends PluginSettingTab {
         });
     });
 
+    let modelInputEl: HTMLInputElement | null = null;
+
     providerSetting.addDropdown(drop => {
       for (const p of PROVIDER_PRESETS) drop.addOption(p.id, p.label);
       drop
@@ -172,10 +178,15 @@ export class EngramSettingTab extends PluginSettingTab {
           if (preset && value !== 'custom') {
             this.plugin.settings.providerType    = preset.type;
             this.plugin.settings.providerBaseUrl = preset.baseUrl;
+            // Prefill model name
+            if (preset.defaultModel !== undefined) {
+              this.plugin.settings.model = preset.defaultModel;
+              if (modelInputEl) modelInputEl.value = preset.defaultModel;
+            }
           } else if (value === 'custom' && customTypeDropdown) {
             customTypeDropdown.setValue(this.plugin.settings.providerType);
           }
-          applyProviderVisibility();
+          applyVisibility();
           await this.save();
         });
     });
@@ -201,25 +212,23 @@ export class EngramSettingTab extends PluginSettingTab {
       text.inputEl.type = 'password';
     });
 
-    // Apply initial visibility
-    applyProviderVisibility();
-
     // Model name
-    new Setting(containerEl)
+    const modelSetting = new Setting(containerEl)
       .setName('Model')
       .setDesc('Model identifier to request (leave blank to auto-detect from server)')
-      .addText(text =>
+      .addText(text => {
+        modelInputEl = text.inputEl;
         text
           .setPlaceholder('auto-detect')
           .setValue(this.plugin.settings.model)
           .onChange(async value => {
             this.plugin.settings.model = value.trim();
             await this.save();
-          })
-      );
+          });
+      });
 
     // Temperature
-    new Setting(containerEl)
+    const tempSetting = new Setting(containerEl)
       .setName('Temperature')
       .setDesc('Sampling temperature — 0 = deterministic, 1 = creative, 2 = chaotic')
       .addSlider(slider =>
@@ -370,9 +379,9 @@ export class EngramSettingTab extends PluginSettingTab {
     );
 
     // ── 3. Memory ───────────────────────────────────────────────────────────
-    new Setting(containerEl).setName('💾 Memory').setHeading();
+    const memoryHeaderSetting = new Setting(containerEl).setName('💾 Memory').setHeading();
 
-    new Setting(containerEl)
+    const memoryEnabledSetting = new Setting(containerEl)
       .setName('Enable memory system')
       .setDesc('Engram maintains a persistent memory file summarising important facts about you')
       .addToggle(toggle =>
@@ -384,7 +393,7 @@ export class EngramSettingTab extends PluginSettingTab {
           })
       );
 
-    new Setting(containerEl)
+    const memoryPathSetting = new Setting(containerEl)
       .setName('Memory file path')
       .setDesc('Vault-relative path to the memory markdown file')
       .addText(text =>
@@ -402,7 +411,7 @@ export class EngramSettingTab extends PluginSettingTab {
         })
       );
 
-    new Setting(containerEl)
+    const memoryAutoExtractSetting = new Setting(containerEl)
       .setName('Auto-extract memories')
       .setDesc('Automatically extract and save memorable facts at the end of each conversation')
       .addToggle(toggle =>
@@ -414,7 +423,7 @@ export class EngramSettingTab extends PluginSettingTab {
           })
       );
 
-    new Setting(containerEl)
+    const memoryMaxTokensSetting = new Setting(containerEl)
       .setName('Max memory tokens')
       .setDesc('Maximum token budget reserved for injecting memory context')
       .addSlider(slider =>
@@ -428,7 +437,7 @@ export class EngramSettingTab extends PluginSettingTab {
           })
       );
 
-    new Setting(containerEl)
+    const memoryClearSetting = new Setting(containerEl)
       .setName('Clear all memory')
       .setDesc('Permanently erase all stored memories — this cannot be undone')
       .addButton(btn =>
@@ -629,7 +638,7 @@ export class EngramSettingTab extends PluginSettingTab {
       );
 
     // Exclude patterns
-    new Setting(containerEl)
+    const excludePatternsSetting = new Setting(containerEl)
       .setName('Exclude patterns')
       .setDesc('Glob patterns for notes/folders hidden from Engram (comma-separated)')
       .addTextArea(text =>
@@ -646,7 +655,7 @@ export class EngramSettingTab extends PluginSettingTab {
       );
 
     // Show diff preview toggle
-    new Setting(containerEl)
+    const diffPreviewSetting = new Setting(containerEl)
       .setName('Show diff preview before edits')
       .setDesc('Display a change preview in chat before any vault modification is applied')
       .addToggle(toggle =>
@@ -654,12 +663,13 @@ export class EngramSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.showDiffPreview)
           .onChange(async value => {
             this.plugin.settings.showDiffPreview = value;
+            applyVisibility();
             await this.save();
           })
       );
 
     // Diff threshold slider
-    new Setting(containerEl)
+    const diffThresholdSetting = new Setting(containerEl)
       .setName('Diff preview threshold (chars)')
       .setDesc('Only show diff preview when the edit changes more than this many characters')
       .addSlider(slider =>
@@ -674,9 +684,9 @@ export class EngramSettingTab extends PluginSettingTab {
       );
 
     // ── 5. Context & Performance ────────────────────────────────────────────
-    new Setting(containerEl).setName('💬 Context & Performance').setHeading();
+    const contextHeaderSetting = new Setting(containerEl).setName('💬 Context & Performance').setHeading();
 
-    new Setting(containerEl)
+    const contextWindowSetting = new Setting(containerEl)
       .setName('Context window (tokens)')
       .setDesc("Max tokens allocated to context. Match your model's native context size.")
       .addSlider(slider =>
@@ -690,7 +700,7 @@ export class EngramSettingTab extends PluginSettingTab {
           })
       );
 
-    new Setting(containerEl)
+    const maxRecentMessagesSetting = new Setting(containerEl)
       .setName('Max recent messages in context')
       .setDesc('How many of the most recent chat turns to include in each request')
       .addSlider(slider =>
@@ -704,7 +714,7 @@ export class EngramSettingTab extends PluginSettingTab {
           })
       );
 
-    new Setting(containerEl)
+    const autoInjectNotesSetting = new Setting(containerEl)
       .setName('Auto-inject notes count')
       .setDesc('Top-ranked notes auto-injected into each message (0 recommended for cloud APIs)')
       .addText(text =>
@@ -719,7 +729,7 @@ export class EngramSettingTab extends PluginSettingTab {
           })
       );
 
-    new Setting(containerEl)
+    const toolCallingSetting = new Setting(containerEl)
       .setName('Tool calling mode')
       .setDesc(
         'Native: OpenAI-style function calling (requires a compatible model). ' +
@@ -737,7 +747,7 @@ export class EngramSettingTab extends PluginSettingTab {
           })
       );
 
-    new Setting(containerEl)
+    const toolCallDepthSetting = new Setting(containerEl)
       .setName('Max tool call depth')
       .setDesc('Maximum consecutive tool calls per turn (prevents infinite loops)')
       .addSlider(slider =>
@@ -752,9 +762,9 @@ export class EngramSettingTab extends PluginSettingTab {
       );
 
     // ── 6. Semantic Search ──────────────────────────────────────────────────
-    new Setting(containerEl).setName('🔍 Semantic Search (optional)').setHeading();
+    const semanticHeaderSetting = new Setting(containerEl).setName('🔍 Semantic Search (optional)').setHeading();
 
-    containerEl.createEl('p', {
+    const semanticDescEl = containerEl.createEl('p', {
       text:
         'When configured, notes are embedded using Ollama and vector similarity search replaces ' +
         'keyword-only ranking — scaling gracefully to 500+ note vaults. Requires Ollama running ' +
@@ -762,7 +772,7 @@ export class EngramSettingTab extends PluginSettingTab {
       cls: 'engram-section-desc',
     });
 
-    new Setting(containerEl)
+    const ollamaEmbedUrlSetting = new Setting(containerEl)
       .setName('Ollama embeddings URL')
       .setDesc('Base URL of your Ollama instance')
       .addText(text =>
@@ -779,7 +789,7 @@ export class EngramSettingTab extends PluginSettingTab {
           })
       );
 
-    new Setting(containerEl)
+    const embeddingModelSetting = new Setting(containerEl)
       .setName('Embedding model')
       .setDesc('Ollama model name for embeddings (leave blank to disable). e.g. nomic-embed-text')
       .addText(text =>
@@ -794,5 +804,54 @@ export class EngramSettingTab extends PluginSettingTab {
             }
           })
       );
+
+    // ── Unified Visibility Handler ───────────────────────────────────────────
+    const applyVisibility = () => {
+      const advanced = this.plugin.settings.showAdvancedSettings ?? false;
+      const activeProviderId = this.plugin.settings.activeProviderId;
+      const preset = PROVIDER_PRESETS.find(p => p.id === activeProviderId);
+      const isCustom = activeProviderId === 'custom';
+      const isLocal = preset?.isLocal ?? false;
+
+      // 1. AI Provider
+      customUrlSetting.settingEl.style.display = isCustom ? '' : 'none';
+      customTypeSetting.settingEl.style.display = isCustom ? '' : 'none';
+      apiKeySetting.settingEl.style.display = (!isLocal || isCustom) ? '' : 'none';
+      
+      // Model input is shown if:
+      // - advanced is true
+      // - OR it's not local_llamacpp and not local_lmstudio (Ollama and Cloud models need model config)
+      const needsModel = activeProviderId !== 'local_llamacpp' && activeProviderId !== 'local_lmstudio';
+      modelSetting.settingEl.style.display = (advanced || needsModel) ? '' : 'none';
+      
+      // Temperature is advanced
+      tempSetting.settingEl.style.display = advanced ? '' : 'none';
+
+      // 3. Memory
+      memoryAutoExtractSetting.settingEl.style.display = advanced ? '' : 'none';
+      memoryMaxTokensSetting.settingEl.style.display = advanced ? '' : 'none';
+      memoryClearSetting.settingEl.style.display = advanced ? '' : 'none';
+
+      // 4. Vault Access
+      excludePatternsSetting.settingEl.style.display = advanced ? '' : 'none';
+      diffPreviewSetting.settingEl.style.display = advanced ? '' : 'none';
+      diffThresholdSetting.settingEl.style.display = (advanced && this.plugin.settings.showDiffPreview) ? '' : 'none';
+
+      // 5. Context & Performance
+      contextHeaderSetting.settingEl.style.display = advanced ? '' : 'none';
+      contextWindowSetting.settingEl.style.display = advanced ? '' : 'none';
+      maxRecentMessagesSetting.settingEl.style.display = advanced ? '' : 'none';
+      autoInjectNotesSetting.settingEl.style.display = advanced ? '' : 'none';
+      toolCallingSetting.settingEl.style.display = advanced ? '' : 'none';
+      toolCallDepthSetting.settingEl.style.display = advanced ? '' : 'none';
+
+      // 6. Semantic Search
+      semanticHeaderSetting.settingEl.style.display = advanced ? '' : 'none';
+      semanticDescEl.style.display = advanced ? '' : 'none';
+      ollamaEmbedUrlSetting.settingEl.style.display = advanced ? '' : 'none';
+      embeddingModelSetting.settingEl.style.display = advanced ? '' : 'none';
+    };
+
+    applyVisibility();
   }
 }

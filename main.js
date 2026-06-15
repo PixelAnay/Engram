@@ -94582,18 +94582,18 @@ var AnthropicProvider = class {
 // src/settings.ts
 var import_obsidian9 = require("obsidian");
 var PROVIDER_PRESETS = [
-  { id: "local_llamacpp", label: "Local \u2014 llama.cpp", type: "openai_compat", baseUrl: "http://localhost:8080", isLocal: true },
-  { id: "local_ollama", label: "Local \u2014 Ollama", type: "openai_compat", baseUrl: "http://localhost:11434/v1", isLocal: true },
-  { id: "local_lmstudio", label: "Local \u2014 LM Studio", type: "openai_compat", baseUrl: "http://localhost:1234/v1", isLocal: true },
-  { id: "openai", label: "OpenAI", type: "openai_compat", baseUrl: "https://api.openai.com/v1", isLocal: false },
-  { id: "anthropic", label: "Anthropic (Claude)", type: "anthropic", baseUrl: "https://api.anthropic.com", isLocal: false },
-  { id: "deepseek", label: "DeepSeek", type: "openai_compat", baseUrl: "https://api.deepseek.com", isLocal: false },
-  { id: "gemini", label: "Google Gemini", type: "openai_compat", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai/", isLocal: false },
-  { id: "groq", label: "Groq", type: "openai_compat", baseUrl: "https://api.groq.com/openai/v1", isLocal: false },
-  { id: "mistral", label: "Mistral", type: "openai_compat", baseUrl: "https://api.mistral.ai/v1", isLocal: false },
-  { id: "xai", label: "xAI (Grok)", type: "openai_compat", baseUrl: "https://api.x.ai/v1", isLocal: false },
-  { id: "openrouter", label: "OpenRouter \u2B50", type: "openai_compat", baseUrl: "https://openrouter.ai/api/v1", isLocal: false },
-  { id: "custom", label: "Custom...", type: "openai_compat", baseUrl: "", isLocal: false }
+  { id: "local_llamacpp", label: "Local \u2014 llama.cpp", type: "openai_compat", baseUrl: "http://localhost:8080", isLocal: true, defaultModel: "" },
+  { id: "local_ollama", label: "Local \u2014 Ollama", type: "openai_compat", baseUrl: "http://localhost:11434/v1", isLocal: true, defaultModel: "llama3" },
+  { id: "local_lmstudio", label: "Local \u2014 LM Studio", type: "openai_compat", baseUrl: "http://localhost:1234/v1", isLocal: true, defaultModel: "" },
+  { id: "openai", label: "OpenAI", type: "openai_compat", baseUrl: "https://api.openai.com/v1", isLocal: false, defaultModel: "gpt-4o-mini" },
+  { id: "anthropic", label: "Anthropic (Claude)", type: "anthropic", baseUrl: "https://api.anthropic.com", isLocal: false, defaultModel: "claude-3-5-sonnet-20241022" },
+  { id: "deepseek", label: "DeepSeek", type: "openai_compat", baseUrl: "https://api.deepseek.com", isLocal: false, defaultModel: "deepseek-chat" },
+  { id: "gemini", label: "Google Gemini", type: "openai_compat", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai/", isLocal: false, defaultModel: "gemini-1.5-flash" },
+  { id: "groq", label: "Groq", type: "openai_compat", baseUrl: "https://api.groq.com/openai/v1", isLocal: false, defaultModel: "llama-3.1-70b-versatile" },
+  { id: "mistral", label: "Mistral", type: "openai_compat", baseUrl: "https://api.mistral.ai/v1", isLocal: false, defaultModel: "mistral-large-latest" },
+  { id: "xai", label: "xAI (Grok)", type: "openai_compat", baseUrl: "https://api.x.ai/v1", isLocal: false, defaultModel: "grok-beta" },
+  { id: "openrouter", label: "OpenRouter \u2B50", type: "openai_compat", baseUrl: "https://openrouter.ai/api/v1", isLocal: false, defaultModel: "google/gemini-flash-1.5" },
+  { id: "custom", label: "Custom...", type: "openai_compat", baseUrl: "", isLocal: false, defaultModel: "" }
 ];
 var DEFAULT_SETTINGS = {
   // Active provider
@@ -94649,7 +94649,8 @@ var DEFAULT_SETTINGS = {
   embeddingModel: "",
   // Edit safety
   showDiffPreview: true,
-  diffPreviewThreshold: 200
+  diffPreviewThreshold: 200,
+  showAdvancedSettings: false
 };
 var EngramSettingTab = class extends import_obsidian9.PluginSettingTab {
   constructor(app, plugin) {
@@ -94665,20 +94666,21 @@ var EngramSettingTab = class extends import_obsidian9.PluginSettingTab {
     containerEl.empty();
     containerEl.addClass("engram-settings");
     new import_obsidian9.Setting(containerEl).setName("\u{1F9E0} Engram").setHeading();
+    const advancedSetting = new import_obsidian9.Setting(containerEl).setName("Advanced settings").setDesc("Reveal configuration for context size, token limits, semantic search, and diff previews").addToggle(
+      (toggle) => {
+        var _a2;
+        return toggle.setValue((_a2 = this.plugin.settings.showAdvancedSettings) != null ? _a2 : false).onChange(async (value) => {
+          this.plugin.settings.showAdvancedSettings = value;
+          await this.save();
+          applyVisibility();
+        });
+      }
+    );
     new import_obsidian9.Setting(containerEl).setName("\u{1F916} AI Provider").setHeading();
     const providerSetting = new import_obsidian9.Setting(containerEl).setName("Provider").setDesc("Select your AI provider or endpoint");
     const customUrlSetting = new import_obsidian9.Setting(containerEl).setName("Base URL").setDesc("Full base URL for the custom provider endpoint (no trailing slash)");
     const customTypeSetting = new import_obsidian9.Setting(containerEl).setName("API Format").setDesc("The API format / protocol expected by the custom provider");
     const apiKeySetting = new import_obsidian9.Setting(containerEl).setName("API Key").setDesc("\u26A0\uFE0F Stored in data.json \u2014 do not sync to public git repos");
-    const applyProviderVisibility = () => {
-      var _a2;
-      const preset = PROVIDER_PRESETS.find((p) => p.id === this.plugin.settings.activeProviderId);
-      const isCustom = this.plugin.settings.activeProviderId === "custom";
-      const isLocal = (_a2 = preset == null ? void 0 : preset.isLocal) != null ? _a2 : false;
-      customUrlSetting.settingEl.style.display = isCustom ? "" : "none";
-      customTypeSetting.settingEl.style.display = isCustom ? "" : "none";
-      apiKeySetting.settingEl.style.display = !isLocal ? "" : "none";
-    };
     let customTypeDropdown = null;
     customTypeSetting.addDropdown((drop) => {
       customTypeDropdown = drop;
@@ -94689,6 +94691,7 @@ var EngramSettingTab = class extends import_obsidian9.PluginSettingTab {
         await this.save();
       });
     });
+    let modelInputEl = null;
     providerSetting.addDropdown((drop) => {
       for (const p of PROVIDER_PRESETS)
         drop.addOption(p.id, p.label);
@@ -94698,10 +94701,15 @@ var EngramSettingTab = class extends import_obsidian9.PluginSettingTab {
         if (preset && value !== "custom") {
           this.plugin.settings.providerType = preset.type;
           this.plugin.settings.providerBaseUrl = preset.baseUrl;
+          if (preset.defaultModel !== void 0) {
+            this.plugin.settings.model = preset.defaultModel;
+            if (modelInputEl)
+              modelInputEl.value = preset.defaultModel;
+          }
         } else if (value === "custom" && customTypeDropdown) {
           customTypeDropdown.setValue(this.plugin.settings.providerType);
         }
-        applyProviderVisibility();
+        applyVisibility();
         await this.save();
       });
     });
@@ -94718,14 +94726,14 @@ var EngramSettingTab = class extends import_obsidian9.PluginSettingTab {
       });
       text.inputEl.type = "password";
     });
-    applyProviderVisibility();
-    new import_obsidian9.Setting(containerEl).setName("Model").setDesc("Model identifier to request (leave blank to auto-detect from server)").addText(
-      (text) => text.setPlaceholder("auto-detect").setValue(this.plugin.settings.model).onChange(async (value) => {
+    const modelSetting = new import_obsidian9.Setting(containerEl).setName("Model").setDesc("Model identifier to request (leave blank to auto-detect from server)").addText((text) => {
+      modelInputEl = text.inputEl;
+      text.setPlaceholder("auto-detect").setValue(this.plugin.settings.model).onChange(async (value) => {
         this.plugin.settings.model = value.trim();
         await this.save();
-      })
-    );
-    new import_obsidian9.Setting(containerEl).setName("Temperature").setDesc("Sampling temperature \u2014 0 = deterministic, 1 = creative, 2 = chaotic").addSlider(
+      });
+    });
+    const tempSetting = new import_obsidian9.Setting(containerEl).setName("Temperature").setDesc("Sampling temperature \u2014 0 = deterministic, 1 = creative, 2 = chaotic").addSlider(
       (slider) => slider.setLimits(0, 2, 0.05).setValue(this.plugin.settings.temperature).setDynamicTooltip().onChange(async (value) => {
         this.plugin.settings.temperature = value;
         await this.save();
@@ -94841,14 +94849,14 @@ var EngramSettingTab = class extends import_obsidian9.PluginSettingTab {
         refreshPromptArea();
       })
     );
-    new import_obsidian9.Setting(containerEl).setName("\u{1F4BE} Memory").setHeading();
-    new import_obsidian9.Setting(containerEl).setName("Enable memory system").setDesc("Engram maintains a persistent memory file summarising important facts about you").addToggle(
+    const memoryHeaderSetting = new import_obsidian9.Setting(containerEl).setName("\u{1F4BE} Memory").setHeading();
+    const memoryEnabledSetting = new import_obsidian9.Setting(containerEl).setName("Enable memory system").setDesc("Engram maintains a persistent memory file summarising important facts about you").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.memoryEnabled).onChange(async (value) => {
         this.plugin.settings.memoryEnabled = value;
         await this.save();
       })
     );
-    new import_obsidian9.Setting(containerEl).setName("Memory file path").setDesc("Vault-relative path to the memory markdown file").addText(
+    const memoryPathSetting = new import_obsidian9.Setting(containerEl).setName("Memory file path").setDesc("Vault-relative path to the memory markdown file").addText(
       (text) => text.setPlaceholder("Intelligence/Memory.md").setValue(this.plugin.settings.memoryPath).onChange(async (value) => {
         this.plugin.settings.memoryPath = value.trim();
         await this.save();
@@ -94858,19 +94866,19 @@ var EngramSettingTab = class extends import_obsidian9.PluginSettingTab {
         this.plugin.openMemoryFile();
       })
     );
-    new import_obsidian9.Setting(containerEl).setName("Auto-extract memories").setDesc("Automatically extract and save memorable facts at the end of each conversation").addToggle(
+    const memoryAutoExtractSetting = new import_obsidian9.Setting(containerEl).setName("Auto-extract memories").setDesc("Automatically extract and save memorable facts at the end of each conversation").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.autoExtractMemory).onChange(async (value) => {
         this.plugin.settings.autoExtractMemory = value;
         await this.save();
       })
     );
-    new import_obsidian9.Setting(containerEl).setName("Max memory tokens").setDesc("Maximum token budget reserved for injecting memory context").addSlider(
+    const memoryMaxTokensSetting = new import_obsidian9.Setting(containerEl).setName("Max memory tokens").setDesc("Maximum token budget reserved for injecting memory context").addSlider(
       (slider) => slider.setLimits(500, 8e3, 100).setValue(this.plugin.settings.maxMemoryTokens).setDynamicTooltip().onChange(async (value) => {
         this.plugin.settings.maxMemoryTokens = value;
         await this.save();
       })
     );
-    new import_obsidian9.Setting(containerEl).setName("Clear all memory").setDesc("Permanently erase all stored memories \u2014 this cannot be undone").addButton(
+    const memoryClearSetting = new import_obsidian9.Setting(containerEl).setName("Clear all memory").setDesc("Permanently erase all stored memories \u2014 this cannot be undone").addButton(
       (btn) => btn.setButtonText("Clear all memory").setWarning().onClick(async () => {
         if (!confirm("Clear ALL memories? This cannot be undone."))
           return;
@@ -95000,38 +95008,39 @@ var EngramSettingTab = class extends import_obsidian9.PluginSettingTab {
         await this.save();
       })
     );
-    new import_obsidian9.Setting(containerEl).setName("Exclude patterns").setDesc("Glob patterns for notes/folders hidden from Engram (comma-separated)").addTextArea(
+    const excludePatternsSetting = new import_obsidian9.Setting(containerEl).setName("Exclude patterns").setDesc("Glob patterns for notes/folders hidden from Engram (comma-separated)").addTextArea(
       (text) => text.setPlaceholder("Private/**, Diary/**, *.secret.md").setValue(this.plugin.settings.excludePatterns.join(", ")).onChange(async (value) => {
         this.plugin.settings.excludePatterns = value.split(",").map((p) => p.trim()).filter(Boolean);
         await this.save();
       })
     );
-    new import_obsidian9.Setting(containerEl).setName("Show diff preview before edits").setDesc("Display a change preview in chat before any vault modification is applied").addToggle(
+    const diffPreviewSetting = new import_obsidian9.Setting(containerEl).setName("Show diff preview before edits").setDesc("Display a change preview in chat before any vault modification is applied").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.showDiffPreview).onChange(async (value) => {
         this.plugin.settings.showDiffPreview = value;
+        applyVisibility();
         await this.save();
       })
     );
-    new import_obsidian9.Setting(containerEl).setName("Diff preview threshold (chars)").setDesc("Only show diff preview when the edit changes more than this many characters").addSlider(
+    const diffThresholdSetting = new import_obsidian9.Setting(containerEl).setName("Diff preview threshold (chars)").setDesc("Only show diff preview when the edit changes more than this many characters").addSlider(
       (slider) => slider.setLimits(0, 2e3, 50).setValue(this.plugin.settings.diffPreviewThreshold).setDynamicTooltip().onChange(async (value) => {
         this.plugin.settings.diffPreviewThreshold = value;
         await this.save();
       })
     );
-    new import_obsidian9.Setting(containerEl).setName("\u{1F4AC} Context & Performance").setHeading();
-    new import_obsidian9.Setting(containerEl).setName("Context window (tokens)").setDesc("Max tokens allocated to context. Match your model's native context size.").addSlider(
+    const contextHeaderSetting = new import_obsidian9.Setting(containerEl).setName("\u{1F4AC} Context & Performance").setHeading();
+    const contextWindowSetting = new import_obsidian9.Setting(containerEl).setName("Context window (tokens)").setDesc("Max tokens allocated to context. Match your model's native context size.").addSlider(
       (slider) => slider.setLimits(1024, 131072, 1024).setValue(this.plugin.settings.contextWindowTokens).setDynamicTooltip().onChange(async (value) => {
         this.plugin.settings.contextWindowTokens = value;
         await this.save();
       })
     );
-    new import_obsidian9.Setting(containerEl).setName("Max recent messages in context").setDesc("How many of the most recent chat turns to include in each request").addSlider(
+    const maxRecentMessagesSetting = new import_obsidian9.Setting(containerEl).setName("Max recent messages in context").setDesc("How many of the most recent chat turns to include in each request").addSlider(
       (slider) => slider.setLimits(5, 50, 1).setValue(this.plugin.settings.maxRecentMessages).setDynamicTooltip().onChange(async (value) => {
         this.plugin.settings.maxRecentMessages = value;
         await this.save();
       })
     );
-    new import_obsidian9.Setting(containerEl).setName("Auto-inject notes count").setDesc("Top-ranked notes auto-injected into each message (0 recommended for cloud APIs)").addText(
+    const autoInjectNotesSetting = new import_obsidian9.Setting(containerEl).setName("Auto-inject notes count").setDesc("Top-ranked notes auto-injected into each message (0 recommended for cloud APIs)").addText(
       (text) => text.setPlaceholder("0").setValue(String(this.plugin.settings.autoInjectNotes)).onChange(async (value) => {
         const parsed = Number.parseInt(value.trim(), 10);
         if (Number.isNaN(parsed))
@@ -95040,7 +95049,7 @@ var EngramSettingTab = class extends import_obsidian9.PluginSettingTab {
         await this.save();
       })
     );
-    new import_obsidian9.Setting(containerEl).setName("Tool calling mode").setDesc(
+    const toolCallingSetting = new import_obsidian9.Setting(containerEl).setName("Tool calling mode").setDesc(
       "Native: OpenAI-style function calling (requires a compatible model). Prompt injection: works with any model. Disabled: no vault tools."
     ).addDropdown(
       (drop) => drop.addOption("native", "\u26A1 Native function calling").addOption("prompt_injection", "\u{1F4DD} Prompt injection (universal)").addOption("disabled", "\u{1F6AB} Disabled").setValue(this.plugin.settings.toolCallingMode).onChange(async (value) => {
@@ -95048,18 +95057,18 @@ var EngramSettingTab = class extends import_obsidian9.PluginSettingTab {
         await this.save();
       })
     );
-    new import_obsidian9.Setting(containerEl).setName("Max tool call depth").setDesc("Maximum consecutive tool calls per turn (prevents infinite loops)").addSlider(
+    const toolCallDepthSetting = new import_obsidian9.Setting(containerEl).setName("Max tool call depth").setDesc("Maximum consecutive tool calls per turn (prevents infinite loops)").addSlider(
       (slider) => slider.setLimits(1, 32, 1).setValue(this.plugin.settings.maxToolCallDepth).setDynamicTooltip().onChange(async (value) => {
         this.plugin.settings.maxToolCallDepth = value;
         await this.save();
       })
     );
-    new import_obsidian9.Setting(containerEl).setName("\u{1F50D} Semantic Search (optional)").setHeading();
-    containerEl.createEl("p", {
+    const semanticHeaderSetting = new import_obsidian9.Setting(containerEl).setName("\u{1F50D} Semantic Search (optional)").setHeading();
+    const semanticDescEl = containerEl.createEl("p", {
       text: "When configured, notes are embedded using Ollama and vector similarity search replaces keyword-only ranking \u2014 scaling gracefully to 500+ note vaults. Requires Ollama running locally with a text-embedding model (e.g. 'nomic-embed-text'). Leave the model blank to disable.",
       cls: "engram-section-desc"
     });
-    new import_obsidian9.Setting(containerEl).setName("Ollama embeddings URL").setDesc("Base URL of your Ollama instance").addText(
+    const ollamaEmbedUrlSetting = new import_obsidian9.Setting(containerEl).setName("Ollama embeddings URL").setDesc("Base URL of your Ollama instance").addText(
       (text) => text.setPlaceholder("http://localhost:11434").setValue(this.plugin.settings.ollamaEmbedEndpoint).onChange(async (value) => {
         var _a2;
         this.plugin.settings.ollamaEmbedEndpoint = value.replace(/\/$/, "") || "http://localhost:11434";
@@ -95069,7 +95078,7 @@ var EngramSettingTab = class extends import_obsidian9.PluginSettingTab {
         }
       })
     );
-    new import_obsidian9.Setting(containerEl).setName("Embedding model").setDesc("Ollama model name for embeddings (leave blank to disable). e.g. nomic-embed-text").addText(
+    const embeddingModelSetting = new import_obsidian9.Setting(containerEl).setName("Embedding model").setDesc("Ollama model name for embeddings (leave blank to disable). e.g. nomic-embed-text").addText(
       (text) => text.setPlaceholder("nomic-embed-text").setValue(this.plugin.settings.embeddingModel).onChange(async (value) => {
         var _a2;
         this.plugin.settings.embeddingModel = value.trim();
@@ -95079,6 +95088,37 @@ var EngramSettingTab = class extends import_obsidian9.PluginSettingTab {
         }
       })
     );
+    const applyVisibility = () => {
+      var _a2, _b;
+      const advanced = (_a2 = this.plugin.settings.showAdvancedSettings) != null ? _a2 : false;
+      const activeProviderId = this.plugin.settings.activeProviderId;
+      const preset = PROVIDER_PRESETS.find((p) => p.id === activeProviderId);
+      const isCustom = activeProviderId === "custom";
+      const isLocal = (_b = preset == null ? void 0 : preset.isLocal) != null ? _b : false;
+      customUrlSetting.settingEl.style.display = isCustom ? "" : "none";
+      customTypeSetting.settingEl.style.display = isCustom ? "" : "none";
+      apiKeySetting.settingEl.style.display = !isLocal || isCustom ? "" : "none";
+      const needsModel = activeProviderId !== "local_llamacpp" && activeProviderId !== "local_lmstudio";
+      modelSetting.settingEl.style.display = advanced || needsModel ? "" : "none";
+      tempSetting.settingEl.style.display = advanced ? "" : "none";
+      memoryAutoExtractSetting.settingEl.style.display = advanced ? "" : "none";
+      memoryMaxTokensSetting.settingEl.style.display = advanced ? "" : "none";
+      memoryClearSetting.settingEl.style.display = advanced ? "" : "none";
+      excludePatternsSetting.settingEl.style.display = advanced ? "" : "none";
+      diffPreviewSetting.settingEl.style.display = advanced ? "" : "none";
+      diffThresholdSetting.settingEl.style.display = advanced && this.plugin.settings.showDiffPreview ? "" : "none";
+      contextHeaderSetting.settingEl.style.display = advanced ? "" : "none";
+      contextWindowSetting.settingEl.style.display = advanced ? "" : "none";
+      maxRecentMessagesSetting.settingEl.style.display = advanced ? "" : "none";
+      autoInjectNotesSetting.settingEl.style.display = advanced ? "" : "none";
+      toolCallingSetting.settingEl.style.display = advanced ? "" : "none";
+      toolCallDepthSetting.settingEl.style.display = advanced ? "" : "none";
+      semanticHeaderSetting.settingEl.style.display = advanced ? "" : "none";
+      semanticDescEl.style.display = advanced ? "" : "none";
+      ollamaEmbedUrlSetting.settingEl.style.display = advanced ? "" : "none";
+      embeddingModelSetting.settingEl.style.display = advanced ? "" : "none";
+    };
+    applyVisibility();
   }
 };
 
