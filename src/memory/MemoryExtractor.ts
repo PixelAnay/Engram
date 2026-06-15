@@ -21,6 +21,7 @@ Rules:
 - Extract ONLY facts about the USER (not about the AI, not generic facts)
 - Only extract genuinely useful: biographical info, preferences, goals, ongoing projects, beliefs/opinions, or meaningful insights the user expressed
 - Be CONSERVATIVE — if in doubt, do not extract
+- DO NOT extract any facts that are already in the "Existing Memories" list (even if worded slightly differently). Avoid duplicates and redundant details.
 - Do NOT extract: greetings, casual remarks, one-off questions, temporary context
 - Each fact must be a single, standalone sentence (no pronouns that need context)
 - Return ONLY valid JSON, nothing else
@@ -92,11 +93,13 @@ export class MemoryExtractor {
     // Quick check — skip extraction for very short exchanges
     if (conversationText.length < 100) return [];
 
+    const existingMemory = await this.memoryManager.load();
+
     const messages: ChatMessage[] = [
       { role: 'system', content: EXTRACTION_SYSTEM_PROMPT },
       {
         role: 'user',
-        content: `Extract memorable facts from this conversation:\n\n${conversationText}\n\nReturn a JSON array of {section, fact} objects. Return [] if nothing is worth saving.`,
+        content: `Existing Memories:\n\`\`\`markdown\n${existingMemory || 'No existing memories.'}\n\`\`\`\n\nRecent Conversation:\n\n${conversationText}\n\nExtract new, memorable facts from this recent conversation. DO NOT extract any fact that is already present in the "Existing Memories" list (even if worded differently). If a fact is already known, redundant, or similar to an existing one, ignore it. Return a JSON array of new {section, fact} objects. Return [] if nothing new or worth saving is found.`,
       },
     ];
 
@@ -114,10 +117,10 @@ export class MemoryExtractor {
     );
     responseText = text;
 
-    return this.parse(responseText);
+    return this.parse(responseText, existingMemory);
   }
 
-  private parse(raw: string): ExtractedFact[] {
+  private parse(raw: string, existingMemory: string): ExtractedFact[] {
     // Strip markdown code fences if present
     const cleaned = raw
       .replace(/```json\s*/g, '')
@@ -132,6 +135,7 @@ export class MemoryExtractor {
       const parsed = JSON.parse(arrayMatch[0]) as unknown;
       if (!Array.isArray(parsed)) return [];
 
+      const existingLower = existingMemory.toLowerCase();
       const facts: ExtractedFact[] = [];
       for (const item of parsed) {
         if (
@@ -142,9 +146,14 @@ export class MemoryExtractor {
           VALID_SECTIONS.has((item as any).section) &&
           (item as any).fact.length > 5
         ) {
+          const cleanFact = (item as any).fact.trim();
+          // Skip if already exists in memory (fallback exact check)
+          if (existingLower.includes(cleanFact.toLowerCase())) {
+            continue;
+          }
           facts.push({
             section: (item as any).section as SectionKey,
-            fact: (item as any).fact.trim(),
+            fact: cleanFact,
           });
         }
       }
