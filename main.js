@@ -93809,14 +93809,6 @@ ${content}
 };
 
 // src/memory/MemoryManager.ts
-var MEMORY_SECTIONS = [
-  { key: "identity", emoji: "\u{1F464}", title: "Core Identity" },
-  { key: "goals", emoji: "\u{1F3AF}", title: "Goals & Aspirations" },
-  { key: "beliefs", emoji: "\u{1F9E0}", title: "Beliefs & Opinions" },
-  { key: "habits", emoji: "\u{1F4A1}", title: "Habits & Preferences" },
-  { key: "projects", emoji: "\u{1F6A7}", title: "Ongoing Projects" },
-  { key: "learnings", emoji: "\u{1F4DA}", title: "Learnings & Insights" }
-];
 var MemoryManager = class {
   constructor(app, memoryPath, maxTokens) {
     this.app = app;
@@ -93835,10 +93827,10 @@ var MemoryManager = class {
       return "";
     return this.app.vault.read(file);
   }
-  /** Parse memory.md into structured sections. */
+  /** Parse memory.md into a flat list of entries. */
   async parse() {
     const raw = await this.load();
-    return { sections: this.parseRaw(raw), raw };
+    return { entries: this.parseRaw(raw), raw };
   }
   // ── Write ─────────────────────────────────────────────────────────────────
   /**
@@ -93850,13 +93842,11 @@ var MemoryManager = class {
       return;
     const parsed = await this.parse();
     const today = new Date().toISOString().slice(0, 10);
-    for (const { section, fact } of facts) {
+    for (const { fact } of facts) {
       const id = `mem_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-      if (!parsed.sections[section])
-        parsed.sections[section] = [];
-      parsed.sections[section].push({ id, fact, date: today });
+      parsed.entries.push({ id, fact, date: today });
     }
-    await this.writeBack(parsed.sections);
+    await this.writeBack(parsed.entries);
     await this.trimIfNeeded();
   }
   /**
@@ -93864,23 +93854,17 @@ var MemoryManager = class {
    */
   async forget(entryId) {
     const parsed = await this.parse();
-    let found = false;
-    for (const key of Object.keys(parsed.sections)) {
-      const before = parsed.sections[key].length;
-      parsed.sections[key] = parsed.sections[key].filter((e) => e.id !== entryId);
-      if (parsed.sections[key].length < before)
-        found = true;
+    const before = parsed.entries.length;
+    parsed.entries = parsed.entries.filter((e) => e.id !== entryId);
+    if (parsed.entries.length < before) {
+      await this.writeBack(parsed.entries);
+      return true;
     }
-    if (found)
-      await this.writeBack(parsed.sections);
-    return found;
+    return false;
   }
   /** Clear all memory entries. */
   async clearAll() {
-    const empty = {};
-    for (const s of MEMORY_SECTIONS)
-      empty[s.key] = [];
-    await this.writeBack(empty);
+    await this.writeBack([]);
   }
   // ── File management ───────────────────────────────────────────────────────
   async openInEditor() {
@@ -93904,50 +93888,30 @@ var MemoryManager = class {
   }
   // ── Trim ──────────────────────────────────────────────────────────────────
   /**
-   * If memory exceeds maxTokens, drop the oldest entries in each section
-   * until we're under budget. (AI-powered summarisation would need an extra
-   * API call — for now we use a deterministic oldest-first trim.)
+   * If memory exceeds maxTokens, drop the oldest entries in the flat list
+   * until we're under budget.
    */
   async trimIfNeeded() {
     const content = await this.load();
     if (estimateTokens(content) <= this.maxTokens)
       return;
-    const parsed = this.parseRaw(content);
+    const entries = this.parseRaw(content);
     let trimmed = false;
-    while (estimateTokens(this.buildContent(parsed)) > this.maxTokens) {
-      let removedAny = false;
-      for (const key of Object.keys(parsed)) {
-        if (parsed[key].length > 1) {
-          parsed[key].shift();
-          removedAny = true;
-          trimmed = true;
-        }
-      }
-      if (!removedAny)
-        break;
+    while (estimateTokens(this.buildContent(entries)) > this.maxTokens && entries.length > 0) {
+      entries.shift();
+      trimmed = true;
     }
     if (trimmed)
-      await this.writeBack(parsed);
+      await this.writeBack(entries);
   }
   // ── Serialisation ─────────────────────────────────────────────────────────
   parseRaw(raw) {
-    const result = {};
-    for (const s of MEMORY_SECTIONS)
-      result[s.key] = [];
+    const result = [];
     const lineRegex = /^-\s+\[(\d{4}-\d{2}-\d{2})\|([^\]]+)\]\s+(.+)$/;
-    let currentSection = null;
     for (const line of raw.split("\n")) {
-      for (const s of MEMORY_SECTIONS) {
-        if (line.startsWith(`## ${s.emoji}`) || line.includes(s.title)) {
-          currentSection = s.key;
-          break;
-        }
-      }
-      if (!currentSection)
-        continue;
       const match = lineRegex.exec(line.trim());
       if (match) {
-        result[currentSection].push({
+        result.push({
           date: match[1],
           id: match[2],
           fact: match[3]
@@ -93956,62 +93920,46 @@ var MemoryManager = class {
     }
     return result;
   }
-  buildContent(sections) {
-    var _a2;
+  buildContent(entries) {
     const lines = [
       "---",
       `last_updated: ${new Date().toISOString().slice(0, 10)}`,
       "---",
+      "",
+      "# \u{1F4BE} Stored Memories",
       ""
     ];
-    for (const s of MEMORY_SECTIONS) {
-      lines.push(`## ${s.emoji} ${s.title}`);
-      const entries = (_a2 = sections[s.key]) != null ? _a2 : [];
-      if (entries.length === 0) {
-        lines.push("");
-      } else {
-        for (const e of entries) {
-          lines.push(`- [${e.date}|${e.id}] ${e.fact}`);
-        }
-        lines.push("");
+    if (entries.length === 0) {
+      lines.push("");
+    } else {
+      for (const e of entries) {
+        lines.push(`- [${e.date}|${e.id}] ${e.fact}`);
       }
+      lines.push("");
     }
     return lines.join("\n");
   }
   buildTemplate() {
-    const empty = {};
-    for (const s of MEMORY_SECTIONS)
-      empty[s.key] = [];
-    return this.buildContent(empty);
+    return this.buildContent([]);
   }
-  async writeBack(sections) {
-    const content = this.buildContent(sections);
+  async writeBack(entries) {
+    const content = this.buildContent(entries);
     const file = await this.ensureFile();
     await this.app.vault.modify(file, content);
   }
 };
 
 // src/memory/MemoryExtractor.ts
-var EXTRACTION_SYSTEM_PROMPT = `You are a memory extraction system. Your ONLY job is to extract facts worth remembering long-term about the USER from a conversation.
+var EXTRACTION_SYSTEM_PROMPT = `You are a memory extraction system. Your ONLY job is to extract new facts worth remembering long-term about the USER from a recent conversation.
 
 Rules:
-- Extract ONLY facts about the USER (not about the AI, not generic facts)
-- Only extract genuinely useful: biographical info, preferences, goals, ongoing projects, beliefs/opinions, or meaningful insights the user expressed
-- Be CONSERVATIVE \u2014 if in doubt, do not extract
+- Extract ONLY biographical facts, preferences, goals, insights, relationships, or background details about the USER.
+- Be CONSERVATIVE \u2014 if in doubt, do not extract.
 - DO NOT extract any facts that are already in the "Existing Memories" list (even if worded slightly differently). Avoid duplicates and redundant details.
-- Do NOT extract: greetings, casual remarks, one-off questions, temporary context
-- Each fact must be a single, standalone sentence (no pronouns that need context)
-- Return ONLY valid JSON, nothing else
-
-Valid sections: identity, goals, beliefs, habits, projects, learnings
-
-Example good extractions:
-{"section":"goals","fact":"Wants to build a personal AI workflow integrated with Obsidian"}
-{"section":"habits","fact":"Prefers concise bullet-point answers over long prose"}
-{"section":"projects","fact":"Currently building an Obsidian plugin called Engram"}
-
-If nothing is worth saving, return: []`;
-var VALID_SECTIONS = /* @__PURE__ */ new Set(["identity", "goals", "beliefs", "habits", "projects", "learnings"]);
+- Do NOT extract: greetings, casual remarks, one-off questions, temporary context.
+- Each fact must be a single, standalone sentence (no pronouns that need context, e.g. use "The user wants..." instead of "I want...").
+- Return ONLY a JSON array of strings, e.g.: ["Fact 1", "Fact 2"]
+- If nothing new is worth saving, return: []`;
 var MemoryExtractor = class {
   constructor(providerFactory, memoryManager) {
     this.providerFactory = providerFactory;
@@ -94059,7 +94007,7 @@ Recent Conversation:
 
 ${conversationText}
 
-Extract new, memorable facts from this recent conversation. DO NOT extract any fact that is already present in the "Existing Memories" list (even if worded differently). If a fact is already known, redundant, or similar to an existing one, ignore it. Return a JSON array of new {section, fact} objects. Return [] if nothing new or worth saving is found.`
+Extract new, memorable facts from this recent conversation. DO NOT extract any fact that is already present in the "Existing Memories" list (even if worded differently). If a fact is already known, redundant, or similar to an existing one, ignore it. Return a JSON array of new facts as strings. Return [] if nothing new or worth saving is found.`
       }
     ];
     let responseText = "";
@@ -94089,13 +94037,12 @@ Extract new, memorable facts from this recent conversation. DO NOT extract any f
       const existingLower = existingMemory.toLowerCase();
       const facts = [];
       for (const item of parsed) {
-        if (typeof item === "object" && item !== null && typeof item.section === "string" && typeof item.fact === "string" && VALID_SECTIONS.has(item.section) && item.fact.length > 5) {
-          const cleanFact = item.fact.trim();
+        if (typeof item === "string" && item.trim().length > 5) {
+          const cleanFact = item.trim();
           if (existingLower.includes(cleanFact.toLowerCase())) {
             continue;
           }
           facts.push({
-            section: item.section,
             fact: cleanFact
           });
         }
