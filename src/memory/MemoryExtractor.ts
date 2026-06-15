@@ -2,45 +2,27 @@
  * memory/MemoryExtractor.ts
  *
  * Uses the active AI provider to silently extract memorable facts
- * from recent conversation turns and save them to memory.md.
- *
- * The extraction is conservative by design:
- *  - Only biographical facts, preferences, goals, and insights qualify
- *  - Casual remarks, questions, and one-off comments are ignored
- *  - A single extraction call is made after each AI response
- *  - If the AI returns nothing, nothing is saved (zero noise)
+ * from recent conversation turns and save them to memory.md as a flat list.
  */
 
 import type { ProviderFactory } from '../providers/ProviderFactory';
-import type { MemoryManager, SectionKey } from './MemoryManager';
+import type { MemoryManager } from './MemoryManager';
 import type { ChatMessage } from '../types';
 
-const EXTRACTION_SYSTEM_PROMPT = `You are a memory extraction system. Your ONLY job is to extract facts worth remembering long-term about the USER from a conversation.
+const EXTRACTION_SYSTEM_PROMPT = `You are a memory extraction system. Your ONLY job is to extract new facts worth remembering long-term about the USER from a recent conversation.
 
 Rules:
-- Extract ONLY facts about the USER (not about the AI, not generic facts)
-- Only extract genuinely useful: biographical info, preferences, goals, ongoing projects, beliefs/opinions, or meaningful insights the user expressed
-- Be CONSERVATIVE — if in doubt, do not extract
+- Extract ONLY biographical facts, preferences, goals, insights, relationships, or background details about the USER.
+- Be CONSERVATIVE — if in doubt, do not extract.
 - DO NOT extract any facts that are already in the "Existing Memories" list (even if worded slightly differently). Avoid duplicates and redundant details.
-- Do NOT extract: greetings, casual remarks, one-off questions, temporary context
-- Each fact must be a single, standalone sentence (no pronouns that need context)
-- Return ONLY valid JSON, nothing else
-
-Valid sections: identity, goals, beliefs, habits, projects, learnings
-
-Example good extractions:
-{"section":"goals","fact":"Wants to build a personal AI workflow integrated with Obsidian"}
-{"section":"habits","fact":"Prefers concise bullet-point answers over long prose"}
-{"section":"projects","fact":"Currently building an Obsidian plugin called Engram"}
-
-If nothing is worth saving, return: []`;
+- Do NOT extract: greetings, casual remarks, one-off questions, temporary context.
+- Each fact must be a single, standalone sentence (no pronouns that need context, e.g. use "The user wants..." instead of "I want...").
+- Return ONLY a JSON array of strings, e.g.: ["Fact 1", "Fact 2"]
+- If nothing new is worth saving, return: []`;
 
 export interface ExtractedFact {
-  section: SectionKey;
   fact: string;
 }
-
-const VALID_SECTIONS = new Set<string>(['identity', 'goals', 'beliefs', 'habits', 'projects', 'learnings']);
 
 export class MemoryExtractor {
   private providerFactory: ProviderFactory;
@@ -99,7 +81,7 @@ export class MemoryExtractor {
       { role: 'system', content: EXTRACTION_SYSTEM_PROMPT },
       {
         role: 'user',
-        content: `Existing Memories:\n\`\`\`markdown\n${existingMemory || 'No existing memories.'}\n\`\`\`\n\nRecent Conversation:\n\n${conversationText}\n\nExtract new, memorable facts from this recent conversation. DO NOT extract any fact that is already present in the "Existing Memories" list (even if worded differently). If a fact is already known, redundant, or similar to an existing one, ignore it. Return a JSON array of new {section, fact} objects. Return [] if nothing new or worth saving is found.`,
+        content: `Existing Memories:\n\`\`\`markdown\n${existingMemory || 'No existing memories.'}\n\`\`\`\n\nRecent Conversation:\n\n${conversationText}\n\nExtract new, memorable facts from this recent conversation. DO NOT extract any fact that is already present in the "Existing Memories" list (even if worded differently). If a fact is already known, redundant, or similar to an existing one, ignore it. Return a JSON array of new facts as strings. Return [] if nothing new or worth saving is found.`,
       },
     ];
 
@@ -138,21 +120,13 @@ export class MemoryExtractor {
       const existingLower = existingMemory.toLowerCase();
       const facts: ExtractedFact[] = [];
       for (const item of parsed) {
-        if (
-          typeof item === 'object' &&
-          item !== null &&
-          typeof (item as any).section === 'string' &&
-          typeof (item as any).fact === 'string' &&
-          VALID_SECTIONS.has((item as any).section) &&
-          (item as any).fact.length > 5
-        ) {
-          const cleanFact = (item as any).fact.trim();
+        if (typeof item === 'string' && item.trim().length > 5) {
+          const cleanFact = item.trim();
           // Skip if already exists in memory (fallback exact check)
           if (existingLower.includes(cleanFact.toLowerCase())) {
             continue;
           }
           facts.push({
-            section: (item as any).section as SectionKey,
             fact: cleanFact,
           });
         }

@@ -1,25 +1,13 @@
 /**
  * memory/MemoryManager.ts
  *
- * Manages the persistent memory file (memory.md) in the vault.
- * Memory is structured into named sections with timestamped entries.
- * New facts are appended; old entries are auto-summarised when the file
- * exceeds maxMemoryTokens.
+ * Manages the persistent memory file (memory.md) in the vault as a flat list.
+ * Memory is structured as a flat bullet-point list under "# 💾 Stored Memories".
+ * New facts are appended; old entries are trimmed when the file exceeds maxMemoryTokens.
  */
 
 import type { App, TFile } from 'obsidian';
 import { estimateTokens } from '../utils/tokenEstimator';
-
-export const MEMORY_SECTIONS = [
-  { key: 'identity',   emoji: '👤', title: 'Core Identity' },
-  { key: 'goals',      emoji: '🎯', title: 'Goals & Aspirations' },
-  { key: 'beliefs',    emoji: '🧠', title: 'Beliefs & Opinions' },
-  { key: 'habits',     emoji: '💡', title: 'Habits & Preferences' },
-  { key: 'projects',   emoji: '🚧', title: 'Ongoing Projects' },
-  { key: 'learnings',  emoji: '📚', title: 'Learnings & Insights' },
-] as const;
-
-export type SectionKey = typeof MEMORY_SECTIONS[number]['key'];
 
 export interface MemoryEntry {
   id: string;
@@ -28,7 +16,7 @@ export interface MemoryEntry {
 }
 
 export interface ParsedMemory {
-  sections: Record<SectionKey, MemoryEntry[]>;
+  entries: MemoryEntry[];
   raw: string;
 }
 
@@ -57,10 +45,10 @@ export class MemoryManager {
     return this.app.vault.read(file);
   }
 
-  /** Parse memory.md into structured sections. */
+  /** Parse memory.md into a flat list of entries. */
   async parse(): Promise<ParsedMemory> {
     const raw = await this.load();
-    return { sections: this.parseRaw(raw), raw };
+    return { entries: this.parseRaw(raw), raw };
   }
 
   // ── Write ─────────────────────────────────────────────────────────────────
@@ -69,19 +57,18 @@ export class MemoryManager {
    * Append new facts to the memory file.
    * Creates the file (and parent folders) if it doesn't exist.
    */
-  async append(facts: Array<{ section: SectionKey; fact: string }>): Promise<void> {
+  async append(facts: Array<{ fact: string }>): Promise<void> {
     if (facts.length === 0) return;
 
     const parsed = await this.parse();
     const today = new Date().toISOString().slice(0, 10);
 
-    for (const { section, fact } of facts) {
+    for (const { fact } of facts) {
       const id = `mem_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-      if (!parsed.sections[section]) parsed.sections[section] = [];
-      parsed.sections[section].push({ id, fact, date: today });
+      parsed.entries.push({ id, fact, date: today });
     }
 
-    await this.writeBack(parsed.sections);
+    await this.writeBack(parsed.entries);
     await this.trimIfNeeded();
   }
 
@@ -90,23 +77,19 @@ export class MemoryManager {
    */
   async forget(entryId: string): Promise<boolean> {
     const parsed = await this.parse();
-    let found = false;
+    const before = parsed.entries.length;
+    parsed.entries = parsed.entries.filter(e => e.id !== entryId);
 
-    for (const key of Object.keys(parsed.sections) as SectionKey[]) {
-      const before = parsed.sections[key].length;
-      parsed.sections[key] = parsed.sections[key].filter(e => e.id !== entryId);
-      if (parsed.sections[key].length < before) found = true;
+    if (parsed.entries.length < before) {
+      await this.writeBack(parsed.entries);
+      return true;
     }
-
-    if (found) await this.writeBack(parsed.sections);
-    return found;
+    return false;
   }
 
   /** Clear all memory entries. */
   async clearAll(): Promise<void> {
-    const empty = {} as Record<SectionKey, MemoryEntry[]>;
-    for (const s of MEMORY_SECTIONS) empty[s.key] = [];
-    await this.writeBack(empty);
+    await this.writeBack([]);
   }
 
   // ── File management ───────────────────────────────────────────────────────
@@ -135,56 +118,34 @@ export class MemoryManager {
   // ── Trim ──────────────────────────────────────────────────────────────────
 
   /**
-   * If memory exceeds maxTokens, drop the oldest entries in each section
-   * until we're under budget. (AI-powered summarisation would need an extra
-   * API call — for now we use a deterministic oldest-first trim.)
+   * If memory exceeds maxTokens, drop the oldest entries in the flat list
+   * until we're under budget.
    */
   private async trimIfNeeded(): Promise<void> {
     const content = await this.load();
     if (estimateTokens(content) <= this.maxTokens) return;
 
-    const parsed = this.parseRaw(content);
-
-    // Remove 20% of oldest entries per section until under budget
+    const entries = this.parseRaw(content);
     let trimmed = false;
-    while (estimateTokens(this.buildContent(parsed)) > this.maxTokens) {
-      let removedAny = false;
-      for (const key of Object.keys(parsed) as SectionKey[]) {
-        if (parsed[key].length > 1) {
-          parsed[key].shift(); // remove oldest
-          removedAny = true;
-          trimmed = true;
-        }
-      }
-      if (!removedAny) break;
+    while (estimateTokens(this.buildContent(entries)) > this.maxTokens && entries.length > 0) {
+      entries.shift(); // drop oldest entry from the start
+      trimmed = true;
     }
 
-    if (trimmed) await this.writeBack(parsed);
+    if (trimmed) await this.writeBack(entries);
   }
 
   // ── Serialisation ─────────────────────────────────────────────────────────
 
-  private parseRaw(raw: string): Record<SectionKey, MemoryEntry[]> {
-    const result = {} as Record<SectionKey, MemoryEntry[]>;
-    for (const s of MEMORY_SECTIONS) result[s.key] = [];
-
+  private parseRaw(raw: string): MemoryEntry[] {
+    const result: MemoryEntry[] = [];
     // Parse lines like: - [2025-06-14|mem_xxx] fact text
     const lineRegex = /^-\s+\[(\d{4}-\d{2}-\d{2})\|([^\]]+)\]\s+(.+)$/;
-    let currentSection: SectionKey | null = null;
 
     for (const line of raw.split('\n')) {
-      // Detect section headers like: ## 🎯 Goals & Aspirations
-      for (const s of MEMORY_SECTIONS) {
-        if (line.startsWith(`## ${s.emoji}`) || line.includes(s.title)) {
-          currentSection = s.key;
-          break;
-        }
-      }
-
-      if (!currentSection) continue;
       const match = lineRegex.exec(line.trim());
       if (match) {
-        result[currentSection].push({
+        result.push({
           date: match[1],
           id: match[2],
           fact: match[3],
@@ -195,38 +156,34 @@ export class MemoryManager {
     return result;
   }
 
-  private buildContent(sections: Record<SectionKey, MemoryEntry[]>): string {
+  private buildContent(entries: MemoryEntry[]): string {
     const lines: string[] = [
       '---',
       `last_updated: ${new Date().toISOString().slice(0, 10)}`,
       '---',
       '',
+      '# 💾 Stored Memories',
+      '',
     ];
 
-    for (const s of MEMORY_SECTIONS) {
-      lines.push(`## ${s.emoji} ${s.title}`);
-      const entries = sections[s.key] ?? [];
-      if (entries.length === 0) {
-        lines.push('');
-      } else {
-        for (const e of entries) {
-          lines.push(`- [${e.date}|${e.id}] ${e.fact}`);
-        }
-        lines.push('');
+    if (entries.length === 0) {
+      lines.push('');
+    } else {
+      for (const e of entries) {
+        lines.push(`- [${e.date}|${e.id}] ${e.fact}`);
       }
+      lines.push('');
     }
 
     return lines.join('\n');
   }
 
   private buildTemplate(): string {
-    const empty = {} as Record<SectionKey, MemoryEntry[]>;
-    for (const s of MEMORY_SECTIONS) empty[s.key] = [];
-    return this.buildContent(empty);
+    return this.buildContent([]);
   }
 
-  private async writeBack(sections: Record<SectionKey, MemoryEntry[]>): Promise<void> {
-    const content = this.buildContent(sections);
+  private async writeBack(entries: MemoryEntry[]): Promise<void> {
+    const content = this.buildContent(entries);
     const file = await this.ensureFile();
     await this.app.vault.modify(file, content);
   }
