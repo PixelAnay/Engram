@@ -93998,6 +93998,7 @@ Rules:
 - Extract ONLY facts about the USER (not about the AI, not generic facts)
 - Only extract genuinely useful: biographical info, preferences, goals, ongoing projects, beliefs/opinions, or meaningful insights the user expressed
 - Be CONSERVATIVE \u2014 if in doubt, do not extract
+- DO NOT extract any facts that are already in the "Existing Memories" list (even if worded slightly differently). Avoid duplicates and redundant details.
 - Do NOT extract: greetings, casual remarks, one-off questions, temporary context
 - Each fact must be a single, standalone sentence (no pronouns that need context)
 - Return ONLY valid JSON, nothing else
@@ -94044,15 +94045,21 @@ var MemoryExtractor = class {
     }).join("\n\n");
     if (conversationText.length < 100)
       return [];
+    const existingMemory = await this.memoryManager.load();
     const messages = [
       { role: "system", content: EXTRACTION_SYSTEM_PROMPT },
       {
         role: "user",
-        content: `Extract memorable facts from this conversation:
+        content: `Existing Memories:
+\`\`\`markdown
+${existingMemory || "No existing memories."}
+\`\`\`
+
+Recent Conversation:
 
 ${conversationText}
 
-Return a JSON array of {section, fact} objects. Return [] if nothing is worth saving.`
+Extract new, memorable facts from this recent conversation. DO NOT extract any fact that is already present in the "Existing Memories" list (even if worded differently). If a fact is already known, redundant, or similar to an existing one, ignore it. Return a JSON array of new {section, fact} objects. Return [] if nothing new or worth saving is found.`
       }
     ];
     let responseText = "";
@@ -94068,9 +94075,9 @@ Return a JSON array of {section, fact} objects. Return [] if nothing is worth sa
       }
     );
     responseText = text;
-    return this.parse(responseText);
+    return this.parse(responseText, existingMemory);
   }
-  parse(raw) {
+  parse(raw, existingMemory) {
     const cleaned = raw.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
     const arrayMatch = cleaned.match(/\[[\s\S]*\]/);
     if (!arrayMatch)
@@ -94079,12 +94086,17 @@ Return a JSON array of {section, fact} objects. Return [] if nothing is worth sa
       const parsed = JSON.parse(arrayMatch[0]);
       if (!Array.isArray(parsed))
         return [];
+      const existingLower = existingMemory.toLowerCase();
       const facts = [];
       for (const item of parsed) {
         if (typeof item === "object" && item !== null && typeof item.section === "string" && typeof item.fact === "string" && VALID_SECTIONS.has(item.section) && item.fact.length > 5) {
+          const cleanFact = item.fact.trim();
+          if (existingLower.includes(cleanFact.toLowerCase())) {
+            continue;
+          }
           facts.push({
             section: item.section,
-            fact: item.fact.trim()
+            fact: cleanFact
           });
         }
       }

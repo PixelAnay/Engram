@@ -9,7 +9,7 @@ if ([string]::IsNullOrWhiteSpace($VaultPath)) {
 }
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$pluginId = 'engram-chat'
+$pluginId = 'obsidian-llama-chat'
 $pluginDir = Join-Path (Join-Path $VaultPath '.obsidian/plugins') $pluginId
 
 if (-not (Test-Path (Join-Path $VaultPath '.obsidian'))) {
