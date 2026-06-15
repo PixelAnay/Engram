@@ -1,161 +1,20 @@
 /**
  * ui/ConfirmDialog.ts
  * ─────────────────────────────────────────────────────────────────────────────
- * Lightweight DOM-based confirmation modal for destructive vault operations.
-  * existing `engram-modal-*` CSS classes already defined in styles.css.
- * Usage:
- *   const ok = await showConfirmDialog({
- *     title: 'Delete Note',
- *     message: 'Permanently delete "Projects/MyNote.md"?',
- *     danger: true,
- *   });
- *   if (ok) { ... }
+ * Native Obsidian-based modal wrappers for safe input and confirmation.
  */
+
+import { App, Modal } from 'obsidian';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 /** Configuration options for the confirmation dialog. */
 export interface ConfirmOptions {
-  /** Short heading shown at the top of the modal, e.g. "Delete Note". */
   title: string;
-  /**
-   * Explanatory body text shown beneath the title,
-   * e.g. `Permanently delete "Projects/MyNote.md"?`
-   */
   message: string;
-  /**
-   * Label for the affirmative action button.
-   * @default "Confirm"
-   */
   confirmLabel?: string;
-  /**
-   * Label for the dismissal button.
-   * @default "Cancel"
-   */
   cancelLabel?: string;
-  /**
-   * When `true` the confirm button receives the `engram-modal-confirm-danger`
-   * CSS class (styled red) to visually signal a destructive action.
-   * @default false
-   */
   danger?: boolean;
-}
-
-// ── Implementation ────────────────────────────────────────────────────────────
-
-/**
- * Show a modal confirmation dialog built from plain DOM elements.
- *
- * The overlay is appended to `document.body` and completely removed when the
- * user either confirms, cancels, or clicks outside the modal box.
- *
- * @param options - Display and behaviour configuration.
- * @returns A `Promise<boolean>` that resolves to:
- *   - `true`  — user clicked the confirm button (or pressed Enter)
- *   - `false` — user clicked cancel, pressed Escape, or clicked the overlay
- */
-export function showConfirmDialog(options: ConfirmOptions): Promise<boolean> {
-  const {
-    title,
-    message,
-    confirmLabel = 'Confirm',
-    cancelLabel  = 'Cancel',
-    danger       = false,
-  } = options;
-
-  return new Promise<boolean>((resolve) => {
-    // Guard so that the various close paths (overlay click, button click,
-    // keyboard handler) cannot resolve the promise more than once.
-    let settled = false;
-
-    /** Tear down the overlay and resolve the promise exactly once. */
-    function close(confirmed: boolean): void {
-      if (settled) return;
-      settled = true;
-      document.removeEventListener('keydown', onKeyDown);
-      overlay.remove();
-      resolve(confirmed);
-    }
-
-    // ── Keyboard handler ──────────────────────────────────────────────────
-    // Escape always cancels; Enter confirms (matching native browser dialogs).
-    // Let's ensure Enter is only handled if target is not cancel button, but standard behavior is fine.
-    function onKeyDown(evt: KeyboardEvent): void {
-      if (evt.key === 'Escape') {
-        evt.preventDefault();
-        close(false);
-      } else if (evt.key === 'Enter') {
-        evt.preventDefault();
-        close(true);
-      }
-    }
-    document.addEventListener('keydown', onKeyDown);
-
-    // ── DOM construction ──────────────────────────────────────────────────
-
-    // Full-screen translucent backdrop — clicking it cancels the dialog.
-    const overlay = document.createElement('div');
-    overlay.className = 'engram-modal-overlay';
-    overlay.addEventListener('click', (evt) => {
-      // Only close when the backdrop itself is clicked, not the modal card.
-      if (evt.target === overlay) close(false);
-    });
-
-    // ── Modal card ────────────────────────────────────────────────────────
-    const modal = document.createElement('div');
-    modal.className = 'engram-modal';
-    modal.setAttribute('role', 'dialog');
-    modal.setAttribute('aria-modal', 'true');
-    modal.setAttribute('aria-labelledby', 'engram-confirm-title');
-    modal.setAttribute('aria-describedby', 'engram-confirm-msg');
-    // Stop clicks inside the card from bubbling up to the overlay listener.
-    modal.addEventListener('click', (evt) => evt.stopPropagation());
-    overlay.appendChild(modal);
-
-    // Title
-    const titleEl = document.createElement('div');
-    titleEl.id        = 'engram-confirm-title';
-    titleEl.className = 'engram-modal-title';
-    titleEl.textContent = title;
-    modal.appendChild(titleEl);
-
-    // Message / subtitle
-    const msgEl = document.createElement('div');
-    msgEl.id        = 'engram-confirm-msg';
-    msgEl.className = 'engram-modal-subtitle';
-    msgEl.textContent = message;
-    modal.appendChild(msgEl);
-
-    // ── Buttons ───────────────────────────────────────────────────────────
-    const btns = document.createElement('div');
-    btns.className = 'engram-modal-btns';
-    modal.appendChild(btns);
-
-    // Cancel button
-    const cancelBtn = document.createElement('button');
-    cancelBtn.type        = 'button';
-    cancelBtn.className   = 'engram-modal-cancel';
-    cancelBtn.textContent = cancelLabel;
-    cancelBtn.addEventListener('click', () => close(false));
-    btns.appendChild(cancelBtn);
-
-    // Confirm button — danger variant applies red styling via CSS
-    const confirmBtn = document.createElement('button');
-    confirmBtn.type      = 'button';
-    confirmBtn.className = danger
-      ? 'engram-modal-confirm engram-modal-confirm-danger'
-      : 'engram-modal-confirm';
-    confirmBtn.textContent = confirmLabel;
-    confirmBtn.addEventListener('click', () => close(true));
-    btns.appendChild(confirmBtn);
-
-    // ── Mount & focus ─────────────────────────────────────────────────────
-    document.body.appendChild(overlay);
-
-    // Focus the confirm button so Enter/Escape work immediately without an
-    // extra Tab press.
-    confirmBtn.focus();
-  });
 }
 
 /** Configuration options for prompt input dialog. */
@@ -168,10 +27,207 @@ export interface PromptOptions {
   cancelLabel?: string;
 }
 
+// ── Modals ────────────────────────────────────────────────────────────────────
+
+class ConfirmModal extends Modal {
+  private result = false;
+  private onSubmit: (result: boolean) => void;
+  private message: string;
+  private confirmLabel: string;
+  private cancelLabel: string;
+  private danger: boolean;
+
+  constructor(
+    app: App,
+    title: string,
+    message: string,
+    confirmLabel: string,
+    cancelLabel: string,
+    danger: boolean,
+    onSubmit: (result: boolean) => void
+  ) {
+    super(app);
+    this.titleEl.setText(title);
+    this.message = message;
+    this.confirmLabel = confirmLabel;
+    this.cancelLabel = cancelLabel;
+    this.danger = danger;
+    this.onSubmit = onSubmit;
+  }
+
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+
+    contentEl.createEl('p', { text: this.message, cls: 'engram-modal-subtitle' });
+
+    const buttonContainer = contentEl.createDiv({ cls: 'engram-modal-btns' });
+    buttonContainer.style.display = 'flex';
+    buttonContainer.style.justifyContent = 'flex-end';
+    buttonContainer.style.gap = '8px';
+    buttonContainer.style.marginTop = '16px';
+
+    const cancelBtn = buttonContainer.createEl('button', {
+      text: this.cancelLabel,
+      cls: 'engram-modal-cancel'
+    });
+    cancelBtn.addEventListener('click', () => {
+      this.close();
+    });
+
+    const confirmBtn = buttonContainer.createEl('button', {
+      text: this.confirmLabel,
+      cls: this.danger
+        ? 'engram-modal-confirm engram-modal-confirm-danger mod-warning'
+        : 'engram-modal-confirm mod-cta'
+    });
+    confirmBtn.addEventListener('click', () => {
+      this.result = true;
+      this.close();
+    });
+
+    setTimeout(() => confirmBtn.focus(), 50);
+  }
+
+  onClose() {
+    this.onSubmit(this.result);
+  }
+}
+
+class PromptModal extends Modal {
+  private result: string | null = null;
+  private onSubmit: (result: string | null) => void;
+  private placeholder: string;
+  private message: string;
+  private value: string;
+  private confirmLabel: string;
+  private cancelLabel: string;
+
+  constructor(
+    app: App,
+    title: string,
+    message: string,
+    placeholder: string,
+    value: string,
+    confirmLabel: string,
+    cancelLabel: string,
+    onSubmit: (result: string | null) => void
+  ) {
+    super(app);
+    this.titleEl.setText(title);
+    this.message = message;
+    this.placeholder = placeholder;
+    this.value = value;
+    this.confirmLabel = confirmLabel;
+    this.cancelLabel = cancelLabel;
+    this.onSubmit = onSubmit;
+  }
+
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+
+    contentEl.createEl('p', { text: this.message, cls: 'engram-modal-subtitle' });
+
+    const inputContainer = contentEl.createDiv({ cls: 'engram-modal-input-container' });
+    inputContainer.style.margin = '16px 0';
+    inputContainer.style.width = '100%';
+
+    const inputEl = inputContainer.createEl('input', {
+      type: 'text',
+      placeholder: this.placeholder,
+      value: this.value,
+      cls: 'engram-modal-input'
+    });
+    inputEl.style.width = '100%';
+    inputEl.style.padding = '8px 12px';
+    inputEl.style.border = '1px solid var(--engram-border)';
+    inputEl.style.borderRadius = 'var(--engram-radius-sm)';
+    inputEl.style.background = 'var(--engram-bg)';
+    inputEl.style.color = 'var(--engram-text)';
+    inputEl.style.fontSize = '14px';
+
+    const buttonContainer = contentEl.createDiv({ cls: 'engram-modal-btns' });
+    buttonContainer.style.display = 'flex';
+    buttonContainer.style.justifyContent = 'flex-end';
+    buttonContainer.style.gap = '8px';
+
+    const cancelBtn = buttonContainer.createEl('button', {
+      text: this.cancelLabel,
+      cls: 'engram-modal-cancel'
+    });
+    cancelBtn.addEventListener('click', () => {
+      this.close();
+    });
+
+    const confirmBtn = buttonContainer.createEl('button', {
+      text: this.confirmLabel,
+      cls: 'engram-modal-confirm mod-cta'
+    });
+    confirmBtn.addEventListener('click', () => {
+      this.result = inputEl.value;
+      this.close();
+    });
+
+    const stopPropagation = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') {
+        e.stopPropagation();
+      }
+    };
+
+    inputEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') return;
+      e.stopPropagation();
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        this.result = inputEl.value;
+        this.close();
+      }
+    });
+    inputEl.addEventListener('keypress', stopPropagation);
+    inputEl.addEventListener('keyup', stopPropagation);
+
+    // Focus immediately and also at timeouts to ensure focus is not stolen during modal transitions
+    inputEl.focus();
+    inputEl.select();
+    setTimeout(() => {
+      inputEl.focus();
+      inputEl.select();
+    }, 50);
+    setTimeout(() => {
+      inputEl.focus();
+      inputEl.select();
+    }, 150);
+  }
+
+  onClose() {
+    this.onSubmit(this.result);
+  }
+}
+
+// ── Exported API ──────────────────────────────────────────────────────────────
+
 /**
- * Show a modal prompt input dialog built from plain DOM elements.
+ * Show a modal confirmation dialog using Obsidian's native Modal system.
  */
-export function showPromptDialog(options: PromptOptions): Promise<string | null> {
+export function showConfirmDialog(app: App, options: ConfirmOptions): Promise<boolean> {
+  const {
+    title,
+    message,
+    confirmLabel = 'Confirm',
+    cancelLabel = 'Cancel',
+    danger = false,
+  } = options;
+
+  return new Promise<boolean>((resolve) => {
+    new ConfirmModal(app, title, message, confirmLabel, cancelLabel, danger, resolve).open();
+  });
+}
+
+/**
+ * Show a modal prompt input dialog using Obsidian's native Modal system.
+ */
+export function showPromptDialog(app: App, options: PromptOptions): Promise<string | null> {
   const {
     title,
     message,
@@ -182,99 +238,6 @@ export function showPromptDialog(options: PromptOptions): Promise<string | null>
   } = options;
 
   return new Promise<string | null>((resolve) => {
-    let settled = false;
-
-    function close(result: string | null): void {
-      if (settled) return;
-      settled = true;
-      document.removeEventListener('keydown', onKeyDown);
-      overlay.remove();
-      resolve(result);
-    }
-
-    function onKeyDown(evt: KeyboardEvent): void {
-      if (evt.key === 'Escape') {
-        evt.preventDefault();
-        close(null);
-      } else if (evt.key === 'Enter') {
-        evt.preventDefault();
-        close(inputEl.value);
-      }
-    }
-    document.addEventListener('keydown', onKeyDown);
-
-    // Backdrop
-    const overlay = document.createElement('div');
-    overlay.className = 'engram-modal-overlay';
-    overlay.addEventListener('click', (evt) => {
-      if (evt.target === overlay) close(null);
-    });
-
-    // Modal
-    const modal = document.createElement('div');
-    modal.className = 'engram-modal';
-    modal.setAttribute('role', 'dialog');
-    modal.setAttribute('aria-modal', 'true');
-    modal.addEventListener('click', (evt) => evt.stopPropagation());
-    overlay.appendChild(modal);
-
-    // Title
-    const titleEl = document.createElement('div');
-    titleEl.className = 'engram-modal-title';
-    titleEl.textContent = title;
-    modal.appendChild(titleEl);
-
-    // Message
-    const msgEl = document.createElement('div');
-    msgEl.className = 'engram-modal-subtitle';
-    msgEl.textContent = message;
-    modal.appendChild(msgEl);
-
-    // Input container & element
-    const inputContainer = document.createElement('div');
-    inputContainer.className = 'engram-modal-input-container';
-    inputContainer.style.margin = '16px 0';
-    inputContainer.style.width = '100%';
-    modal.appendChild(inputContainer);
-
-    const inputEl = document.createElement('input');
-    inputEl.type = 'text';
-    inputEl.placeholder = placeholder;
-    inputEl.value = value;
-    inputEl.className = 'engram-modal-input';
-    inputEl.style.width = '100%';
-    inputEl.style.padding = '8px 12px';
-    inputEl.style.border = '1px solid var(--engram-border)';
-    inputEl.style.borderRadius = 'var(--engram-radius-sm)';
-    inputEl.style.background = 'var(--engram-bg)';
-    inputEl.style.color = 'var(--engram-text)';
-    inputEl.style.fontSize = '14px';
-    inputContainer.appendChild(inputEl);
-
-    // Buttons
-    const btns = document.createElement('div');
-    btns.className = 'engram-modal-btns';
-    modal.appendChild(btns);
-
-    // Cancel button
-    const cancelBtn = document.createElement('button');
-    cancelBtn.type = 'button';
-    cancelBtn.className = 'engram-modal-cancel';
-    cancelBtn.textContent = cancelLabel;
-    cancelBtn.addEventListener('click', () => close(null));
-    btns.appendChild(cancelBtn);
-
-    // Confirm button
-    const confirmBtn = document.createElement('button');
-    confirmBtn.type = 'button';
-    confirmBtn.className = 'engram-modal-confirm';
-    confirmBtn.textContent = confirmLabel;
-    confirmBtn.addEventListener('click', () => close(inputEl.value));
-    btns.appendChild(confirmBtn);
-
-    document.body.appendChild(overlay);
-
-    inputEl.focus();
-    inputEl.select();
+    new PromptModal(app, title, message, placeholder, value, confirmLabel, cancelLabel, resolve).open();
   });
 }

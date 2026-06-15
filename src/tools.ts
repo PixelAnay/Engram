@@ -529,7 +529,7 @@ export class ToolExecutor {
       const newContent = String(args.new_content ?? '');
 
       // ── Real user confirmation for full overwrite ──────────────────────────
-      const confirmed = await showConfirmDialog({
+      const confirmed = await showConfirmDialog(this.app, {
         title: 'Overwrite Note',
         message: `The AI wants to completely overwrite "${path}". This will replace all existing content. Proceed?`,
         confirmLabel: 'Overwrite',
@@ -570,7 +570,7 @@ export class ToolExecutor {
 
     if (existing instanceof TFile && overwrite) {
       // ── Confirm overwrite ─────────────────────────────────────────────────
-      const confirmed = await showConfirmDialog({
+      const confirmed = await showConfirmDialog(this.app, {
         title: 'Overwrite Note',
         message: `The AI wants to overwrite the existing note "${path}". Proceed?`,
         confirmLabel: 'Overwrite',
@@ -639,7 +639,7 @@ export class ToolExecutor {
     if (!file) return `Error: File not found: ${source}`;
 
     // ── Confirm move ─────────────────────────────────────────────────────────
-    const confirmed = await showConfirmDialog({
+    const confirmed = await showConfirmDialog(this.app, {
       title: 'Move Note',
       message: `The AI wants to move "${source}" → "${destination}". Proceed?`,
       confirmLabel: 'Move',
@@ -743,7 +743,7 @@ export class ToolExecutor {
     if (!file) return `Error: File not found: ${path}`;
 
     // ── Real user confirmation before deletion ────────────────────────────────
-    const confirmed = await showConfirmDialog({
+    const confirmed = await showConfirmDialog(this.app, {
       title: 'Delete Note',
       message: `The AI wants to permanently delete "${path}". This will move the file to the system trash.`,
       confirmLabel: 'Delete',
