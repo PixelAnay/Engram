@@ -63,6 +63,7 @@ export class ChatView extends ItemView {
   getIcon(): string { return 'brain'; }
 
   async onOpen(): Promise<void> {
+    this.isStreaming = false;
     this.buildUI();
 
     this.sessionManager = new SessionManager(this.plugin);
@@ -113,6 +114,7 @@ export class ChatView extends ItemView {
 
   async onClose(): Promise<void> {
     this.plugin.providerFactory.abort();
+    this.isStreaming = false;
     this.tokenBudgetBar?.destroy();
   }
 
@@ -452,77 +454,83 @@ export class ChatView extends ItemView {
     this.scrollToBottom();
     this.setStreaming(true);
 
-    this.showContextStatus('Building context…');
-    let attachedNotesList: string[] = [];
-    const enriched = await this.plugin.contextBuilder.prependSystemMessage(
-      this.messages.slice(0, -1),
-      text || 'See attachment(s)',
-      (s) => this.showContextStatus(s),
-      (paths) => { attachedNotesList = paths; }
-    );
+    try {
+      this.showContextStatus('Building context…');
+      let attachedNotesList: string[] = [];
+      const enriched = await this.plugin.contextBuilder.prependSystemMessage(
+        this.messages.slice(0, -1),
+        text || 'See attachment(s)',
+        (s) => this.showContextStatus(s),
+        (paths) => { attachedNotesList = paths; }
+      );
 
-    if (attachedNotesList.length > 0) {
-      const userMsg = this.messages[this.messages.length - 1];
-      if (userMsg) {
-        userMsg.autoAttachedNotes = attachedNotesList;
-      }
-      userDisplayMsg.autoAttachedNotes = attachedNotesList;
-      this.messageRenderer.finalizeStreamingBubble(userDisplayMsg);
-    }
-
-    enriched.push({ role: 'user', content: apiContent });
-    this.hideContextStatus();
-
-    const assistantDisplay: DisplayMessage = { role: 'assistant', content: '', streaming: true, toolEvents: [] };
-    this.displayMessages.push(assistantDisplay);
-    this.messageRenderer.appendBubble(assistantDisplay);
-
-    let finalMessages: ChatMessage[] = enriched;
-
-    const onChunk = (chunk: StreamChunk) => {
-      if (chunk.type === 'token' && chunk.content) {
-        assistantDisplay.content += chunk.content;
-        this.messageRenderer.patchStreamingContent(assistantDisplay);
-      } else if (chunk.type === 'tool_start') {
-        assistantDisplay.toolEvents!.push({ type: 'start', name: chunk.toolName! });
-        this.messageRenderer.patchStreamingContent(assistantDisplay);
-      } else if (chunk.type === 'tool_end') {
-        const evList = assistantDisplay.toolEvents!;
-        let last: ToolEvent | undefined;
-        for (let i = evList.length - 1; i >= 0; i--) {
-          if (evList[i].name === chunk.toolName && evList[i].type === 'start') { last = evList[i]; break; }
+      if (attachedNotesList.length > 0) {
+        const userMsg = this.messages[this.messages.length - 1];
+        if (userMsg) {
+          userMsg.autoAttachedNotes = attachedNotesList;
         }
-        if (!last && evList.length > 0) last = evList[evList.length - 1];
-        if (last) { last.type = 'end'; last.result = chunk.toolResult; }
-        this.messageRenderer.patchStreamingContent(assistantDisplay);
-      } else if (chunk.type === 'error' && chunk.error) {
-        assistantDisplay.content = chunk.error;
+        userDisplayMsg.autoAttachedNotes = attachedNotesList;
+        this.messageRenderer.finalizeStreamingBubble(userDisplayMsg);
+      }
+
+      enriched.push({ role: 'user', content: apiContent });
+      this.hideContextStatus();
+
+      const assistantDisplay: DisplayMessage = { role: 'assistant', content: '', streaming: true, toolEvents: [] };
+      this.displayMessages.push(assistantDisplay);
+      this.messageRenderer.appendBubble(assistantDisplay);
+
+      let finalMessages: ChatMessage[] = enriched;
+
+      const onChunk = (chunk: StreamChunk) => {
+        if (chunk.type === 'token' && chunk.content) {
+          assistantDisplay.content += chunk.content;
+          this.messageRenderer.patchStreamingContent(assistantDisplay);
+        } else if (chunk.type === 'tool_start') {
+          assistantDisplay.toolEvents!.push({ type: 'start', name: chunk.toolName! });
+          this.messageRenderer.patchStreamingContent(assistantDisplay);
+        } else if (chunk.type === 'tool_end') {
+          const evList = assistantDisplay.toolEvents!;
+          let last: ToolEvent | undefined;
+          for (let i = evList.length - 1; i >= 0; i--) {
+            if (evList[i].name === chunk.toolName && evList[i].type === 'start') { last = evList[i]; break; }
+          }
+          if (!last && evList.length > 0) last = evList[evList.length - 1];
+          if (last) { last.type = 'end'; last.result = chunk.toolResult; }
+          this.messageRenderer.patchStreamingContent(assistantDisplay);
+        } else if (chunk.type === 'error' && chunk.error) {
+          assistantDisplay.content = chunk.error;
+          (assistantDisplay as any).role = 'error';
+          this.messageRenderer.patchStreamingContent(assistantDisplay);
+        } else if (chunk.type === 'done') {
+          assistantDisplay.streaming = false;
+          this.messageRenderer.finalizeStreamingBubble(assistantDisplay);
+        }
+        this.scrollToBottom();
+      };
+
+      try {
+        const gen = this.plugin.providerFactory.runTurn(enriched, this.plugin.toolExecutor, onChunk);
+        for await (const msgs of gen) {
+          finalMessages = msgs;
+        }
+      } catch (e) {
+        assistantDisplay.content = `Error: ${(e as Error).message}`;
         (assistantDisplay as any).role = 'error';
-        this.messageRenderer.patchStreamingContent(assistantDisplay);
-      } else if (chunk.type === 'done') {
         assistantDisplay.streaming = false;
         this.messageRenderer.finalizeStreamingBubble(assistantDisplay);
       }
-      this.scrollToBottom();
-    };
 
-    try {
-      const gen = this.plugin.providerFactory.runTurn(enriched, this.plugin.toolExecutor, onChunk);
-      for await (const msgs of gen) {
-        finalMessages = msgs;
-      }
+      this.messages = finalMessages.filter(m => m.role !== 'system');
+      this.sessionManager.save(this.messages);
+      this.updateTokenBar();
     } catch (e) {
-      assistantDisplay.content = `Error: ${(e as Error).message}`;
-      (assistantDisplay as any).role = 'error';
-      assistantDisplay.streaming = false;
-      this.messageRenderer.finalizeStreamingBubble(assistantDisplay);
+      // Catch errors from context building or any other step before streaming
+      new Notice(`Error: ${(e as Error).message}`);
+    } finally {
+      this.setStreaming(false);
+      this.scrollToBottom();
     }
-
-    this.messages = finalMessages.filter(m => m.role !== 'system');
-    this.sessionManager.save(this.messages);
-    this.updateTokenBar();
-    this.setStreaming(false);
-    this.scrollToBottom();
 
     // Auto memory extraction (silent, non-blocking)
     if (this.plugin.settings.memoryEnabled && this.plugin.settings.autoExtractMemory) {

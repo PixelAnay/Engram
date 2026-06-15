@@ -91593,6 +91593,7 @@ var ChatView = class extends import_obsidian3.ItemView {
     return "brain";
   }
   async onOpen() {
+    this.isStreaming = false;
     this.buildUI();
     this.sessionManager = new SessionManager(this.plugin);
     this.attachmentHandler = new AttachmentHandler();
@@ -91636,6 +91637,7 @@ var ChatView = class extends import_obsidian3.ItemView {
   async onClose() {
     var _a2;
     this.plugin.providerFactory.abort();
+    this.isStreaming = false;
     (_a2 = this.tokenBudgetBar) == null ? void 0 : _a2.destroy();
   }
   // ── UI Construction ────────────────────────────────────────────────────────
@@ -91934,79 +91936,84 @@ var ChatView = class extends import_obsidian3.ItemView {
     this.messageRenderer.appendBubble(userDisplayMsg);
     this.scrollToBottom();
     this.setStreaming(true);
-    this.showContextStatus("Building context\u2026");
-    let attachedNotesList = [];
-    const enriched = await this.plugin.contextBuilder.prependSystemMessage(
-      this.messages.slice(0, -1),
-      text || "See attachment(s)",
-      (s) => this.showContextStatus(s),
-      (paths) => {
-        attachedNotesList = paths;
+    try {
+      this.showContextStatus("Building context\u2026");
+      let attachedNotesList = [];
+      const enriched = await this.plugin.contextBuilder.prependSystemMessage(
+        this.messages.slice(0, -1),
+        text || "See attachment(s)",
+        (s) => this.showContextStatus(s),
+        (paths) => {
+          attachedNotesList = paths;
+        }
+      );
+      if (attachedNotesList.length > 0) {
+        const userMsg = this.messages[this.messages.length - 1];
+        if (userMsg) {
+          userMsg.autoAttachedNotes = attachedNotesList;
+        }
+        userDisplayMsg.autoAttachedNotes = attachedNotesList;
+        this.messageRenderer.finalizeStreamingBubble(userDisplayMsg);
       }
-    );
-    if (attachedNotesList.length > 0) {
-      const userMsg = this.messages[this.messages.length - 1];
-      if (userMsg) {
-        userMsg.autoAttachedNotes = attachedNotesList;
-      }
-      userDisplayMsg.autoAttachedNotes = attachedNotesList;
-      this.messageRenderer.finalizeStreamingBubble(userDisplayMsg);
-    }
-    enriched.push({ role: "user", content: apiContent });
-    this.hideContextStatus();
-    const assistantDisplay = { role: "assistant", content: "", streaming: true, toolEvents: [] };
-    this.displayMessages.push(assistantDisplay);
-    this.messageRenderer.appendBubble(assistantDisplay);
-    let finalMessages = enriched;
-    const onChunk = (chunk) => {
-      if (chunk.type === "token" && chunk.content) {
-        assistantDisplay.content += chunk.content;
-        this.messageRenderer.patchStreamingContent(assistantDisplay);
-      } else if (chunk.type === "tool_start") {
-        assistantDisplay.toolEvents.push({ type: "start", name: chunk.toolName });
-        this.messageRenderer.patchStreamingContent(assistantDisplay);
-      } else if (chunk.type === "tool_end") {
-        const evList = assistantDisplay.toolEvents;
-        let last;
-        for (let i = evList.length - 1; i >= 0; i--) {
-          if (evList[i].name === chunk.toolName && evList[i].type === "start") {
-            last = evList[i];
-            break;
+      enriched.push({ role: "user", content: apiContent });
+      this.hideContextStatus();
+      const assistantDisplay = { role: "assistant", content: "", streaming: true, toolEvents: [] };
+      this.displayMessages.push(assistantDisplay);
+      this.messageRenderer.appendBubble(assistantDisplay);
+      let finalMessages = enriched;
+      const onChunk = (chunk) => {
+        if (chunk.type === "token" && chunk.content) {
+          assistantDisplay.content += chunk.content;
+          this.messageRenderer.patchStreamingContent(assistantDisplay);
+        } else if (chunk.type === "tool_start") {
+          assistantDisplay.toolEvents.push({ type: "start", name: chunk.toolName });
+          this.messageRenderer.patchStreamingContent(assistantDisplay);
+        } else if (chunk.type === "tool_end") {
+          const evList = assistantDisplay.toolEvents;
+          let last;
+          for (let i = evList.length - 1; i >= 0; i--) {
+            if (evList[i].name === chunk.toolName && evList[i].type === "start") {
+              last = evList[i];
+              break;
+            }
           }
+          if (!last && evList.length > 0)
+            last = evList[evList.length - 1];
+          if (last) {
+            last.type = "end";
+            last.result = chunk.toolResult;
+          }
+          this.messageRenderer.patchStreamingContent(assistantDisplay);
+        } else if (chunk.type === "error" && chunk.error) {
+          assistantDisplay.content = chunk.error;
+          assistantDisplay.role = "error";
+          this.messageRenderer.patchStreamingContent(assistantDisplay);
+        } else if (chunk.type === "done") {
+          assistantDisplay.streaming = false;
+          this.messageRenderer.finalizeStreamingBubble(assistantDisplay);
         }
-        if (!last && evList.length > 0)
-          last = evList[evList.length - 1];
-        if (last) {
-          last.type = "end";
-          last.result = chunk.toolResult;
+        this.scrollToBottom();
+      };
+      try {
+        const gen = this.plugin.providerFactory.runTurn(enriched, this.plugin.toolExecutor, onChunk);
+        for await (const msgs of gen) {
+          finalMessages = msgs;
         }
-        this.messageRenderer.patchStreamingContent(assistantDisplay);
-      } else if (chunk.type === "error" && chunk.error) {
-        assistantDisplay.content = chunk.error;
+      } catch (e) {
+        assistantDisplay.content = `Error: ${e.message}`;
         assistantDisplay.role = "error";
-        this.messageRenderer.patchStreamingContent(assistantDisplay);
-      } else if (chunk.type === "done") {
         assistantDisplay.streaming = false;
         this.messageRenderer.finalizeStreamingBubble(assistantDisplay);
       }
-      this.scrollToBottom();
-    };
-    try {
-      const gen = this.plugin.providerFactory.runTurn(enriched, this.plugin.toolExecutor, onChunk);
-      for await (const msgs of gen) {
-        finalMessages = msgs;
-      }
+      this.messages = finalMessages.filter((m) => m.role !== "system");
+      this.sessionManager.save(this.messages);
+      this.updateTokenBar();
     } catch (e) {
-      assistantDisplay.content = `Error: ${e.message}`;
-      assistantDisplay.role = "error";
-      assistantDisplay.streaming = false;
-      this.messageRenderer.finalizeStreamingBubble(assistantDisplay);
+      new import_obsidian3.Notice(`Error: ${e.message}`);
+    } finally {
+      this.setStreaming(false);
+      this.scrollToBottom();
     }
-    this.messages = finalMessages.filter((m) => m.role !== "system");
-    this.sessionManager.save(this.messages);
-    this.updateTokenBar();
-    this.setStreaming(false);
-    this.scrollToBottom();
     if (this.plugin.settings.memoryEnabled && this.plugin.settings.autoExtractMemory) {
       this.plugin.memoryExtractor.extractAndSave(
         this.messages.slice(-6),
