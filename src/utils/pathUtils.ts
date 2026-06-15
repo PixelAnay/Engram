@@ -1,4 +1,6 @@
 // ─── Path Validation & Sanitisation Utilities ────────────────────────────────
+import type { EngramSettings } from '../types';
+
 
 /**
  * Normalise a path: convert all backslashes to forward slashes, collapse
@@ -104,3 +106,63 @@ export function validateVaultPath(raw: unknown): string | null {
   // ── 13. Final empty guard after normalisation ─────────────────────────────
   return normalised || null;
 }
+
+/**
+ * Check if a vault-relative path is allowed under the current settings.
+ * Enforces exclusion patterns and folder scope (allowlist/denylist).
+ */
+export function isPathAllowed(path: string, settings: EngramSettings): boolean {
+  const normalised = normalisePath(path);
+  if (!normalised) return false;
+
+  // 1. Block .obsidian internals
+  if (isObsidianInternal(normalised)) return false;
+
+  // 2. Block exclude patterns (globs)
+  const matchesGlob = (p: string, pattern: string) => {
+    // Compile glob to regex
+    const escaped = pattern
+      .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+      .replace(/\*\*/g, '<<<DS>>>')
+      .replace(/\*/g, '[^/]*')
+      .replace(/<<<DS>>>/g, '.*');
+    try {
+      const regex = new RegExp(`^${escaped}$`, 'i');
+      return regex.test(p);
+    } catch {
+      return false;
+    }
+  };
+
+  if (settings.excludePatterns && settings.excludePatterns.some(pat => matchesGlob(normalised, pat))) {
+    return false;
+  }
+
+  // Normalise scopeMode (to support older or incorrect 'allow' / 'block' settings)
+  let mode = settings.scopeMode as string;
+  if (mode === 'allow') mode = 'allowlist';
+  if (mode === 'block') mode = 'denylist';
+
+  if (mode === 'allowlist') {
+    if (!settings.scopeFolders || settings.scopeFolders.length === 0) {
+      return false;
+    }
+    return settings.scopeFolders.some(f => {
+      const normFolder = normalisePath(f);
+      return normalised === normFolder || normalised.startsWith(normFolder + '/');
+    });
+  }
+
+  if (mode === 'denylist') {
+    if (settings.scopeFolders && settings.scopeFolders.length > 0) {
+      const isBlocked = settings.scopeFolders.some(f => {
+        const normFolder = normalisePath(f);
+        return normalised === normFolder || normalised.startsWith(normFolder + '/');
+      });
+      if (isBlocked) return false;
+    }
+  }
+
+  return true;
+}
+
