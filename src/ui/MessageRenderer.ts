@@ -17,6 +17,7 @@ export interface DisplayMessage {
   role: 'user' | 'assistant' | 'error';
   content: string;
   attachments?: { name: string; type: string; dataUrl: string }[];
+  autoAttachedNotes?: string[];
   toolEvents?: ToolEvent[];
   streaming?: boolean;
 }
@@ -195,6 +196,32 @@ export class MessageRenderer {
         if (msg.role === 'assistant') {
           this.makeNoteLinksClickable(contentEl);
         }
+      }
+    }
+
+    // Auto-attached notes (semantic context)
+    if (msg.autoAttachedNotes && msg.autoAttachedNotes.length > 0) {
+      const autoAttachedContainer = bubble.appendChild(document.createElement('div'));
+      autoAttachedContainer.className = 'engram-auto-attached-container';
+
+      const header = autoAttachedContainer.appendChild(document.createElement('div'));
+      header.className = 'engram-auto-attached-header';
+      header.textContent = `🧠 Auto-attached ${msg.autoAttachedNotes.length} note${msg.autoAttachedNotes.length > 1 ? 's' : ''}`;
+
+      const list = autoAttachedContainer.appendChild(document.createElement('div'));
+      list.className = 'engram-auto-attached-list';
+
+      for (const path of msg.autoAttachedNotes) {
+        const fileChip = list.appendChild(document.createElement('div'));
+        fileChip.className = 'engram-auto-attached-chip';
+        const basename = path.split('/').pop() || path;
+        fileChip.textContent = basename;
+        fileChip.title = path;
+        fileChip.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          this.onNoteClick(path);
+        });
       }
     }
 
@@ -456,7 +483,7 @@ export class MessageRenderer {
         continue;
       }
 
-      result.push({ role: msg.role, content, attachments: msg.attachments, toolEvents });
+      result.push({ role: msg.role, content, attachments: msg.attachments, autoAttachedNotes: msg.autoAttachedNotes, toolEvents });
     }
 
     return result;

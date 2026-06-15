@@ -1472,3 +1472,47 @@
   0%, 100% { transform: translateY(0); }
   50%       { transform: translateY(-6px); }
 }
+
+/* ── Auto Attached Notes UI ───────────────────────────────────────────────── */
+.engram-auto-attached-container {
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--background-modifier-border);
+}
+
+.engram-auto-attached-header {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.engram-auto-attached-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.engram-auto-attached-chip {
+  font-size: 10.5px;
+  padding: 2px 6px;
+  background-color: var(--background-secondary-alt);
+  color: var(--text-normal);
+  border-radius: 4px;
+  border: 1px solid var(--background-modifier-border);
+  cursor: pointer;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.engram-auto-attached-chip:hover {
+  background-color: var(--background-modifier-hover);
+  border-color: var(--interactive-accent);
+  color: var(--interactive-accent);
+}

@@ -15,6 +15,7 @@ export interface ChatMessage {
   name?: string;
   /** Stripped before persistence — blobs only live for the duration of the API call */
   attachments?: { name: string; type: string; dataUrl: string }[];
+  autoAttachedNotes?: string[];
 }
 
 export interface ToolCall {

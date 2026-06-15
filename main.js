@@ -90996,6 +90996,27 @@ var MessageRenderer = class {
         }
       }
     }
+    if (msg.autoAttachedNotes && msg.autoAttachedNotes.length > 0) {
+      const autoAttachedContainer = bubble.appendChild(document.createElement("div"));
+      autoAttachedContainer.className = "engram-auto-attached-container";
+      const header = autoAttachedContainer.appendChild(document.createElement("div"));
+      header.className = "engram-auto-attached-header";
+      header.textContent = `\u{1F9E0} Auto-attached ${msg.autoAttachedNotes.length} note${msg.autoAttachedNotes.length > 1 ? "s" : ""}`;
+      const list = autoAttachedContainer.appendChild(document.createElement("div"));
+      list.className = "engram-auto-attached-list";
+      for (const path of msg.autoAttachedNotes) {
+        const fileChip = list.appendChild(document.createElement("div"));
+        fileChip.className = "engram-auto-attached-chip";
+        const basename = path.split("/").pop() || path;
+        fileChip.textContent = basename;
+        fileChip.title = path;
+        fileChip.addEventListener("click", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          this.onNoteClick(path);
+        });
+      }
+    }
     const hasText = msg.content.trim().length > 0;
     if (msg.streaming && !hasText) {
       const thinkingEl = contentEl.appendChild(document.createElement("div"));
@@ -91243,7 +91264,7 @@ var MessageRenderer = class {
       if (!content.trim() && (!msg.attachments || msg.attachments.length === 0) && (!toolEvents || toolEvents.length === 0)) {
         continue;
       }
-      result.push({ role: msg.role, content, attachments: msg.attachments, toolEvents });
+      result.push({ role: msg.role, content, attachments: msg.attachments, autoAttachedNotes: msg.autoAttachedNotes, toolEvents });
     }
     return result;
   }
@@ -91914,11 +91935,23 @@ var ChatView = class extends import_obsidian3.ItemView {
     this.scrollToBottom();
     this.setStreaming(true);
     this.showContextStatus("Building context\u2026");
+    let attachedNotesList = [];
     const enriched = await this.plugin.contextBuilder.prependSystemMessage(
       this.messages.slice(0, -1),
       text || "See attachment(s)",
-      (s) => this.showContextStatus(s)
+      (s) => this.showContextStatus(s),
+      (paths) => {
+        attachedNotesList = paths;
+      }
     );
+    if (attachedNotesList.length > 0) {
+      const userMsg = this.messages[this.messages.length - 1];
+      if (userMsg) {
+        userMsg.autoAttachedNotes = attachedNotesList;
+      }
+      userDisplayMsg.autoAttachedNotes = attachedNotesList;
+      this.messageRenderer.finalizeStreamingBubble(userDisplayMsg);
+    }
     enriched.push({ role: "user", content: apiContent });
     this.hideContextStatus();
     const assistantDisplay = { role: "assistant", content: "", streaming: true, toolEvents: [] };
@@ -93917,7 +93950,7 @@ var ContextBuilder = class {
    * @param userMessage  The user's latest message (used for relevant-note hints)
    * @param onStatus     Optional callback to report loading status to the UI
    */
-  async buildSystemMessage(userMessage, onStatus) {
+  async buildSystemMessage(userMessage, onStatus, onAttachedNotes) {
     var _a2, _b;
     const result = [];
     const activePersona = (_a2 = this.settings.personas.find(
@@ -93968,6 +94001,7 @@ ${vaultMap}`;
         relevantPaths = results.map((r) => r.path);
       }
       if (relevantPaths.length > 0) {
+        onAttachedNotes == null ? void 0 : onAttachedNotes(relevantPaths);
         onStatus == null ? void 0 : onStatus(`Loading ${relevantPaths.length} note(s)\u2026`);
         let notesContent = "\n\n## Relevant Notes\n";
         let tokenBudget = Math.floor(this.settings.contextWindowTokens * 0.25);
@@ -94000,9 +94034,9 @@ ${content}
    * Prepend system message to a message array.
    * Trims history to maxRecentMessages before the new user message.
    */
-  async prependSystemMessage(history, userMessage, onStatus) {
+  async prependSystemMessage(history, userMessage, onStatus, onAttachedNotes) {
     var _a2;
-    const systemMessages = await this.buildSystemMessage(userMessage, onStatus);
+    const systemMessages = await this.buildSystemMessage(userMessage, onStatus, onAttachedNotes);
     const maxRecent = (_a2 = this.settings.maxRecentMessages) != null ? _a2 : 20;
     const trimmed = history.slice(-maxRecent);
     return [...systemMessages, ...trimmed];
