@@ -547,16 +547,6 @@ export class ChatView extends ItemView {
     setTimeout(() => { this.memoryToast.setCssStyles({ display: 'none' }); }, 3000);
   }
 
-  public reloadActiveSession(): void {
-    const session = this.sessionManager.currentSession;
-    if (session) {
-      this.messages = [...session.messages];
-      this.displayMessages = MessageRenderer.buildDisplayMessages(this.messages);
-      this.renderMessages();
-      this.refreshSessionControls();
-      this.updateTokenBar();
-    }
-  }
 
   // ── Chat switcher ──────────────────────────────────────────────────────────
 

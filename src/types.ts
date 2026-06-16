@@ -118,7 +118,6 @@ export interface EngramSettings {
   // Edit safety
   showDiffPreview: boolean;
   diffPreviewThreshold: number;
-  enableVaultSync: boolean;
   showAdvancedSettings?: boolean;
 }
 
