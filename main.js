@@ -92040,27 +92040,28 @@ var ChatView = class extends import_obsidian3.ItemView {
   }
   // ── Chat switcher ──────────────────────────────────────────────────────────
   showChatSwitcher() {
-    document.querySelectorAll(".engram-chat-overlay").forEach((el) => el.remove());
-    const overlay = document.createElement("div");
+    const document2 = activeDocument;
+    document2.querySelectorAll(".engram-chat-overlay").forEach((el) => el.remove());
+    const overlay = document2.createElement("div");
     overlay.className = "engram-modal-overlay engram-chat-overlay";
-    const panel = overlay.appendChild(document.createElement("div"));
+    const panel = overlay.appendChild(document2.createElement("div"));
     panel.className = "engram-modal";
-    const title = panel.appendChild(document.createElement("div"));
+    const title = panel.appendChild(document2.createElement("div"));
     title.className = "engram-modal-title";
     title.textContent = "\u{1F4AC} Switch Chat";
-    const sub = panel.appendChild(document.createElement("div"));
+    const sub = panel.appendChild(document2.createElement("div"));
     sub.className = "engram-modal-subtitle";
     sub.textContent = "Select, rename, or delete conversation history.";
-    const list = panel.appendChild(document.createElement("div"));
+    const list = panel.appendChild(document2.createElement("div"));
     list.className = "engram-chat-list";
     for (const session of this.sessionManager.allSessions) {
-      const item = list.appendChild(document.createElement("div"));
+      const item = list.appendChild(document2.createElement("div"));
       item.className = "engram-chat-item";
       if (session.id === this.sessionManager.currentId) {
         item.addClass("is-active");
         item.setCssStyles({ borderColor: "var(--color-accent)" });
       }
-      const name = item.appendChild(document.createElement("span"));
+      const name = item.appendChild(document2.createElement("span"));
       name.className = "engram-chat-desc";
       name.textContent = session.title;
       name.addEventListener("click", (e) => {
@@ -92068,15 +92069,15 @@ var ChatView = class extends import_obsidian3.ItemView {
         this.switchToSession(session.id);
         overlay.remove();
       });
-      const actions = item.appendChild(document.createElement("div"));
+      const actions = item.appendChild(document2.createElement("div"));
       actions.className = "engram-chat-item-actions";
-      const renameBtn = actions.appendChild(document.createElement("button"));
+      const renameBtn = actions.appendChild(document2.createElement("button"));
       renameBtn.className = "engram-chat-item-btn";
       renameBtn.title = "Rename chat";
       (0, import_obsidian3.setIcon)(renameBtn, "pencil");
       renameBtn.addEventListener("click", (e) => {
         e.stopPropagation();
-        const input = document.createElement("input");
+        const input = document2.createElement("input");
         input.type = "text";
         input.className = "engram-chat-rename-input";
         input.value = session.title;
@@ -92110,7 +92111,7 @@ var ChatView = class extends import_obsidian3.ItemView {
           saveRename();
         });
       });
-      const deleteBtn = actions.appendChild(document.createElement("button"));
+      const deleteBtn = actions.appendChild(document2.createElement("button"));
       deleteBtn.className = "engram-chat-item-btn is-danger";
       deleteBtn.title = "Delete chat";
       (0, import_obsidian3.setIcon)(deleteBtn, "trash-2");
@@ -92128,7 +92129,7 @@ var ChatView = class extends import_obsidian3.ItemView {
         }
       });
     }
-    const closeBtn = panel.appendChild(document.createElement("button"));
+    const closeBtn = panel.appendChild(document2.createElement("button"));
     closeBtn.className = "engram-modal-cancel";
     closeBtn.textContent = "Close";
     closeBtn.setCssStyles({ marginTop: "8px" });
@@ -92137,33 +92138,34 @@ var ChatView = class extends import_obsidian3.ItemView {
       if (e.target === overlay)
         overlay.remove();
     });
-    document.body.appendChild(overlay);
+    document2.body.appendChild(overlay);
   }
   // ── Persona switcher ───────────────────────────────────────────────────────
   showPersonaSwitcher() {
-    document.querySelectorAll(".engram-persona-overlay").forEach((el) => el.remove());
-    const overlay = document.createElement("div");
+    const document2 = activeDocument;
+    document2.querySelectorAll(".engram-persona-overlay").forEach((el) => el.remove());
+    const overlay = document2.createElement("div");
     overlay.className = "engram-modal-overlay engram-persona-overlay";
-    const panel = overlay.appendChild(document.createElement("div"));
+    const panel = overlay.appendChild(document2.createElement("div"));
     panel.className = "engram-modal";
-    const title = panel.appendChild(document.createElement("div"));
+    const title = panel.appendChild(document2.createElement("div"));
     title.className = "engram-modal-title";
     title.textContent = "\u{1F3AD} Switch Persona";
-    const sub = panel.appendChild(document.createElement("div"));
+    const sub = panel.appendChild(document2.createElement("div"));
     sub.className = "engram-modal-subtitle";
     sub.textContent = "Takes effect from the next message.";
-    const list = panel.appendChild(document.createElement("div"));
+    const list = panel.appendChild(document2.createElement("div"));
     list.className = "engram-undo-list";
     for (const persona of this.plugin.settings.personas) {
-      const item = list.appendChild(document.createElement("div"));
+      const item = list.appendChild(document2.createElement("div"));
       item.className = "engram-undo-item";
       if (persona.id === this.plugin.settings.activePersonaId)
         item.setCssStyles({ borderColor: "var(--color-accent)" });
-      const name = item.appendChild(document.createElement("span"));
+      const name = item.appendChild(document2.createElement("span"));
       name.className = "engram-undo-desc";
       name.textContent = persona.name;
       if (persona.id === this.plugin.settings.activePersonaId) {
-        const active = item.appendChild(document.createElement("span"));
+        const active = item.appendChild(document2.createElement("span"));
         active.className = "engram-undo-time";
         active.textContent = "active";
       }
@@ -92175,7 +92177,7 @@ var ChatView = class extends import_obsidian3.ItemView {
         new import_obsidian3.Notice(`\u{1F3AD} Persona: ${persona.name}`);
       });
     }
-    const closeBtn = panel.appendChild(document.createElement("button"));
+    const closeBtn = panel.appendChild(document2.createElement("button"));
     closeBtn.className = "engram-modal-cancel";
     closeBtn.textContent = "Close";
     closeBtn.setCssStyles({ marginTop: "8px" });
@@ -92184,7 +92186,7 @@ var ChatView = class extends import_obsidian3.ItemView {
       if (e.target === overlay)
         overlay.remove();
     });
-    document.body.appendChild(overlay);
+    document2.body.appendChild(overlay);
   }
   // ── Export ─────────────────────────────────────────────────────────────────
   async exportConversation() {
@@ -92225,32 +92227,33 @@ var ChatView = class extends import_obsidian3.ItemView {
   }
   // ── Undo panel ────────────────────────────────────────────────────────────
   showUndoPanel() {
+    const document2 = activeDocument;
     const history = this.plugin.toolExecutor.undoHistory;
     if (history.length === 0) {
       new import_obsidian3.Notice("Nothing to undo");
       return;
     }
-    document.querySelectorAll(".engram-undo-panel-overlay").forEach((el) => el.remove());
-    const overlay = document.createElement("div");
+    document2.querySelectorAll(".engram-undo-panel-overlay").forEach((el) => el.remove());
+    const overlay = document2.createElement("div");
     overlay.className = "engram-modal-overlay engram-undo-panel-overlay";
-    const panel = overlay.appendChild(document.createElement("div"));
+    const panel = overlay.appendChild(document2.createElement("div"));
     panel.className = "engram-modal engram-undo-panel";
-    const title = panel.appendChild(document.createElement("div"));
+    const title = panel.appendChild(document2.createElement("div"));
     title.className = "engram-modal-title";
     title.textContent = "\u21A9\uFE0F Undo History";
-    const sub = panel.appendChild(document.createElement("div"));
+    const sub = panel.appendChild(document2.createElement("div"));
     sub.className = "engram-modal-subtitle";
     sub.textContent = "Click an entry to undo that operation.";
-    const list = panel.appendChild(document.createElement("div"));
+    const list = panel.appendChild(document2.createElement("div"));
     list.className = "engram-undo-list";
     [...history].reverse().forEach((entry, ri) => {
       const actualIdx = history.length - 1 - ri;
-      const item = list.appendChild(document.createElement("div"));
+      const item = list.appendChild(document2.createElement("div"));
       item.className = "engram-undo-item";
-      const desc = item.appendChild(document.createElement("span"));
+      const desc = item.appendChild(document2.createElement("span"));
       desc.className = "engram-undo-desc";
       desc.textContent = entry.description;
-      const time = item.appendChild(document.createElement("span"));
+      const time = item.appendChild(document2.createElement("span"));
       time.className = "engram-undo-time";
       const ago = Math.round((Date.now() - entry.timestamp) / 1e3);
       time.textContent = ago < 60 ? `${ago}s ago` : `${Math.round(ago / 60)}m ago`;
@@ -92260,7 +92263,7 @@ var ChatView = class extends import_obsidian3.ItemView {
         new import_obsidian3.Notice(path ? `\u21A9\uFE0F Undid: "${entry.description}"` : "Could not undo");
       });
     });
-    const closeBtn = panel.appendChild(document.createElement("button"));
+    const closeBtn = panel.appendChild(document2.createElement("button"));
     closeBtn.className = "engram-modal-cancel";
     closeBtn.textContent = "Close";
     closeBtn.setCssStyles({ marginTop: "8px" });
@@ -92269,7 +92272,7 @@ var ChatView = class extends import_obsidian3.ItemView {
       if (e.target === overlay)
         overlay.remove();
     });
-    document.body.appendChild(overlay);
+    document2.body.appendChild(overlay);
   }
   // ── Rendering ─────────────────────────────────────────────────────────────
   renderMessages() {
@@ -95724,9 +95727,9 @@ var EngramPlugin = class extends import_obsidian10.Plugin {
   }
   onunload() {
     if (this.indexRebuildTimer)
-      clearTimeout(this.indexRebuildTimer);
+      window.clearTimeout(this.indexRebuildTimer);
     if (this.chatPersistTimer)
-      clearTimeout(this.chatPersistTimer);
+      window.clearTimeout(this.chatPersistTimer);
   }
   // ── Settings ────────────────────────────────────────────────────────────────
   async loadSettings() {
@@ -95809,8 +95812,8 @@ var EngramPlugin = class extends import_obsidian10.Plugin {
   }
   scheduleSaveChatSessions() {
     if (this.chatPersistTimer)
-      clearTimeout(this.chatPersistTimer);
-    this.chatPersistTimer = setTimeout(() => this.saveChatSessions(), 800);
+      window.clearTimeout(this.chatPersistTimer);
+    this.chatPersistTimer = window.setTimeout(() => this.saveChatSessions(), 800);
   }
   upsertChatSession(session) {
     const idx = this.chatSessions.findIndex((s) => s.id === session.id);
@@ -95919,8 +95922,8 @@ var EngramPlugin = class extends import_obsidian10.Plugin {
   }
   schedulePersist() {
     if (this.indexRebuildTimer)
-      clearTimeout(this.indexRebuildTimer);
-    this.indexRebuildTimer = setTimeout(() => this.persistIndex(), 5e3);
+      window.clearTimeout(this.indexRebuildTimer);
+    this.indexRebuildTimer = window.setTimeout(() => this.persistIndex(), 5e3);
   }
   // ── View ──────────────────────────────────────────────────────────────────────
   async activateView() {
