@@ -26,6 +26,7 @@ export class SessionManager {
 
   /** Initialize: load most recent session or create a fresh one. */
   initialize(): ChatSession {
+    this.cleanEmptySessions();
     const first = this.plugin.chatSessions[0];
     if (first) {
       this.currentChatId = first.id;
@@ -36,6 +37,7 @@ export class SessionManager {
 
   /** Create a brand-new session and make it active. */
   createAndActivate(title = 'New chat'): ChatSession {
+    this.cleanEmptySessions();
     const session = this.buildNewSession(title);
     this.plugin.upsertChatSession(session);
     this.currentChatId = session.id;
@@ -44,6 +46,7 @@ export class SessionManager {
 
   /** Switch the active session to `id`. Returns the session if found. */
   switchTo(id: string): ChatSession | null {
+    this.cleanEmptySessions();
     const session = this.plugin.chatSessions.find(s => s.id === id);
     if (!session) return null;
     this.currentChatId = session.id;
@@ -59,6 +62,16 @@ export class SessionManager {
     const next = this.plugin.chatSessions[0];
     this.currentChatId = next.id;
     return next;
+  }
+
+  cleanEmptySessions(): void {
+    const activeId = this.currentChatId;
+    const toDelete = this.plugin.chatSessions.filter(
+      s => s.id !== activeId && (!s.messages || s.messages.length === 0)
+    );
+    for (const session of toDelete) {
+      this.plugin.deleteChatSession(session.id);
+    }
   }
 
   /**
