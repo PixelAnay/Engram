@@ -91661,13 +91661,11 @@ var ChatView = class extends import_obsidian3.ItemView {
     this.statusLabel.textContent = "Connecting\u2026";
     this.noteCountEl = statusRow.createSpan("engram-note-count");
     const sessionControls = header.createDiv("engram-chat-session-controls");
-    this.chatSelectEl = sessionControls.createEl("select", { cls: "engram-chat-select" });
-    this.chatSelectEl.addEventListener("change", () => {
-      if (this.isStreaming) {
-        this.chatSelectEl.value = this.sessionManager.currentId;
+    this.chatSelectBtn = sessionControls.createEl("button", { cls: "engram-chat-select-btn", title: "Switch chat" });
+    this.chatSelectBtn.addEventListener("click", () => {
+      if (this.isStreaming)
         return;
-      }
-      this.switchToSession(this.chatSelectEl.value);
+      this.showChatSwitcher();
     });
     const newChatBtn = sessionControls.createEl("button", {
       cls: "engram-session-btn",
@@ -91675,9 +91673,6 @@ var ChatView = class extends import_obsidian3.ItemView {
       title: "Start new chat"
     });
     newChatBtn.addEventListener("click", () => this.startNewChat());
-    this.deleteChatBtn = sessionControls.createEl("button", { cls: "engram-icon-btn", title: "Delete chat" });
-    (0, import_obsidian3.setIcon)(this.deleteChatBtn, "trash-2");
-    this.deleteChatBtn.addEventListener("click", () => this.deleteCurrentChat());
     const headerActions = header.createDiv("engram-header-actions");
     const refreshBtn = headerActions.createEl("button", { cls: "engram-icon-btn", title: "Check connection" });
     (0, import_obsidian3.setIcon)(refreshBtn, "refresh-cw");
@@ -91872,22 +91867,6 @@ var ChatView = class extends import_obsidian3.ItemView {
     this.updateTokenBar();
     this.inputArea.focus();
   }
-  deleteCurrentChat() {
-    if (this.isStreaming)
-      return;
-    const session = this.sessionManager.currentSession;
-    if (!session)
-      return;
-    if (!window.confirm(`Delete "${session.title}"?`))
-      return;
-    const next = this.sessionManager.delete(session.id);
-    this.messages = [...next.messages];
-    this.displayMessages = MessageRenderer.buildDisplayMessages(this.messages);
-    this.pendingAttachments = [];
-    this.renderMessages();
-    this.refreshSessionControls();
-    this.updateTokenBar();
-  }
   clearChat() {
     if (this.isStreaming)
       return;
@@ -91898,18 +91877,17 @@ var ChatView = class extends import_obsidian3.ItemView {
     this.updateTokenBar();
   }
   refreshSessionControls() {
-    if (!this.chatSelectEl)
+    var _a2;
+    if (!this.chatSelectBtn)
       return;
-    this.chatSelectEl.empty();
-    for (const s of this.sessionManager.allSessions) {
-      const opt = this.chatSelectEl.createEl("option");
-      opt.value = s.id;
-      opt.textContent = s.title;
-    }
-    this.chatSelectEl.value = this.sessionManager.currentId;
+    this.chatSelectBtn.empty();
+    const session = this.sessionManager.currentSession;
+    const title = (_a2 = session == null ? void 0 : session.title) != null ? _a2 : "Select chat\u2026";
+    const textSpan = this.chatSelectBtn.createSpan({ text: title, cls: "engram-chat-select-btn-text" });
+    const iconSpan = this.chatSelectBtn.createSpan({ cls: "engram-chat-select-btn-icon" });
+    (0, import_obsidian3.setIcon)(iconSpan, "chevron-down");
     const has = this.sessionManager.allSessions.length > 0;
-    this.chatSelectEl.disabled = !has || this.isStreaming;
-    this.deleteChatBtn.disabled = !has || this.isStreaming;
+    this.chatSelectBtn.disabled = !has || this.isStreaming;
   }
   // ── Send ───────────────────────────────────────────────────────────────────
   async sendMessage() {
@@ -92047,6 +92025,107 @@ var ChatView = class extends import_obsidian3.ItemView {
     setTimeout(() => {
       this.memoryToast.setCssStyles({ display: "none" });
     }, 3e3);
+  }
+  // ── Chat switcher ──────────────────────────────────────────────────────────
+  showChatSwitcher() {
+    document.querySelectorAll(".engram-chat-overlay").forEach((el) => el.remove());
+    const overlay = document.createElement("div");
+    overlay.className = "engram-modal-overlay engram-chat-overlay";
+    const panel = overlay.appendChild(document.createElement("div"));
+    panel.className = "engram-modal";
+    const title = panel.appendChild(document.createElement("div"));
+    title.className = "engram-modal-title";
+    title.textContent = "\u{1F4AC} Switch Chat";
+    const sub = panel.appendChild(document.createElement("div"));
+    sub.className = "engram-modal-subtitle";
+    sub.textContent = "Select, rename, or delete conversation history.";
+    const list = panel.appendChild(document.createElement("div"));
+    list.className = "engram-chat-list";
+    for (const session of this.sessionManager.allSessions) {
+      const item = list.appendChild(document.createElement("div"));
+      item.className = "engram-chat-item";
+      if (session.id === this.sessionManager.currentId) {
+        item.addClass("is-active");
+        item.setCssStyles({ borderColor: "var(--color-accent)" });
+      }
+      const name = item.appendChild(document.createElement("span"));
+      name.className = "engram-chat-desc";
+      name.textContent = session.title;
+      name.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this.switchToSession(session.id);
+        overlay.remove();
+      });
+      const actions = item.appendChild(document.createElement("div"));
+      actions.className = "engram-chat-item-actions";
+      const renameBtn = actions.appendChild(document.createElement("button"));
+      renameBtn.className = "engram-chat-item-btn";
+      renameBtn.title = "Rename chat";
+      (0, import_obsidian3.setIcon)(renameBtn, "pencil");
+      renameBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const input = document.createElement("input");
+        input.type = "text";
+        input.className = "engram-chat-rename-input";
+        input.value = session.title;
+        item.replaceChild(input, name);
+        actions.style.display = "none";
+        input.focus();
+        input.select();
+        let saved = false;
+        const saveRename = async () => {
+          if (saved)
+            return;
+          saved = true;
+          const newTitle = input.value.trim();
+          if (newTitle && newTitle !== session.title) {
+            session.title = newTitle;
+            session.updatedAt = Date.now();
+            this.plugin.upsertChatSession(session);
+            this.refreshSessionControls();
+          }
+          this.showChatSwitcher();
+        };
+        input.addEventListener("keydown", (ke) => {
+          if (ke.key === "Enter") {
+            saveRename();
+          } else if (ke.key === "Escape") {
+            saved = true;
+            this.showChatSwitcher();
+          }
+        });
+        input.addEventListener("blur", () => {
+          saveRename();
+        });
+      });
+      const deleteBtn = actions.appendChild(document.createElement("button"));
+      deleteBtn.className = "engram-chat-item-btn is-danger";
+      deleteBtn.title = "Delete chat";
+      (0, import_obsidian3.setIcon)(deleteBtn, "trash-2");
+      deleteBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (window.confirm(`Delete chat "${session.title}"?`)) {
+          const next = this.sessionManager.delete(session.id);
+          this.messages = [...next.messages];
+          this.displayMessages = MessageRenderer.buildDisplayMessages(this.messages);
+          this.pendingAttachments = [];
+          this.renderMessages();
+          this.refreshSessionControls();
+          this.updateTokenBar();
+          this.showChatSwitcher();
+        }
+      });
+    }
+    const closeBtn = panel.appendChild(document.createElement("button"));
+    closeBtn.className = "engram-modal-cancel";
+    closeBtn.textContent = "Close";
+    closeBtn.setCssStyles({ marginTop: "8px" });
+    closeBtn.addEventListener("click", () => overlay.remove());
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay)
+        overlay.remove();
+    });
+    document.body.appendChild(overlay);
   }
   // ── Persona switcher ───────────────────────────────────────────────────────
   showPersonaSwitcher() {
