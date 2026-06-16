@@ -92038,16 +92038,6 @@ var ChatView = class extends import_obsidian3.ItemView {
       this.memoryToast.setCssStyles({ display: "none" });
     }, 3e3);
   }
-  reloadActiveSession() {
-    const session = this.sessionManager.currentSession;
-    if (session) {
-      this.messages = [...session.messages];
-      this.displayMessages = MessageRenderer.buildDisplayMessages(this.messages);
-      this.renderMessages();
-      this.refreshSessionControls();
-      this.updateTokenBar();
-    }
-  }
   // ── Chat switcher ──────────────────────────────────────────────────────────
   showChatSwitcher() {
     document.querySelectorAll(".engram-chat-overlay").forEach((el) => el.remove());
@@ -94965,8 +94955,7 @@ var DEFAULT_SETTINGS = {
   // Edit safety
   showDiffPreview: true,
   diffPreviewThreshold: 200,
-  showAdvancedSettings: false,
-  enableVaultSync: false
+  showAdvancedSettings: false
 };
 var EngramSettingTab = class extends import_obsidian9.PluginSettingTab {
   constructor(app, plugin) {
@@ -95215,18 +95204,6 @@ var EngramSettingTab = class extends import_obsidian9.PluginSettingTab {
         }
       })
     );
-    new import_obsidian9.Setting(containerEl).setName("\u{1F504} Device Synchronization").setHeading();
-    new import_obsidian9.Setting(containerEl).setName("Sync across devices").setDesc("Keep settings, chat history, and semantic index in sync between laptop and phone using a vault file (opt-in)").addToggle(
-      (toggle) => toggle.setValue(this.plugin.settings.enableVaultSync).onChange(async (value) => {
-        this.plugin.settings.enableVaultSync = value;
-        await this.save();
-        if (value) {
-          new import_obsidian9.Notice("Sync enabled. Sync file created in your Intelligence directory.");
-        } else {
-          new import_obsidian9.Notice("Sync disabled.");
-        }
-      })
-    );
     new import_obsidian9.Setting(containerEl).setName("\u{1F512} Vault Access").setHeading();
     const scopeSetting = new import_obsidian9.Setting(containerEl).setName("Knowledge scope").setDesc("Which folders Engram is allowed to read");
     const folderSelectorContainer = containerEl.createDiv({ cls: "engram-folder-list-container" });
@@ -95319,7 +95296,7 @@ var EngramSettingTab = class extends import_obsidian9.PluginSettingTab {
               e.stopPropagation();
               await toggleFolder();
             });
-            itemEl.setCssStyles({ cursor: "pointer" });
+            itemEl.style.cursor = "pointer";
             itemEl.addEventListener("click", async (e) => {
               if (e.target !== checkbox) {
                 checkbox.checked = !checkbox.checked;
@@ -95515,14 +95492,14 @@ var EngramSettingTab = class extends import_obsidian9.PluginSettingTab {
             text: `\u2705 ${this.plugin.embeddingIndex.entryCount} notes indexed`,
             cls: "engram-test-result engram-test-ok"
           });
-          indexStatusEl.setCssStyles({ marginLeft: "12px" });
+          indexStatusEl.style.marginLeft = "12px";
         } catch (err) {
           new import_obsidian9.Notice(`\u274C Indexing failed: ${(err == null ? void 0 : err.message) || err}`);
           indexStatusEl = indexEmbeddingsSetting.settingEl.createEl("span", {
             text: `\u274C Indexing failed`,
             cls: "engram-test-result engram-test-err"
           });
-          indexStatusEl.setCssStyles({ marginLeft: "12px" });
+          indexStatusEl.style.marginLeft = "12px";
         } finally {
           btn.setButtonText("Index Vault").setDisabled(false);
         }
@@ -95722,10 +95699,6 @@ var EngramPlugin = class extends import_obsidian10.Plugin {
   // ── Lifecycle ───────────────────────────────────────────────────────────────
   async onload() {
     await this.loadSettings();
-    const applied = await this.checkForSyncedData();
-    if (applied) {
-      await this.loadSettings();
-    }
     await this.loadChatSessions();
     this.initServices();
     this.registerView(ENGRAM_VIEW_TYPE, (leaf) => new ChatView(leaf, this));
@@ -95787,66 +95760,14 @@ var EngramPlugin = class extends import_obsidian10.Plugin {
     }
   }
   async saveSettings() {
-    var _a2, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l;
-    const now = Date.now();
-    if (this.settings.enableVaultSync) {
-      const adapter = this.app.vault.adapter;
-      const syncPath = this.getSyncFilePath();
-      if (await adapter.exists(syncPath)) {
-        try {
-          const content = await adapter.read(syncPath);
-          const syncData = JSON.parse(content);
-          if (syncData && syncData.settings) {
-            console.log("[Engram] Pulling existing sync data on enable\u2026");
-            this.settings = {
-              ...syncData.settings,
-              enableVaultSync: true
-            };
-            const localData = (_a2 = await this.loadData()) != null ? _a2 : {};
-            const newLocalData = {
-              ...localData,
-              settings: this.settings,
-              index: syncData.index || localData.index,
-              embeddings: syncData.embeddings || localData.embeddings,
-              chatSessions: syncData.chatSessions || localData.chatSessions,
-              syncUpdatedAt: syncData.updatedAt || now
-            };
-            await this.saveData(newLocalData);
-            (_b = this.providerFactory) == null ? void 0 : _b.updateSettings(this.settings);
-            (_c = this.toolExecutor) == null ? void 0 : _c.updateSettings(this.settings);
-            (_d = this.contextBuilder) == null ? void 0 : _d.updateSettings(this.settings);
-            (_e = this.indexer) == null ? void 0 : _e.updateSettings(this.settings);
-            (_f = this.memoryManager) == null ? void 0 : _f.updateConfig(this.settings.memoryPath, this.settings.maxMemoryTokens);
-            if (syncData.embeddings) {
-              this.embeddingIndex.load(syncData.embeddings);
-            }
-            if (syncData.index) {
-              await this.indexer.build(syncData.index);
-            }
-            await this.loadChatSessions();
-            const leaves2 = this.app.workspace.getLeavesOfType(ENGRAM_VIEW_TYPE);
-            for (const leaf of leaves2) {
-              if (leaf.view instanceof ChatView) {
-                leaf.view.onSettingsUpdate();
-                leaf.view.reloadActiveSession();
-              }
-            }
-            new import_obsidian10.Notice("\u{1F504} Engram: Synced settings, chat history, and index from vault!");
-            return;
-          }
-        } catch (e) {
-          console.error("[Engram] Error pulling sync data on enable:", e);
-        }
-      }
-    }
-    const existing = (_g = await this.loadData()) != null ? _g : {};
-    await this.saveData({ ...existing, settings: this.settings, syncUpdatedAt: now });
-    await this.writeToSyncFile(now);
-    (_h = this.providerFactory) == null ? void 0 : _h.updateSettings(this.settings);
-    (_i = this.toolExecutor) == null ? void 0 : _i.updateSettings(this.settings);
-    (_j = this.contextBuilder) == null ? void 0 : _j.updateSettings(this.settings);
-    (_k = this.indexer) == null ? void 0 : _k.updateSettings(this.settings);
-    (_l = this.memoryManager) == null ? void 0 : _l.updateConfig(this.settings.memoryPath, this.settings.maxMemoryTokens);
+    var _a2, _b, _c, _d, _e, _f;
+    const existing = (_a2 = await this.loadData()) != null ? _a2 : {};
+    await this.saveData({ ...existing, settings: this.settings });
+    (_b = this.providerFactory) == null ? void 0 : _b.updateSettings(this.settings);
+    (_c = this.toolExecutor) == null ? void 0 : _c.updateSettings(this.settings);
+    (_d = this.contextBuilder) == null ? void 0 : _d.updateSettings(this.settings);
+    (_e = this.indexer) == null ? void 0 : _e.updateSettings(this.settings);
+    (_f = this.memoryManager) == null ? void 0 : _f.updateConfig(this.settings.memoryPath, this.settings.maxMemoryTokens);
     this.buildIndexInBackground();
     const leaves = this.app.workspace.getLeavesOfType(ENGRAM_VIEW_TYPE);
     for (const leaf of leaves) {
@@ -95884,9 +95805,7 @@ var EngramPlugin = class extends import_obsidian10.Plugin {
   async saveChatSessions() {
     var _a2;
     const existing = (_a2 = await this.loadData()) != null ? _a2 : {};
-    const now = Date.now();
-    await this.saveData({ ...existing, chatSessions: this.chatSessions, syncUpdatedAt: now });
-    await this.writeToSyncFile(now);
+    await this.saveData({ ...existing, chatSessions: this.chatSessions });
   }
   scheduleSaveChatSessions() {
     if (this.chatPersistTimer)
@@ -95946,17 +95865,14 @@ var EngramPlugin = class extends import_obsidian10.Plugin {
   async persistIndex() {
     var _a2;
     const existing = (_a2 = await this.loadData()) != null ? _a2 : {};
-    const now = Date.now();
     const update = {
       ...existing,
-      index: this.indexer.getSerializable(),
-      syncUpdatedAt: now
+      index: this.indexer.getSerializable()
     };
     if (this.embeddingIndex.isReady) {
       update.embeddings = this.embeddingIndex.toJSON();
     }
     await this.saveData(update);
-    await this.writeToSyncFile(now);
   }
   async rebuildIndex() {
     new import_obsidian10.Notice("\u{1F9E0} Engram: Re-indexing vault\u2026");
@@ -95968,10 +95884,6 @@ var EngramPlugin = class extends import_obsidian10.Plugin {
   registerVaultEvents() {
     this.registerEvent(
       this.app.vault.on("create", async (file) => {
-        if (file.path === this.getSyncFilePath()) {
-          await this.applySyncUpdate();
-          return;
-        }
         if (file instanceof import_obsidian10.TFile && file.extension === "md") {
           await this.indexer.updateFile(file);
           this.schedulePersist();
@@ -95980,10 +95892,6 @@ var EngramPlugin = class extends import_obsidian10.Plugin {
     );
     this.registerEvent(
       this.app.vault.on("modify", async (file) => {
-        if (file.path === this.getSyncFilePath()) {
-          await this.applySyncUpdate();
-          return;
-        }
         if (file instanceof import_obsidian10.TFile && file.extension === "md") {
           await this.indexer.updateFile(file);
           this.schedulePersist();
@@ -96028,110 +95936,5 @@ var EngramPlugin = class extends import_obsidian10.Plugin {
     }
     if (leaf)
       workspace.revealLeaf(leaf);
-  }
-  // ── Sync helpers ─────────────────────────────────────────────────────────────
-  async checkForSyncedData() {
-    var _a2, _b, _c;
-    try {
-      const adapter = this.app.vault.adapter;
-      const syncPath = this.getSyncFilePath();
-      if (await adapter.exists(syncPath)) {
-        const content = await adapter.read(syncPath);
-        if (!content || !content.trim())
-          return false;
-        const syncData = JSON.parse(content);
-        if (syncData && typeof syncData.updatedAt === "number") {
-          const syncEnabled = ((_a2 = this.settings) == null ? void 0 : _a2.enableVaultSync) === true || ((_b = syncData.settings) == null ? void 0 : _b.enableVaultSync) === true;
-          if (!syncEnabled)
-            return false;
-          const localData = await this.loadData();
-          const localUpdatedAt = (_c = localData == null ? void 0 : localData.syncUpdatedAt) != null ? _c : 0;
-          if (syncData.updatedAt > localUpdatedAt) {
-            console.log(`[Engram] Synced data is newer than local data. Applying sync from ${syncPath}\u2026`);
-            const newLocalData = {
-              ...localData,
-              settings: syncData.settings ? {
-                ...syncData.settings,
-                enableVaultSync: true
-                // Auto-enable locally since sync is configured in the vault
-              } : localData == null ? void 0 : localData.settings,
-              index: syncData.index || (localData == null ? void 0 : localData.index),
-              embeddings: syncData.embeddings || (localData == null ? void 0 : localData.embeddings),
-              chatSessions: syncData.chatSessions || (localData == null ? void 0 : localData.chatSessions),
-              syncUpdatedAt: syncData.updatedAt
-            };
-            await this.saveData(newLocalData);
-            return true;
-          }
-        }
-      }
-    } catch (e) {
-      console.error("[Engram] Error checking for synced data:", e);
-    }
-    return false;
-  }
-  async applySyncUpdate() {
-    const applied = await this.checkForSyncedData();
-    if (applied) {
-      await this.loadSettings();
-      await this.loadChatSessions();
-      const data = await this.loadData();
-      if (data == null ? void 0 : data.embeddings) {
-        this.embeddingIndex.load(data.embeddings);
-      }
-      if (data == null ? void 0 : data.index) {
-        await this.indexer.build(data.index);
-      }
-      const leaves = this.app.workspace.getLeavesOfType(ENGRAM_VIEW_TYPE);
-      for (const leaf of leaves) {
-        if (leaf.view instanceof ChatView) {
-          leaf.view.onSettingsUpdate();
-          leaf.view.reloadActiveSession();
-        }
-      }
-      new import_obsidian10.Notice("\u{1F504} Engram: Settings, chat history, and semantic index synced from other device");
-    }
-  }
-  async writeToSyncFile(timestamp) {
-    var _a2;
-    if (!((_a2 = this.settings) == null ? void 0 : _a2.enableVaultSync))
-      return;
-    const isDefaultSettings = this.settings.activeProviderId === "local_llamacpp" && !this.settings.providerApiKey && this.chatSessions.length === 0;
-    if (isDefaultSettings) {
-      console.log("[Engram] Local settings are empty/default. Skipping write to sync file.");
-      return;
-    }
-    try {
-      const syncPath = this.getSyncFilePath();
-      const lastSlash = syncPath.lastIndexOf("/");
-      if (lastSlash >= 0) {
-        const parentDir = syncPath.substring(0, lastSlash);
-        if (!await this.app.vault.adapter.exists(parentDir)) {
-          await this.app.vault.createFolder(parentDir).catch(() => {
-          });
-        }
-      }
-      const syncData = {
-        updatedAt: timestamp,
-        settings: this.settings,
-        index: this.indexer.getSerializable(),
-        embeddings: this.embeddingIndex.isReady ? this.embeddingIndex.toJSON() : null,
-        chatSessions: this.chatSessions
-      };
-      await this.app.vault.adapter.write(syncPath, JSON.stringify(syncData));
-      console.log(`[Engram] Saved sync data to vault (${syncPath})`);
-    } catch (e) {
-      console.error("[Engram] Failed to write sync data:", e);
-    }
-  }
-  getSyncFilePath() {
-    var _a2;
-    const memPath = ((_a2 = this.settings) == null ? void 0 : _a2.memoryPath) || "Intelligence/Memory.md";
-    const lastSlash = memPath.lastIndexOf("/");
-    if (lastSlash >= 0) {
-      const parentDir = memPath.substring(0, lastSlash);
-      return `${parentDir}/engram-sync.json`;
-    }
-    return "engram-sync.json";
   }
 };

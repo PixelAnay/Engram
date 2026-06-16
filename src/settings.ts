@@ -111,7 +111,6 @@ export const DEFAULT_SETTINGS: EngramSettings = {
   showDiffPreview: true,
   diffPreviewThreshold: 200,
   showAdvancedSettings: false,
-  enableVaultSync: false,
 };
 
 // ── Settings Tab ────────────────────────────────────────────────────────────
@@ -481,26 +480,6 @@ export class EngramSettingTab extends PluginSettingTab {
           })
       );
 
-    // ── Device Sync ─────────────────────────────────────────────────────────
-    new Setting(containerEl).setName('🔄 Device Synchronization').setHeading();
-
-    new Setting(containerEl)
-      .setName('Sync across devices')
-      .setDesc('Keep settings, chat history, and semantic index in sync between laptop and phone using a vault file (opt-in)')
-      .addToggle(toggle =>
-        toggle
-          .setValue(this.plugin.settings.enableVaultSync)
-          .onChange(async value => {
-            this.plugin.settings.enableVaultSync = value;
-            await this.save();
-            if (value) {
-              new Notice('Sync enabled. Sync file created in your Intelligence directory.');
-            } else {
-              new Notice('Sync disabled.');
-            }
-          })
-      );
-
     // ── 4. Vault Access ─────────────────────────────────────────────────────
     new Setting(containerEl).setName('🔒 Vault Access').setHeading();
 
@@ -644,7 +623,7 @@ export class EngramSettingTab extends PluginSettingTab {
               await toggleFolder();
             });
 
-            itemEl.setCssStyles({ cursor: 'pointer' });
+            itemEl.style.cursor = 'pointer';
             itemEl.addEventListener('click', async (e) => {
               if (e.target !== checkbox) {
                 checkbox.checked = !checkbox.checked;
@@ -980,14 +959,14 @@ export class EngramSettingTab extends PluginSettingTab {
               text: `✅ ${this.plugin.embeddingIndex.entryCount} notes indexed`,
               cls: 'engram-test-result engram-test-ok'
             });
-            indexStatusEl.setCssStyles({ marginLeft: '12px' });
+            indexStatusEl.style.marginLeft = '12px';
           } catch (err: any) {
             new Notice(`❌ Indexing failed: ${err?.message || err}`);
             indexStatusEl = indexEmbeddingsSetting.settingEl.createEl('span', {
               text: `❌ Indexing failed`,
               cls: 'engram-test-result engram-test-err'
             });
-            indexStatusEl.setCssStyles({ marginLeft: '12px' });
+            indexStatusEl.style.marginLeft = '12px';
           } finally {
             btn.setButtonText('Index Vault').setDisabled(false);
           }
