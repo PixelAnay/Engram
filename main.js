@@ -95296,7 +95296,7 @@ var EngramSettingTab = class extends import_obsidian9.PluginSettingTab {
               e.stopPropagation();
               await toggleFolder();
             });
-            itemEl.style.cursor = "pointer";
+            itemEl.setCssStyles({ cursor: "pointer" });
             itemEl.addEventListener("click", async (e) => {
               if (e.target !== checkbox) {
                 checkbox.checked = !checkbox.checked;
@@ -95492,14 +95492,14 @@ var EngramSettingTab = class extends import_obsidian9.PluginSettingTab {
             text: `\u2705 ${this.plugin.embeddingIndex.entryCount} notes indexed`,
             cls: "engram-test-result engram-test-ok"
           });
-          indexStatusEl.style.marginLeft = "12px";
+          indexStatusEl.setCssStyles({ marginLeft: "12px" });
         } catch (err) {
           new import_obsidian9.Notice(`\u274C Indexing failed: ${(err == null ? void 0 : err.message) || err}`);
           indexStatusEl = indexEmbeddingsSetting.settingEl.createEl("span", {
             text: `\u274C Indexing failed`,
             cls: "engram-test-result engram-test-err"
           });
-          indexStatusEl.style.marginLeft = "12px";
+          indexStatusEl.setCssStyles({ marginLeft: "12px" });
         } finally {
           btn.setButtonText("Index Vault").setDisabled(false);
         }
