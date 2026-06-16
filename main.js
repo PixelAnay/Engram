@@ -96023,9 +96023,7 @@ var EngramPlugin = class extends import_obsidian10.Plugin {
   }
   // ── Sync helpers ─────────────────────────────────────────────────────────────
   async checkForSyncedData() {
-    var _a2, _b;
-    if (!((_a2 = this.settings) == null ? void 0 : _a2.enableVaultSync))
-      return false;
+    var _a2, _b, _c;
     try {
       const adapter = this.app.vault.adapter;
       const syncPath = this.getSyncFilePath();
@@ -96035,13 +96033,20 @@ var EngramPlugin = class extends import_obsidian10.Plugin {
           return false;
         const syncData = JSON.parse(content);
         if (syncData && typeof syncData.updatedAt === "number") {
+          const syncEnabled = ((_a2 = this.settings) == null ? void 0 : _a2.enableVaultSync) === true || ((_b = syncData.settings) == null ? void 0 : _b.enableVaultSync) === true;
+          if (!syncEnabled)
+            return false;
           const localData = await this.loadData();
-          const localUpdatedAt = (_b = localData == null ? void 0 : localData.syncUpdatedAt) != null ? _b : 0;
+          const localUpdatedAt = (_c = localData == null ? void 0 : localData.syncUpdatedAt) != null ? _c : 0;
           if (syncData.updatedAt > localUpdatedAt) {
             console.log(`[Engram] Synced data is newer than local data. Applying sync from ${syncPath}\u2026`);
             const newLocalData = {
               ...localData,
-              settings: syncData.settings || (localData == null ? void 0 : localData.settings),
+              settings: syncData.settings ? {
+                ...syncData.settings,
+                enableVaultSync: true
+                // Auto-enable locally since sync is configured in the vault
+              } : localData == null ? void 0 : localData.settings,
               index: syncData.index || (localData == null ? void 0 : localData.index),
               embeddings: syncData.embeddings || (localData == null ? void 0 : localData.embeddings),
               chatSessions: syncData.chatSessions || (localData == null ? void 0 : localData.chatSessions),
@@ -96058,9 +96063,6 @@ var EngramPlugin = class extends import_obsidian10.Plugin {
     return false;
   }
   async applySyncUpdate() {
-    var _a2;
-    if (!((_a2 = this.settings) == null ? void 0 : _a2.enableVaultSync))
-      return;
     const applied = await this.checkForSyncedData();
     if (applied) {
       await this.loadSettings();
@@ -96086,6 +96088,11 @@ var EngramPlugin = class extends import_obsidian10.Plugin {
     var _a2;
     if (!((_a2 = this.settings) == null ? void 0 : _a2.enableVaultSync))
       return;
+    const isDefaultSettings = this.settings.activeProviderId === "local_llamacpp" && !this.settings.providerApiKey && this.chatSessions.length === 0;
+    if (isDefaultSettings) {
+      console.log("[Engram] Local settings are empty/default. Skipping write to sync file.");
+      return;
+    }
     try {
       const syncPath = this.getSyncFilePath();
       const lastSlash = syncPath.lastIndexOf("/");
