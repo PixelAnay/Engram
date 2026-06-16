@@ -644,7 +644,7 @@ export class EngramSettingTab extends PluginSettingTab {
               await toggleFolder();
             });
 
-            itemEl.style.cursor = 'pointer';
+            itemEl.setCssStyles({ cursor: 'pointer' });
             itemEl.addEventListener('click', async (e) => {
               if (e.target !== checkbox) {
                 checkbox.checked = !checkbox.checked;
@@ -980,14 +980,14 @@ export class EngramSettingTab extends PluginSettingTab {
               text: `✅ ${this.plugin.embeddingIndex.entryCount} notes indexed`,
               cls: 'engram-test-result engram-test-ok'
             });
-            indexStatusEl.style.marginLeft = '12px';
+            indexStatusEl.setCssStyles({ marginLeft: '12px' });
           } catch (err: any) {
             new Notice(`❌ Indexing failed: ${err?.message || err}`);
             indexStatusEl = indexEmbeddingsSetting.settingEl.createEl('span', {
               text: `❌ Indexing failed`,
               cls: 'engram-test-result engram-test-err'
             });
-            indexStatusEl.style.marginLeft = '12px';
+            indexStatusEl.setCssStyles({ marginLeft: '12px' });
           } finally {
             btn.setButtonText('Index Vault').setDisabled(false);
           }

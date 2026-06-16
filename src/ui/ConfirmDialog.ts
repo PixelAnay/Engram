@@ -62,10 +62,12 @@ class ConfirmModal extends Modal {
     contentEl.createEl('p', { text: this.message, cls: 'engram-modal-subtitle' });
 
     const buttonContainer = contentEl.createDiv({ cls: 'engram-modal-btns' });
-    buttonContainer.style.display = 'flex';
-    buttonContainer.style.justifyContent = 'flex-end';
-    buttonContainer.style.gap = '8px';
-    buttonContainer.style.marginTop = '16px';
+    buttonContainer.setCssStyles({
+      display: 'flex',
+      justifyContent: 'flex-end',
+      gap: '8px',
+      marginTop: '16px'
+    });
 
     const cancelBtn = buttonContainer.createEl('button', {
       text: this.cancelLabel,
@@ -130,8 +132,10 @@ class PromptModal extends Modal {
     contentEl.createEl('p', { text: this.message, cls: 'engram-modal-subtitle' });
 
     const inputContainer = contentEl.createDiv({ cls: 'engram-modal-input-container' });
-    inputContainer.style.margin = '16px 0';
-    inputContainer.style.width = '100%';
+    inputContainer.setCssStyles({
+      margin: '16px 0',
+      width: '100%'
+    });
 
     const inputEl = inputContainer.createEl('input', {
       type: 'text',
@@ -139,18 +143,22 @@ class PromptModal extends Modal {
       value: this.value,
       cls: 'engram-modal-input'
     });
-    inputEl.style.width = '100%';
-    inputEl.style.padding = '8px 12px';
-    inputEl.style.border = '1px solid var(--engram-border)';
-    inputEl.style.borderRadius = 'var(--engram-radius-sm)';
-    inputEl.style.background = 'var(--engram-bg)';
-    inputEl.style.color = 'var(--engram-text)';
-    inputEl.style.fontSize = '14px';
+    inputEl.setCssStyles({
+      width: '100%',
+      padding: '8px 12px',
+      border: '1px solid var(--engram-border)',
+      borderRadius: 'var(--engram-radius-sm)',
+      background: 'var(--engram-bg)',
+      color: 'var(--engram-text)',
+      fontSize: '14px'
+    });
 
     const buttonContainer = contentEl.createDiv({ cls: 'engram-modal-btns' });
-    buttonContainer.style.display = 'flex';
-    buttonContainer.style.justifyContent = 'flex-end';
-    buttonContainer.style.gap = '8px';
+    buttonContainer.setCssStyles({
+      display: 'flex',
+      justifyContent: 'flex-end',
+      gap: '8px'
+    });
 
     const cancelBtn = buttonContainer.createEl('button', {
       text: this.cancelLabel,
