@@ -96026,13 +96026,8 @@ var EngramPlugin = class extends import_obsidian10.Plugin {
       if (leaf)
         await leaf.setViewState({ type: ENGRAM_VIEW_TYPE, active: true });
     }
-    if (leaf) {
-      if (typeof workspace.revealLeaf === "function") {
-        workspace.revealLeaf(leaf);
-      } else {
-        workspace.setActiveLeaf(leaf, { focus: true });
-      }
-    }
+    if (leaf)
+      workspace.revealLeaf(leaf);
   }
   // ── Sync helpers ─────────────────────────────────────────────────────────────
   async checkForSyncedData() {
