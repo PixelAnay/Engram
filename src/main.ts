@@ -28,6 +28,7 @@ export default class EngramPlugin extends Plugin {
   // ── Lifecycle ───────────────────────────────────────────────────────────────
 
   async onload(): Promise<void> {
+    await this.checkForSyncedData();
     await this.loadSettings();
     await this.loadChatSessions();
     this.initServices();
@@ -113,7 +114,9 @@ export default class EngramPlugin extends Plugin {
 
   async saveSettings(): Promise<void> {
     const existing = (await this.loadData()) ?? {};
-    await this.saveData({ ...existing, settings: this.settings });
+    const now = Date.now();
+    await this.saveData({ ...existing, settings: this.settings, syncUpdatedAt: now });
+    await this.writeToSyncFile(now);
 
     // Propagate to all services
     this.providerFactory?.updateSettings(this.settings);
@@ -171,7 +174,9 @@ export default class EngramPlugin extends Plugin {
 
   async saveChatSessions(): Promise<void> {
     const existing = (await this.loadData()) ?? {};
-    await this.saveData({ ...existing, chatSessions: this.chatSessions });
+    const now = Date.now();
+    await this.saveData({ ...existing, chatSessions: this.chatSessions, syncUpdatedAt: now });
+    await this.writeToSyncFile(now);
   }
 
   scheduleSaveChatSessions(): void {
@@ -237,14 +242,17 @@ export default class EngramPlugin extends Plugin {
 
   private async persistIndex(): Promise<void> {
     const existing = (await this.loadData()) ?? {};
+    const now = Date.now();
     const update: Record<string, unknown> = {
       ...existing,
       index: this.indexer.getSerializable(),
+      syncUpdatedAt: now,
     };
     if (this.embeddingIndex.isReady) {
       update.embeddings = this.embeddingIndex.toJSON();
     }
     await this.saveData(update);
+    await this.writeToSyncFile(now);
   }
 
   private async rebuildIndex(): Promise<void> {
@@ -259,6 +267,10 @@ export default class EngramPlugin extends Plugin {
   private registerVaultEvents(): void {
     this.registerEvent(
       this.app.vault.on('create', async file => {
+        if (file.path === '.engram-sync.json') {
+          await this.applySyncUpdate();
+          return;
+        }
         if (file instanceof TFile && file.extension === 'md') {
           await this.indexer.updateFile(file);
           this.schedulePersist();
@@ -268,6 +280,10 @@ export default class EngramPlugin extends Plugin {
 
     this.registerEvent(
       this.app.vault.on('modify', async file => {
+        if (file.path === '.engram-sync.json') {
+          await this.applySyncUpdate();
+          return;
+        }
         if (file instanceof TFile && file.extension === 'md') {
           await this.indexer.updateFile(file);
           this.schedulePersist();
@@ -317,4 +333,81 @@ export default class EngramPlugin extends Plugin {
 
     if (leaf) workspace.revealLeaf(leaf);
   }
+
+  // ── Sync helpers ─────────────────────────────────────────────────────────────
+
+  private async checkForSyncedData(): Promise<boolean> {
+    try {
+      const adapter = this.app.vault.adapter;
+      if (await adapter.exists('.engram-sync.json')) {
+        const content = await adapter.read('.engram-sync.json');
+        if (!content || !content.trim()) return false;
+        const syncData = JSON.parse(content);
+        
+        if (syncData && typeof syncData.updatedAt === 'number') {
+          const localData = await this.loadData();
+          const localUpdatedAt = localData?.syncUpdatedAt ?? 0;
+          
+          if (syncData.updatedAt > localUpdatedAt) {
+            console.log('[Engram] Synced data is newer than local data. Applying sync…');
+            const newLocalData = {
+              ...localData,
+              settings: syncData.settings || localData?.settings,
+              index: syncData.index || localData?.index,
+              embeddings: syncData.embeddings || localData?.embeddings,
+              chatSessions: syncData.chatSessions || localData?.chatSessions,
+              syncUpdatedAt: syncData.updatedAt,
+            };
+            await this.saveData(newLocalData);
+            return true;
+          }
+        }
+      }
+    } catch (e) {
+      console.error('[Engram] Error checking for synced data:', e);
+    }
+    return false;
+  }
+
+  private async applySyncUpdate(): Promise<void> {
+    const applied = await this.checkForSyncedData();
+    if (applied) {
+      await this.loadSettings();
+      await this.loadChatSessions();
+      
+      const data = await this.loadData();
+      if (data?.embeddings) {
+        this.embeddingIndex.load(data.embeddings);
+      }
+      if (data?.index) {
+        await this.indexer.build(data.index);
+      }
+      
+      const leaves = this.app.workspace.getLeavesOfType(ENGRAM_VIEW_TYPE);
+      for (const leaf of leaves) {
+        if (leaf.view instanceof ChatView) {
+          leaf.view.onSettingsUpdate();
+          leaf.view.reloadActiveSession();
+        }
+      }
+      new Notice('🔄 Engram: Settings, chat history, and semantic index synced from other device');
+    }
+  }
+
+  async writeToSyncFile(timestamp: number): Promise<void> {
+    try {
+      const syncData = {
+        updatedAt: timestamp,
+        settings: this.settings,
+        index: this.indexer.getSerializable(),
+        embeddings: this.embeddingIndex.isReady ? this.embeddingIndex.toJSON() : null,
+        chatSessions: this.chatSessions,
+      };
+      await this.app.vault.adapter.write('.engram-sync.json', JSON.stringify(syncData));
+      console.log('[Engram] Saved sync data to vault (.engram-sync.json)');
+    } catch (e) {
+      console.error('[Engram] Failed to write sync data:', e);
+    }
+  }
 }
+

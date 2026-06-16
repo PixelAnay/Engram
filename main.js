@@ -90467,6 +90467,7 @@ var SessionManager = class {
   }
   /** Initialize: load most recent session or create a fresh one. */
   initialize() {
+    this.cleanEmptySessions();
     const first = this.plugin.chatSessions[0];
     if (first) {
       this.currentChatId = first.id;
@@ -90476,6 +90477,7 @@ var SessionManager = class {
   }
   /** Create a brand-new session and make it active. */
   createAndActivate(title = "New chat") {
+    this.cleanEmptySessions();
     const session = this.buildNewSession(title);
     this.plugin.upsertChatSession(session);
     this.currentChatId = session.id;
@@ -90483,6 +90485,7 @@ var SessionManager = class {
   }
   /** Switch the active session to `id`. Returns the session if found. */
   switchTo(id) {
+    this.cleanEmptySessions();
     const session = this.plugin.chatSessions.find((s) => s.id === id);
     if (!session)
       return null;
@@ -90498,6 +90501,15 @@ var SessionManager = class {
     const next = this.plugin.chatSessions[0];
     this.currentChatId = next.id;
     return next;
+  }
+  cleanEmptySessions() {
+    const activeId = this.currentChatId;
+    const toDelete = this.plugin.chatSessions.filter(
+      (s) => s.id !== activeId && (!s.messages || s.messages.length === 0)
+    );
+    for (const session of toDelete) {
+      this.plugin.deleteChatSession(session.id);
+    }
   }
   /**
    * Persist current messages to the active session with debouncing.
@@ -92025,6 +92037,16 @@ var ChatView = class extends import_obsidian3.ItemView {
     setTimeout(() => {
       this.memoryToast.setCssStyles({ display: "none" });
     }, 3e3);
+  }
+  reloadActiveSession() {
+    const session = this.sessionManager.currentSession;
+    if (session) {
+      this.messages = [...session.messages];
+      this.displayMessages = MessageRenderer.buildDisplayMessages(this.messages);
+      this.renderMessages();
+      this.refreshSessionControls();
+      this.updateTokenBar();
+    }
   }
   // ── Chat switcher ──────────────────────────────────────────────────────────
   showChatSwitcher() {
@@ -95678,6 +95700,7 @@ var EngramPlugin = class extends import_obsidian10.Plugin {
   }
   // ── Lifecycle ───────────────────────────────────────────────────────────────
   async onload() {
+    await this.checkForSyncedData();
     await this.loadSettings();
     await this.loadChatSessions();
     this.initServices();
@@ -95742,7 +95765,9 @@ var EngramPlugin = class extends import_obsidian10.Plugin {
   async saveSettings() {
     var _a2, _b, _c, _d, _e, _f;
     const existing = (_a2 = await this.loadData()) != null ? _a2 : {};
-    await this.saveData({ ...existing, settings: this.settings });
+    const now = Date.now();
+    await this.saveData({ ...existing, settings: this.settings, syncUpdatedAt: now });
+    await this.writeToSyncFile(now);
     (_b = this.providerFactory) == null ? void 0 : _b.updateSettings(this.settings);
     (_c = this.toolExecutor) == null ? void 0 : _c.updateSettings(this.settings);
     (_d = this.contextBuilder) == null ? void 0 : _d.updateSettings(this.settings);
@@ -95785,7 +95810,9 @@ var EngramPlugin = class extends import_obsidian10.Plugin {
   async saveChatSessions() {
     var _a2;
     const existing = (_a2 = await this.loadData()) != null ? _a2 : {};
-    await this.saveData({ ...existing, chatSessions: this.chatSessions });
+    const now = Date.now();
+    await this.saveData({ ...existing, chatSessions: this.chatSessions, syncUpdatedAt: now });
+    await this.writeToSyncFile(now);
   }
   scheduleSaveChatSessions() {
     if (this.chatPersistTimer)
@@ -95845,14 +95872,17 @@ var EngramPlugin = class extends import_obsidian10.Plugin {
   async persistIndex() {
     var _a2;
     const existing = (_a2 = await this.loadData()) != null ? _a2 : {};
+    const now = Date.now();
     const update = {
       ...existing,
-      index: this.indexer.getSerializable()
+      index: this.indexer.getSerializable(),
+      syncUpdatedAt: now
     };
     if (this.embeddingIndex.isReady) {
       update.embeddings = this.embeddingIndex.toJSON();
     }
     await this.saveData(update);
+    await this.writeToSyncFile(now);
   }
   async rebuildIndex() {
     new import_obsidian10.Notice("\u{1F9E0} Engram: Re-indexing vault\u2026");
@@ -95864,6 +95894,10 @@ var EngramPlugin = class extends import_obsidian10.Plugin {
   registerVaultEvents() {
     this.registerEvent(
       this.app.vault.on("create", async (file) => {
+        if (file.path === ".engram-sync.json") {
+          await this.applySyncUpdate();
+          return;
+        }
         if (file instanceof import_obsidian10.TFile && file.extension === "md") {
           await this.indexer.updateFile(file);
           this.schedulePersist();
@@ -95872,6 +95906,10 @@ var EngramPlugin = class extends import_obsidian10.Plugin {
     );
     this.registerEvent(
       this.app.vault.on("modify", async (file) => {
+        if (file.path === ".engram-sync.json") {
+          await this.applySyncUpdate();
+          return;
+        }
         if (file instanceof import_obsidian10.TFile && file.extension === "md") {
           await this.indexer.updateFile(file);
           this.schedulePersist();
@@ -95916,5 +95954,75 @@ var EngramPlugin = class extends import_obsidian10.Plugin {
     }
     if (leaf)
       workspace.revealLeaf(leaf);
+  }
+  // ── Sync helpers ─────────────────────────────────────────────────────────────
+  async checkForSyncedData() {
+    var _a2;
+    try {
+      const adapter = this.app.vault.adapter;
+      if (await adapter.exists(".engram-sync.json")) {
+        const content = await adapter.read(".engram-sync.json");
+        if (!content || !content.trim())
+          return false;
+        const syncData = JSON.parse(content);
+        if (syncData && typeof syncData.updatedAt === "number") {
+          const localData = await this.loadData();
+          const localUpdatedAt = (_a2 = localData == null ? void 0 : localData.syncUpdatedAt) != null ? _a2 : 0;
+          if (syncData.updatedAt > localUpdatedAt) {
+            console.log("[Engram] Synced data is newer than local data. Applying sync\u2026");
+            const newLocalData = {
+              ...localData,
+              settings: syncData.settings || (localData == null ? void 0 : localData.settings),
+              index: syncData.index || (localData == null ? void 0 : localData.index),
+              embeddings: syncData.embeddings || (localData == null ? void 0 : localData.embeddings),
+              chatSessions: syncData.chatSessions || (localData == null ? void 0 : localData.chatSessions),
+              syncUpdatedAt: syncData.updatedAt
+            };
+            await this.saveData(newLocalData);
+            return true;
+          }
+        }
+      }
+    } catch (e) {
+      console.error("[Engram] Error checking for synced data:", e);
+    }
+    return false;
+  }
+  async applySyncUpdate() {
+    const applied = await this.checkForSyncedData();
+    if (applied) {
+      await this.loadSettings();
+      await this.loadChatSessions();
+      const data = await this.loadData();
+      if (data == null ? void 0 : data.embeddings) {
+        this.embeddingIndex.load(data.embeddings);
+      }
+      if (data == null ? void 0 : data.index) {
+        await this.indexer.build(data.index);
+      }
+      const leaves = this.app.workspace.getLeavesOfType(ENGRAM_VIEW_TYPE);
+      for (const leaf of leaves) {
+        if (leaf.view instanceof ChatView) {
+          leaf.view.onSettingsUpdate();
+          leaf.view.reloadActiveSession();
+        }
+      }
+      new import_obsidian10.Notice("\u{1F504} Engram: Settings, chat history, and semantic index synced from other device");
+    }
+  }
+  async writeToSyncFile(timestamp) {
+    try {
+      const syncData = {
+        updatedAt: timestamp,
+        settings: this.settings,
+        index: this.indexer.getSerializable(),
+        embeddings: this.embeddingIndex.isReady ? this.embeddingIndex.toJSON() : null,
+        chatSessions: this.chatSessions
+      };
+      await this.app.vault.adapter.write(".engram-sync.json", JSON.stringify(syncData));
+      console.log("[Engram] Saved sync data to vault (.engram-sync.json)");
+    } catch (e) {
+      console.error("[Engram] Failed to write sync data:", e);
+    }
   }
 };
