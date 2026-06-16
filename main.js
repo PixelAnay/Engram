@@ -92091,7 +92091,7 @@ var ChatView = class extends import_obsidian3.ItemView {
         input.className = "engram-chat-rename-input";
         input.value = session.title;
         item.replaceChild(input, name);
-        actions.style.display = "none";
+        actions.setCssStyles({ display: "none" });
         input.focus();
         input.select();
         let saved = false;

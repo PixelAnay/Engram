@@ -616,7 +616,7 @@ export class ChatView extends ItemView {
         input.value = session.title;
         
         item.replaceChild(input, name);
-        actions.style.display = 'none';
+        actions.setCssStyles({ display: 'none' });
         
         input.focus();
         input.select();
