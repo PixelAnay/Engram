@@ -551,6 +551,7 @@ export class ChatView extends ItemView {
   // ── Chat switcher ──────────────────────────────────────────────────────────
 
   private showChatSwitcher(): void {
+    const document = activeDocument;
     document.querySelectorAll('.engram-chat-overlay').forEach(el => el.remove());
 
     const overlay = document.createElement('div');
@@ -672,6 +673,7 @@ export class ChatView extends ItemView {
   // ── Persona switcher ───────────────────────────────────────────────────────
 
   private showPersonaSwitcher(): void {
+    const document = activeDocument;
     document.querySelectorAll('.engram-persona-overlay').forEach(el => el.remove());
 
     const overlay = document.createElement('div');
@@ -765,6 +767,7 @@ export class ChatView extends ItemView {
   // ── Undo panel ────────────────────────────────────────────────────────────
 
   private showUndoPanel(): void {
+    const document = activeDocument;
     const history = this.plugin.toolExecutor.undoHistory;
     if (history.length === 0) { new Notice('Nothing to undo'); return; }
 
