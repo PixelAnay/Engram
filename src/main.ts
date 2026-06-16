@@ -116,8 +116,70 @@ export default class EngramPlugin extends Plugin {
   }
 
   async saveSettings(): Promise<void> {
-    const existing = (await this.loadData()) ?? {};
     const now = Date.now();
+    
+    // If sync was just enabled, check if we should first pull from an existing sync file
+    if (this.settings.enableVaultSync) {
+      const adapter = this.app.vault.adapter;
+      const syncPath = this.getSyncFilePath();
+      if (await adapter.exists(syncPath)) {
+        try {
+          const content = await adapter.read(syncPath);
+          const syncData = JSON.parse(content);
+          if (syncData && syncData.settings) {
+            console.log('[Engram] Pulling existing sync data on enable…');
+            // Merge sync settings but keep enableVaultSync as true
+            this.settings = {
+              ...syncData.settings,
+              enableVaultSync: true,
+            };
+            
+            // Update other local data
+            const localData = (await this.loadData()) ?? {};
+            const newLocalData = {
+              ...localData,
+              settings: this.settings,
+              index: syncData.index || localData.index,
+              embeddings: syncData.embeddings || localData.embeddings,
+              chatSessions: syncData.chatSessions || localData.chatSessions,
+              syncUpdatedAt: syncData.updatedAt || now,
+            };
+            await this.saveData(newLocalData);
+            
+            // Reload services and UI
+            this.providerFactory?.updateSettings(this.settings);
+            this.toolExecutor?.updateSettings(this.settings);
+            this.contextBuilder?.updateSettings(this.settings);
+            this.indexer?.updateSettings(this.settings);
+            this.memoryManager?.updateConfig(this.settings.memoryPath, this.settings.maxMemoryTokens);
+            
+            if (syncData.embeddings) {
+              this.embeddingIndex.load(syncData.embeddings);
+            }
+            if (syncData.index) {
+              await this.indexer.build(syncData.index);
+            }
+            await this.loadChatSessions();
+            
+            // Reload active views
+            const leaves = this.app.workspace.getLeavesOfType(ENGRAM_VIEW_TYPE);
+            for (const leaf of leaves) {
+              if (leaf.view instanceof ChatView) {
+                leaf.view.onSettingsUpdate();
+                leaf.view.reloadActiveSession();
+              }
+            }
+            
+            new Notice('🔄 Engram: Synced settings, chat history, and index from vault!');
+            return;
+          }
+        } catch (e) {
+          console.error('[Engram] Error pulling sync data on enable:', e);
+        }
+      }
+    }
+
+    const existing = (await this.loadData()) ?? {};
     await this.saveData({ ...existing, settings: this.settings, syncUpdatedAt: now });
     await this.writeToSyncFile(now);
 
