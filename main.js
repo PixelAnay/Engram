@@ -96115,8 +96115,8 @@ var EngramPlugin = class extends import_obsidian10.Plugin {
     const lastSlash = memPath.lastIndexOf("/");
     if (lastSlash >= 0) {
       const parentDir = memPath.substring(0, lastSlash);
-      return `${parentDir}/.engram-sync.json`;
+      return `${parentDir}/engram-sync.json`;
     }
-    return ".engram-sync.json";
+    return "engram-sync.json";
   }
 };
