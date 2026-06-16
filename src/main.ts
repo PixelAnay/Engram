@@ -402,7 +402,6 @@ export default class EngramPlugin extends Plugin {
   // ── Sync helpers ─────────────────────────────────────────────────────────────
 
   private async checkForSyncedData(): Promise<boolean> {
-    if (!this.settings?.enableVaultSync) return false;
     try {
       const adapter = this.app.vault.adapter;
       const syncPath = this.getSyncFilePath();
@@ -412,6 +411,10 @@ export default class EngramPlugin extends Plugin {
         const syncData = JSON.parse(content);
         
         if (syncData && typeof syncData.updatedAt === 'number') {
+          // If sync is enabled in either the local settings OR the synced file, check for update:
+          const syncEnabled = this.settings?.enableVaultSync === true || syncData.settings?.enableVaultSync === true;
+          if (!syncEnabled) return false;
+
           const localData = await this.loadData();
           const localUpdatedAt = localData?.syncUpdatedAt ?? 0;
           
@@ -419,7 +422,10 @@ export default class EngramPlugin extends Plugin {
             console.log(`[Engram] Synced data is newer than local data. Applying sync from ${syncPath}…`);
             const newLocalData = {
               ...localData,
-              settings: syncData.settings || localData?.settings,
+              settings: syncData.settings ? {
+                ...syncData.settings,
+                enableVaultSync: true, // Auto-enable locally since sync is configured in the vault
+              } : localData?.settings,
               index: syncData.index || localData?.index,
               embeddings: syncData.embeddings || localData?.embeddings,
               chatSessions: syncData.chatSessions || localData?.chatSessions,
@@ -437,7 +443,6 @@ export default class EngramPlugin extends Plugin {
   }
 
   private async applySyncUpdate(): Promise<void> {
-    if (!this.settings?.enableVaultSync) return;
     const applied = await this.checkForSyncedData();
     if (applied) {
       await this.loadSettings();
@@ -464,6 +469,19 @@ export default class EngramPlugin extends Plugin {
 
   async writeToSyncFile(timestamp: number): Promise<void> {
     if (!this.settings?.enableVaultSync) return;
+    
+    // Safety check: do not write to sync file if local settings are empty/unconfigured
+    // (default provider, no API key, and no chats)
+    const isDefaultSettings = 
+      this.settings.activeProviderId === 'local_llamacpp' && 
+      !this.settings.providerApiKey && 
+      this.chatSessions.length === 0;
+
+    if (isDefaultSettings) {
+      console.log('[Engram] Local settings are empty/default. Skipping write to sync file.');
+      return;
+    }
+
     try {
       const syncPath = this.getSyncFilePath();
       
