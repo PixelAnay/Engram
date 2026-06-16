@@ -396,14 +396,7 @@ export default class EngramPlugin extends Plugin {
       if (leaf) await leaf.setViewState({ type: ENGRAM_VIEW_TYPE, active: true });
     }
 
-    if (leaf) {
-      if (typeof workspace.revealLeaf === 'function') {
-        // eslint-disable-next-line obsidianmd/no-unsupported-api
-        workspace.revealLeaf(leaf);
-      } else {
-        workspace.setActiveLeaf(leaf, { focus: true });
-      }
-    }
+    if (leaf) workspace.revealLeaf(leaf);
   }
 
   // ── Sync helpers ─────────────────────────────────────────────────────────────
