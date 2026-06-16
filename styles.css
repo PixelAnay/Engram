@@ -130,7 +130,7 @@
   margin-top: 6px;
 }
 
-.engram-chat-select {
+.engram-chat-select-btn {
   flex: 1;
   min-width: 0;
   height: 26px;
@@ -140,17 +140,127 @@
   color: var(--engram-text);
   font-size: 11px;
   padding: 0 8px;
-  transition: border-color var(--engram-transition);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  transition: border-color var(--engram-transition), background var(--engram-transition);
+  text-align: left;
 }
 
-.engram-chat-select:focus {
+.engram-chat-select-btn:hover {
+  background: var(--background-modifier-hover);
+}
+
+.engram-chat-select-btn:focus {
   border-color: var(--engram-accent);
   outline: none;
   box-shadow: 0 0 0 2px var(--engram-accent-dim);
 }
 
-.engram-chat-select:disabled {
+.engram-chat-select-btn:disabled {
   opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.engram-chat-select-btn-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.engram-chat-select-btn-icon {
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+  margin-left: 4px;
+  flex-shrink: 0;
+}
+
+/* ── Chat List Modal Switcher ────────────────────────────────────────────────── */
+.engram-chat-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 300px;
+  overflow-y: auto;
+  margin: 8px 0;
+}
+
+.engram-chat-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-radius: var(--engram-radius-sm);
+  background: var(--engram-surface);
+  cursor: pointer;
+  border: 1px solid var(--engram-border);
+  transition: background var(--engram-transition), border-color var(--engram-transition);
+  gap: 12px;
+}
+
+.engram-chat-item:hover {
+  background: color-mix(in srgb, var(--engram-accent) 8%, var(--engram-surface));
+  border-color: var(--engram-accent);
+}
+
+.engram-chat-item.is-active {
+  border-color: var(--engram-accent);
+  background: color-mix(in srgb, var(--engram-accent) 4%, var(--engram-surface));
+}
+
+.engram-chat-desc {
+  font-size: 12px;
+  color: var(--text-normal);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.engram-chat-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.engram-chat-item-btn {
+  background: transparent;
+  border: none;
+  padding: 4px;
+  cursor: pointer;
+  color: var(--text-muted);
+  border-radius: var(--engram-radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--engram-transition);
+}
+
+.engram-chat-item-btn:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.engram-chat-item-btn.is-danger:hover {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+}
+
+.engram-chat-rename-input {
+  flex: 1;
+  font-size: 12px;
+  height: 24px;
+  border: 1px solid var(--engram-accent);
+  border-radius: var(--engram-radius-sm);
+  background: var(--engram-bg);
+  color: var(--engram-text);
+  padding: 0 6px;
+  outline: none;
+  box-sizing: border-box;
 }
 
 .engram-session-btn {

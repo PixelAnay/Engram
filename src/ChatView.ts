@@ -43,8 +43,7 @@ export class ChatView extends ItemView {
   private sendBtn!: HTMLButtonElement;
   private stopBtn!: HTMLButtonElement;
   private noteCountEl!: HTMLElement;
-  private chatSelectEl!: HTMLSelectElement;
-  private deleteChatBtn!: HTMLButtonElement;
+  private chatSelectBtn!: HTMLButtonElement;
   private attachInput!: HTMLInputElement;
   private attachmentPreviewEl!: HTMLElement;
   private permBadge!: HTMLElement;
@@ -149,20 +148,16 @@ export class ChatView extends ItemView {
 
     // Session controls
     const sessionControls = header.createDiv('engram-chat-session-controls');
-    this.chatSelectEl = sessionControls.createEl('select', { cls: 'engram-chat-select' });
-    this.chatSelectEl.addEventListener('change', () => {
-      if (this.isStreaming) { this.chatSelectEl.value = this.sessionManager.currentId; return; }
-      this.switchToSession(this.chatSelectEl.value);
+    this.chatSelectBtn = sessionControls.createEl('button', { cls: 'engram-chat-select-btn', title: 'Switch chat' });
+    this.chatSelectBtn.addEventListener('click', () => {
+      if (this.isStreaming) return;
+      this.showChatSwitcher();
     });
 
     const newChatBtn = sessionControls.createEl('button', {
       cls: 'engram-session-btn', text: 'New chat', title: 'Start new chat',
     });
     newChatBtn.addEventListener('click', () => this.startNewChat());
-
-    this.deleteChatBtn = sessionControls.createEl('button', { cls: 'engram-icon-btn', title: 'Delete chat' });
-    setIcon(this.deleteChatBtn, 'trash-2');
-    this.deleteChatBtn.addEventListener('click', () => this.deleteCurrentChat());
 
     // Header action buttons
     const headerActions = header.createDiv('engram-header-actions');
@@ -385,19 +380,6 @@ export class ChatView extends ItemView {
     this.inputArea.focus();
   }
 
-  private deleteCurrentChat(): void {
-    if (this.isStreaming) return;
-    const session = this.sessionManager.currentSession;
-    if (!session) return;
-    if (!window.confirm(`Delete "${session.title}"?`)) return;
-    const next = this.sessionManager.delete(session.id);
-    this.messages = [...next.messages];
-    this.displayMessages = MessageRenderer.buildDisplayMessages(this.messages);
-    this.pendingAttachments = [];
-    this.renderMessages();
-    this.refreshSessionControls();
-    this.updateTokenBar();
-  }
 
   private clearChat(): void {
     if (this.isStreaming) return;
@@ -409,17 +391,18 @@ export class ChatView extends ItemView {
   }
 
   private refreshSessionControls(): void {
-    if (!this.chatSelectEl) return;
-    this.chatSelectEl.empty();
-    for (const s of this.sessionManager.allSessions) {
-      const opt = this.chatSelectEl.createEl('option');
-      opt.value = s.id;
-      opt.textContent = s.title;
-    }
-    this.chatSelectEl.value = this.sessionManager.currentId;
+    if (!this.chatSelectBtn) return;
+    this.chatSelectBtn.empty();
+    
+    const session = this.sessionManager.currentSession;
+    const title = session?.title ?? 'Select chat…';
+    
+    const textSpan = this.chatSelectBtn.createSpan({ text: title, cls: 'engram-chat-select-btn-text' });
+    const iconSpan = this.chatSelectBtn.createSpan({ cls: 'engram-chat-select-btn-icon' });
+    setIcon(iconSpan, 'chevron-down');
+
     const has = this.sessionManager.allSessions.length > 0;
-    this.chatSelectEl.disabled = !has || this.isStreaming;
-    this.deleteChatBtn.disabled = !has || this.isStreaming;
+    this.chatSelectBtn.disabled = !has || this.isStreaming;
   }
 
   // ── Send ───────────────────────────────────────────────────────────────────
@@ -562,6 +545,127 @@ export class ChatView extends ItemView {
     this.memoryToast.textContent = `🧠 Saved ${count} fact${count > 1 ? 's' : ''} to memory`;
     this.memoryToast.setCssStyles({ display: 'block' });
     setTimeout(() => { this.memoryToast.setCssStyles({ display: 'none' }); }, 3000);
+  }
+
+  // ── Chat switcher ──────────────────────────────────────────────────────────
+
+  private showChatSwitcher(): void {
+    document.querySelectorAll('.engram-chat-overlay').forEach(el => el.remove());
+
+    const overlay = document.createElement('div');
+    overlay.className = 'engram-modal-overlay engram-chat-overlay';
+
+    const panel = overlay.appendChild(document.createElement('div'));
+    panel.className = 'engram-modal';
+
+    const title = panel.appendChild(document.createElement('div'));
+    title.className = 'engram-modal-title';
+    title.textContent = '💬 Switch Chat';
+
+    const sub = panel.appendChild(document.createElement('div'));
+    sub.className = 'engram-modal-subtitle';
+    sub.textContent = 'Select, rename, or delete conversation history.';
+
+    const list = panel.appendChild(document.createElement('div'));
+    list.className = 'engram-chat-list';
+
+    for (const session of this.sessionManager.allSessions) {
+      const item = list.appendChild(document.createElement('div'));
+      item.className = 'engram-chat-item';
+      if (session.id === this.sessionManager.currentId) {
+        item.addClass('is-active');
+        item.setCssStyles({ borderColor: 'var(--color-accent)' });
+      }
+
+      const name = item.appendChild(document.createElement('span'));
+      name.className = 'engram-chat-desc';
+      name.textContent = session.title;
+      
+      name.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.switchToSession(session.id);
+        overlay.remove();
+      });
+
+      const actions = item.appendChild(document.createElement('div'));
+      actions.className = 'engram-chat-item-actions';
+
+      const renameBtn = actions.appendChild(document.createElement('button'));
+      renameBtn.className = 'engram-chat-item-btn';
+      renameBtn.title = 'Rename chat';
+      setIcon(renameBtn, 'pencil');
+      
+      renameBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        
+        // Inline rename
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'engram-chat-rename-input';
+        input.value = session.title;
+        
+        item.replaceChild(input, name);
+        actions.style.display = 'none';
+        
+        input.focus();
+        input.select();
+        
+        let saved = false;
+        const saveRename = async () => {
+          if (saved) return;
+          saved = true;
+          const newTitle = input.value.trim();
+          if (newTitle && newTitle !== session.title) {
+            session.title = newTitle;
+            session.updatedAt = Date.now();
+            this.plugin.upsertChatSession(session);
+            this.refreshSessionControls();
+          }
+          this.showChatSwitcher();
+        };
+
+        input.addEventListener('keydown', (ke) => {
+          if (ke.key === 'Enter') {
+            saveRename();
+          } else if (ke.key === 'Escape') {
+            saved = true;
+            this.showChatSwitcher();
+          }
+        });
+
+        input.addEventListener('blur', () => {
+          saveRename();
+        });
+      });
+
+      const deleteBtn = actions.appendChild(document.createElement('button'));
+      deleteBtn.className = 'engram-chat-item-btn is-danger';
+      deleteBtn.title = 'Delete chat';
+      setIcon(deleteBtn, 'trash-2');
+      deleteBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (window.confirm(`Delete chat "${session.title}"?`)) {
+          const next = this.sessionManager.delete(session.id);
+          this.messages = [...next.messages];
+          this.displayMessages = MessageRenderer.buildDisplayMessages(this.messages);
+          this.pendingAttachments = [];
+          this.renderMessages();
+          this.refreshSessionControls();
+          this.updateTokenBar();
+          
+          this.showChatSwitcher();
+        }
+      });
+    }
+
+    const closeBtn = panel.appendChild(document.createElement('button'));
+    closeBtn.className = 'engram-modal-cancel';
+    closeBtn.textContent = 'Close';
+    closeBtn.setCssStyles({ marginTop: '8px' });
+    closeBtn.addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+    document.body.appendChild(overlay);
   }
 
   // ── Persona switcher ───────────────────────────────────────────────────────
