@@ -69,8 +69,8 @@ export default class EngramPlugin extends Plugin {
 
   onunload(): void {
     // this.app.workspace.detachLeavesOfType(ENGRAM_VIEW_TYPE);
-    if (this.indexRebuildTimer) clearTimeout(this.indexRebuildTimer);
-    if (this.chatPersistTimer) clearTimeout(this.chatPersistTimer);
+    if (this.indexRebuildTimer) window.clearTimeout(this.indexRebuildTimer);
+    if (this.chatPersistTimer) window.clearTimeout(this.chatPersistTimer);
   }
 
   // ── Settings ────────────────────────────────────────────────────────────────
@@ -175,8 +175,8 @@ export default class EngramPlugin extends Plugin {
   }
 
   scheduleSaveChatSessions(): void {
-    if (this.chatPersistTimer) clearTimeout(this.chatPersistTimer);
-    this.chatPersistTimer = setTimeout(() => this.saveChatSessions(), 800);
+    if (this.chatPersistTimer) window.clearTimeout(this.chatPersistTimer);
+    this.chatPersistTimer = window.setTimeout(() => this.saveChatSessions(), 800) as any;
   }
 
   upsertChatSession(session: ChatSession): void {
@@ -297,8 +297,8 @@ export default class EngramPlugin extends Plugin {
   }
 
   private schedulePersist(): void {
-    if (this.indexRebuildTimer) clearTimeout(this.indexRebuildTimer);
-    this.indexRebuildTimer = setTimeout(() => this.persistIndex(), 5000);
+    if (this.indexRebuildTimer) window.clearTimeout(this.indexRebuildTimer);
+    this.indexRebuildTimer = window.setTimeout(() => this.persistIndex(), 5000) as any;
   }
 
   // ── View ──────────────────────────────────────────────────────────────────────

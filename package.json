@@ -1,6 +1,6 @@
 {
   "name": "engram-chat",
-  "version": "5.0.41",
+  "version": "5.0.42",
   "description": "Sidebar chat powered by your local LLM with full vault context",
   "main": "main.js",
   "scripts": {
@@ -20,7 +20,6 @@
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^16.18.0",
-    "builtin-modules": "^3.3.0",
     "esbuild": "0.17.3",
     "obsidian": "latest",
     "tslib": "2.4.0",
