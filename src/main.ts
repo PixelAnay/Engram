@@ -28,8 +28,11 @@ export default class EngramPlugin extends Plugin {
   // ── Lifecycle ───────────────────────────────────────────────────────────────
 
   async onload(): Promise<void> {
-    await this.checkForSyncedData();
     await this.loadSettings();
+    const applied = await this.checkForSyncedData();
+    if (applied) {
+      await this.loadSettings();
+    }
     await this.loadChatSessions();
     this.initServices();
 
@@ -267,7 +270,7 @@ export default class EngramPlugin extends Plugin {
   private registerVaultEvents(): void {
     this.registerEvent(
       this.app.vault.on('create', async file => {
-        if (file.path === '.engram-sync.json') {
+        if (file.path === this.getSyncFilePath()) {
           await this.applySyncUpdate();
           return;
         }
@@ -280,7 +283,7 @@ export default class EngramPlugin extends Plugin {
 
     this.registerEvent(
       this.app.vault.on('modify', async file => {
-        if (file.path === '.engram-sync.json') {
+        if (file.path === this.getSyncFilePath()) {
           await this.applySyncUpdate();
           return;
         }
@@ -337,10 +340,12 @@ export default class EngramPlugin extends Plugin {
   // ── Sync helpers ─────────────────────────────────────────────────────────────
 
   private async checkForSyncedData(): Promise<boolean> {
+    if (!this.settings?.enableVaultSync) return false;
     try {
       const adapter = this.app.vault.adapter;
-      if (await adapter.exists('.engram-sync.json')) {
-        const content = await adapter.read('.engram-sync.json');
+      const syncPath = this.getSyncFilePath();
+      if (await adapter.exists(syncPath)) {
+        const content = await adapter.read(syncPath);
         if (!content || !content.trim()) return false;
         const syncData = JSON.parse(content);
         
@@ -349,7 +354,7 @@ export default class EngramPlugin extends Plugin {
           const localUpdatedAt = localData?.syncUpdatedAt ?? 0;
           
           if (syncData.updatedAt > localUpdatedAt) {
-            console.log('[Engram] Synced data is newer than local data. Applying sync…');
+            console.log(`[Engram] Synced data is newer than local data. Applying sync from ${syncPath}…`);
             const newLocalData = {
               ...localData,
               settings: syncData.settings || localData?.settings,
@@ -370,6 +375,7 @@ export default class EngramPlugin extends Plugin {
   }
 
   private async applySyncUpdate(): Promise<void> {
+    if (!this.settings?.enableVaultSync) return;
     const applied = await this.checkForSyncedData();
     if (applied) {
       await this.loadSettings();
@@ -395,7 +401,19 @@ export default class EngramPlugin extends Plugin {
   }
 
   async writeToSyncFile(timestamp: number): Promise<void> {
+    if (!this.settings?.enableVaultSync) return;
     try {
+      const syncPath = this.getSyncFilePath();
+      
+      // Ensure parent folder exists
+      const lastSlash = syncPath.lastIndexOf('/');
+      if (lastSlash >= 0) {
+        const parentDir = syncPath.substring(0, lastSlash);
+        if (!(await this.app.vault.adapter.exists(parentDir))) {
+          await this.app.vault.createFolder(parentDir).catch(() => {});
+        }
+      }
+
       const syncData = {
         updatedAt: timestamp,
         settings: this.settings,
@@ -403,11 +421,21 @@ export default class EngramPlugin extends Plugin {
         embeddings: this.embeddingIndex.isReady ? this.embeddingIndex.toJSON() : null,
         chatSessions: this.chatSessions,
       };
-      await this.app.vault.adapter.write('.engram-sync.json', JSON.stringify(syncData));
-      console.log('[Engram] Saved sync data to vault (.engram-sync.json)');
+      await this.app.vault.adapter.write(syncPath, JSON.stringify(syncData));
+      console.log(`[Engram] Saved sync data to vault (${syncPath})`);
     } catch (e) {
       console.error('[Engram] Failed to write sync data:', e);
     }
+  }
+
+  getSyncFilePath(): string {
+    const memPath = this.settings?.memoryPath || 'Intelligence/Memory.md';
+    const lastSlash = memPath.lastIndexOf('/');
+    if (lastSlash >= 0) {
+      const parentDir = memPath.substring(0, lastSlash);
+      return `${parentDir}/.engram-sync.json`;
+    }
+    return '.engram-sync.json';
   }
 }
 

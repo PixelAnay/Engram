@@ -111,6 +111,7 @@ export const DEFAULT_SETTINGS: EngramSettings = {
   showDiffPreview: true,
   diffPreviewThreshold: 200,
   showAdvancedSettings: false,
+  enableVaultSync: false,
 };
 
 // ── Settings Tab ────────────────────────────────────────────────────────────
@@ -476,6 +477,26 @@ export class EngramSettingTab extends PluginSettingTab {
               new Notice('Memory cleared.');
             } catch {
               new Notice('Could not clear memory file.');
+            }
+          })
+      );
+
+    // ── Device Sync ─────────────────────────────────────────────────────────
+    new Setting(containerEl).setName('🔄 Device Synchronization').setHeading();
+
+    new Setting(containerEl)
+      .setName('Sync across devices')
+      .setDesc('Keep settings, chat history, and semantic index in sync between laptop and phone using a vault file (opt-in)')
+      .addToggle(toggle =>
+        toggle
+          .setValue(this.plugin.settings.enableVaultSync)
+          .onChange(async value => {
+            this.plugin.settings.enableVaultSync = value;
+            await this.save();
+            if (value) {
+              new Notice('Sync enabled. Sync file created in your Intelligence directory.');
+            } else {
+              new Notice('Sync disabled.');
             }
           })
       );

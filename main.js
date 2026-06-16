@@ -94957,7 +94957,8 @@ var DEFAULT_SETTINGS = {
   // Edit safety
   showDiffPreview: true,
   diffPreviewThreshold: 200,
-  showAdvancedSettings: false
+  showAdvancedSettings: false,
+  enableVaultSync: false
 };
 var EngramSettingTab = class extends import_obsidian9.PluginSettingTab {
   constructor(app, plugin) {
@@ -95203,6 +95204,18 @@ var EngramSettingTab = class extends import_obsidian9.PluginSettingTab {
           new import_obsidian9.Notice("Memory cleared.");
         } catch (e) {
           new import_obsidian9.Notice("Could not clear memory file.");
+        }
+      })
+    );
+    new import_obsidian9.Setting(containerEl).setName("\u{1F504} Device Synchronization").setHeading();
+    new import_obsidian9.Setting(containerEl).setName("Sync across devices").setDesc("Keep settings, chat history, and semantic index in sync between laptop and phone using a vault file (opt-in)").addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.enableVaultSync).onChange(async (value) => {
+        this.plugin.settings.enableVaultSync = value;
+        await this.save();
+        if (value) {
+          new import_obsidian9.Notice("Sync enabled. Sync file created in your Intelligence directory.");
+        } else {
+          new import_obsidian9.Notice("Sync disabled.");
         }
       })
     );
@@ -95700,8 +95713,11 @@ var EngramPlugin = class extends import_obsidian10.Plugin {
   }
   // ── Lifecycle ───────────────────────────────────────────────────────────────
   async onload() {
-    await this.checkForSyncedData();
     await this.loadSettings();
+    const applied = await this.checkForSyncedData();
+    if (applied) {
+      await this.loadSettings();
+    }
     await this.loadChatSessions();
     this.initServices();
     this.registerView(ENGRAM_VIEW_TYPE, (leaf) => new ChatView(leaf, this));
@@ -95894,7 +95910,7 @@ var EngramPlugin = class extends import_obsidian10.Plugin {
   registerVaultEvents() {
     this.registerEvent(
       this.app.vault.on("create", async (file) => {
-        if (file.path === ".engram-sync.json") {
+        if (file.path === this.getSyncFilePath()) {
           await this.applySyncUpdate();
           return;
         }
@@ -95906,7 +95922,7 @@ var EngramPlugin = class extends import_obsidian10.Plugin {
     );
     this.registerEvent(
       this.app.vault.on("modify", async (file) => {
-        if (file.path === ".engram-sync.json") {
+        if (file.path === this.getSyncFilePath()) {
           await this.applySyncUpdate();
           return;
         }
@@ -95957,19 +95973,22 @@ var EngramPlugin = class extends import_obsidian10.Plugin {
   }
   // ── Sync helpers ─────────────────────────────────────────────────────────────
   async checkForSyncedData() {
-    var _a2;
+    var _a2, _b;
+    if (!((_a2 = this.settings) == null ? void 0 : _a2.enableVaultSync))
+      return false;
     try {
       const adapter = this.app.vault.adapter;
-      if (await adapter.exists(".engram-sync.json")) {
-        const content = await adapter.read(".engram-sync.json");
+      const syncPath = this.getSyncFilePath();
+      if (await adapter.exists(syncPath)) {
+        const content = await adapter.read(syncPath);
         if (!content || !content.trim())
           return false;
         const syncData = JSON.parse(content);
         if (syncData && typeof syncData.updatedAt === "number") {
           const localData = await this.loadData();
-          const localUpdatedAt = (_a2 = localData == null ? void 0 : localData.syncUpdatedAt) != null ? _a2 : 0;
+          const localUpdatedAt = (_b = localData == null ? void 0 : localData.syncUpdatedAt) != null ? _b : 0;
           if (syncData.updatedAt > localUpdatedAt) {
-            console.log("[Engram] Synced data is newer than local data. Applying sync\u2026");
+            console.log(`[Engram] Synced data is newer than local data. Applying sync from ${syncPath}\u2026`);
             const newLocalData = {
               ...localData,
               settings: syncData.settings || (localData == null ? void 0 : localData.settings),
@@ -95989,6 +96008,9 @@ var EngramPlugin = class extends import_obsidian10.Plugin {
     return false;
   }
   async applySyncUpdate() {
+    var _a2;
+    if (!((_a2 = this.settings) == null ? void 0 : _a2.enableVaultSync))
+      return;
     const applied = await this.checkForSyncedData();
     if (applied) {
       await this.loadSettings();
@@ -96011,7 +96033,19 @@ var EngramPlugin = class extends import_obsidian10.Plugin {
     }
   }
   async writeToSyncFile(timestamp) {
+    var _a2;
+    if (!((_a2 = this.settings) == null ? void 0 : _a2.enableVaultSync))
+      return;
     try {
+      const syncPath = this.getSyncFilePath();
+      const lastSlash = syncPath.lastIndexOf("/");
+      if (lastSlash >= 0) {
+        const parentDir = syncPath.substring(0, lastSlash);
+        if (!await this.app.vault.adapter.exists(parentDir)) {
+          await this.app.vault.createFolder(parentDir).catch(() => {
+          });
+        }
+      }
       const syncData = {
         updatedAt: timestamp,
         settings: this.settings,
@@ -96019,10 +96053,20 @@ var EngramPlugin = class extends import_obsidian10.Plugin {
         embeddings: this.embeddingIndex.isReady ? this.embeddingIndex.toJSON() : null,
         chatSessions: this.chatSessions
       };
-      await this.app.vault.adapter.write(".engram-sync.json", JSON.stringify(syncData));
-      console.log("[Engram] Saved sync data to vault (.engram-sync.json)");
+      await this.app.vault.adapter.write(syncPath, JSON.stringify(syncData));
+      console.log(`[Engram] Saved sync data to vault (${syncPath})`);
     } catch (e) {
       console.error("[Engram] Failed to write sync data:", e);
     }
+  }
+  getSyncFilePath() {
+    var _a2;
+    const memPath = ((_a2 = this.settings) == null ? void 0 : _a2.memoryPath) || "Intelligence/Memory.md";
+    const lastSlash = memPath.lastIndexOf("/");
+    if (lastSlash >= 0) {
+      const parentDir = memPath.substring(0, lastSlash);
+      return `${parentDir}/.engram-sync.json`;
+    }
+    return ".engram-sync.json";
   }
 };
