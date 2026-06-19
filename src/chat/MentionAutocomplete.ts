@@ -60,6 +60,8 @@ export class MentionAutocomplete {
       item.createSpan('engram-mention-name').textContent = note.title;
       item.createSpan('engram-mention-path').textContent = note.path;
 
+      item.dataset.path = note.path;
+
       item.addEventListener('mousedown', (e: MouseEvent) => {
         e.preventDefault();
         this.select(note.path);
@@ -93,9 +95,9 @@ export class MentionAutocomplete {
     }
     if (e.key === 'Enter' || e.key === 'Tab') {
       const sel = active || items[0];
-      if (sel) {
+      if (sel && sel.dataset.path) {
         e.preventDefault();
-        sel.click();
+        this.select(sel.dataset.path);
         return true;
       }
     }

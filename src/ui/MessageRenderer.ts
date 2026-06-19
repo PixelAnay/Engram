@@ -16,7 +16,7 @@ import type { ChatMessage } from '../types';
 export interface DisplayMessage {
   role: 'user' | 'assistant' | 'error';
   content: string;
-  attachments?: { name: string; type: string; dataUrl: string }[];
+  attachments?: { name: string; type: string; dataUrl?: string; content?: string }[];
   autoAttachedNotes?: string[];
   toolEvents?: ToolEvent[];
   streaming?: boolean;
@@ -169,7 +169,7 @@ export class MessageRenderer {
       for (const att of msg.attachments) {
         if (att.type.startsWith('image/')) {
           const img = attContainer.appendChild(document.createElement('img'));
-          img.src = att.dataUrl;
+          img.src = att.dataUrl || '';
           img.alt = att.name;
           img.setCssStyles({ maxWidth: '100%', borderRadius: 'var(--radius-s)', maxHeight: '200px', objectFit: 'contain' });
         } else {

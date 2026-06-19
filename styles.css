@@ -1626,3 +1626,46 @@
   border-color: var(--interactive-accent);
   color: var(--interactive-accent);
 }
+
+/* Drag & Drop Overlay styling */
+.engram-chat-root {
+  position: relative;
+}
+
+.engram-chat-root.drag-over::after {
+  content: '📥 Drop files to attach';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: color-mix(in srgb, var(--background-primary) 92%, var(--engram-accent));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.25em;
+  font-weight: 600;
+  color: var(--engram-accent);
+  border: 2px dashed var(--engram-accent);
+  margin: 10px;
+  border-radius: var(--engram-radius-lg, 8px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+  z-index: 9999;
+  pointer-events: none;
+  animation: engram-pulse-border 1.5s infinite ease-in-out;
+}
+
+@keyframes engram-pulse-border {
+  0% {
+    border-color: var(--engram-accent);
+    opacity: 0.9;
+  }
+  50% {
+    border-color: color-mix(in srgb, var(--engram-accent) 40%, transparent);
+    opacity: 0.95;
+  }
+  100% {
+    border-color: var(--engram-accent);
+    opacity: 0.9;
+  }
+}

@@ -90718,8 +90718,22 @@ var AttachmentHandler = class {
     }
     return result;
   }
-  /** Read a generic file (image, text, etc.) as a base64 data URL. */
+  /** Read a generic file (image, text, etc.). Reads text files as plain text, others as base64 data URLs. */
   async processGenericFile(file) {
+    if (this.isTextFile(file)) {
+      return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          resolve({
+            name: file.name,
+            type: file.type || "text/plain",
+            content: reader.result
+          });
+        };
+        reader.onerror = () => resolve(null);
+        reader.readAsText(file);
+      });
+    }
     return new Promise((resolve) => {
       const reader = new FileReader();
       reader.onload = () => {
@@ -90733,19 +90747,67 @@ var AttachmentHandler = class {
       reader.readAsDataURL(file);
     });
   }
+  isTextFile(file) {
+    if (file.type && (file.type.startsWith("text/") || file.type === "application/json" || file.type === "application/xml" || file.type === "application/javascript" || file.type === "application/x-javascript" || file.type === "application/typescript")) {
+      return true;
+    }
+    const textExtensions = [
+      ".txt",
+      ".md",
+      ".markdown",
+      ".json",
+      ".js",
+      ".ts",
+      ".tsx",
+      ".jsx",
+      ".html",
+      ".css",
+      ".py",
+      ".go",
+      ".rs",
+      ".c",
+      ".cpp",
+      ".h",
+      ".sh",
+      ".yml",
+      ".yaml",
+      ".ini",
+      ".csv",
+      ".log"
+    ];
+    const nameLower = file.name.toLowerCase();
+    return textExtensions.some((ext) => nameLower.endsWith(ext));
+  }
   /**
    * Build the content parts for a message that includes attachments.
    * Strips large base64 blobs when `forHistory` is true — stores only metadata.
    */
   static buildContentParts(text, attachments, forHistory = false) {
     const parts = [];
-    if (text)
-      parts.push({ type: "text", text });
-    for (const att of attachments) {
+    let enrichedText = text;
+    const textAttachments = attachments.filter((att) => att.content !== void 0);
+    const imageAttachments = attachments.filter((att) => att.content === void 0);
+    if (textAttachments.length > 0) {
+      const textBlocks = textAttachments.map((att) => {
+        return `[Attachment: ${att.name}]
+\`\`\`
+${att.content}
+\`\`\``;
+      }).join("\n\n");
+      enrichedText = textBlocks + (enrichedText ? `
+
+${enrichedText}` : "");
+    }
+    if (enrichedText) {
+      parts.push({ type: "text", text: enrichedText });
+    }
+    for (const att of imageAttachments) {
       if (forHistory) {
         parts.push({ type: "text", text: `[Attachment: ${att.name}]` });
       } else {
-        parts.push({ type: "image_url", image_url: { url: att.dataUrl } });
+        if (att.dataUrl) {
+          parts.push({ type: "image_url", image_url: { url: att.dataUrl } });
+        }
       }
     }
     return parts;
@@ -90793,6 +90855,7 @@ var MentionAutocomplete = class {
         item.classList.add("active");
       item.createSpan("engram-mention-name").textContent = note.title;
       item.createSpan("engram-mention-path").textContent = note.path;
+      item.dataset.path = note.path;
       item.addEventListener("mousedown", (e) => {
         e.preventDefault();
         this.select(note.path);
@@ -90826,9 +90889,9 @@ var MentionAutocomplete = class {
     }
     if (e.key === "Enter" || e.key === "Tab") {
       const sel = active || items[0];
-      if (sel) {
+      if (sel && sel.dataset.path) {
         e.preventDefault();
-        sel.click();
+        this.select(sel.dataset.path);
         return true;
       }
     }
@@ -90983,7 +91046,7 @@ var MessageRenderer = class {
       for (const att of msg.attachments) {
         if (att.type.startsWith("image/")) {
           const img = attContainer.appendChild(document.createElement("img"));
-          img.src = att.dataUrl;
+          img.src = att.dataUrl || "";
           img.alt = att.name;
           img.setCssStyles({ maxWidth: "100%", borderRadius: "var(--radius-s)", maxHeight: "200px", objectFit: "contain" });
         } else {
@@ -91792,6 +91855,38 @@ var ChatView = class extends import_obsidian3.ItemView {
       this.updatePermBadge();
     });
     this.tokenBudgetBar = new TokenBudgetBar(footer, this.plugin.settings.contextWindowTokens);
+    let dragCounter = 0;
+    root.addEventListener("dragenter", (e) => {
+      e.preventDefault();
+      dragCounter++;
+      if (dragCounter === 1) {
+        root.addClass("drag-over");
+      }
+    });
+    root.addEventListener("dragover", (e) => {
+      e.preventDefault();
+    });
+    root.addEventListener("dragleave", (e) => {
+      e.preventDefault();
+      dragCounter--;
+      if (dragCounter === 0) {
+        root.removeClass("drag-over");
+      }
+    });
+    root.addEventListener("drop", async (e) => {
+      var _a2;
+      e.preventDefault();
+      dragCounter = 0;
+      root.removeClass("drag-over");
+      const files = (_a2 = e.dataTransfer) == null ? void 0 : _a2.files;
+      if (files && files.length > 0) {
+        const newAtts = await this.attachmentHandler.processFiles(files);
+        if (newAtts.length > 0) {
+          this.pendingAttachments.push(...newAtts);
+          this.renderAttachmentPreviews();
+        }
+      }
+    });
   }
   // ── Connection ─────────────────────────────────────────────────────────────
   async checkConnection() {
