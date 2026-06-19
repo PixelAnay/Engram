@@ -93744,7 +93744,15 @@ ${lines.join("\n")}`;
       return `Error: Access denied. Path is not within allowed knowledge scope: ${path}`;
     }
     if (this.isMemoryPath(path)) {
-      return 'Note: Memory is already loaded in your system context \u2014 refer to the "What You Know About This User" section above. To save a new memory use save_memory(fact). To delete one use delete_memory(id).';
+      const content2 = await this.indexer.readNote(path);
+      if (content2 === null)
+        return `Error: Note not found or excluded: ${path}`;
+      return `Note: Memory is already loaded in your system context \u2014 refer to the "What You Know About This User" section above. To save a new memory use save_memory(fact). To delete one use delete_memory(id).
+However, if you recently called save_memory() or delete_memory() in this turn, here is the current live content of the memory file:
+
+Content of "${path}":
+
+${content2}`;
     }
     const content = await this.indexer.readNote(path);
     if (content === null)
@@ -94213,10 +94221,11 @@ ${memory}
 - If the user asks you to "remember" something, always use save_memory(). Never write it elsewhere.
 
 **Lookup rules (EFFICIENT):**
-- The memory block above is already loaded into your context. USE IT FIRST.
+- Memory is reloaded fresh at the start of every message turn, so the block above is always up-to-date as of when this message was sent.
+- If you use read_note on the memory file, note that it is already injected above. Re-reading is usually unnecessary unless you just performed a save_memory() and need to verify the state.
 - If the user asks about their preferences, past facts, or anything personal, check the memory block above BEFORE calling any search tool.
-- Only call search_vault or read_note if the answer is genuinely not present in memory and requires reading a specific vault note.
-- Do NOT call read_note on "${this.settings.memoryPath}" \u2014 the content is already shown above.`;
+- Only call search_vault or read_note if the answer is genuinely not in the memory block above.
+- Do NOT call read_note on "${this.settings.memoryPath}" unless you specifically need content that may have changed since the start of this turn.`;
     }
     if (vaultAccessEnabled && this.indexer.isReady) {
       const vaultMap = this.getVaultMap();
