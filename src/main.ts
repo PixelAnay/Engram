@@ -205,6 +205,9 @@ export default class EngramPlugin extends Plugin {
       this.settings.memoryPath,
       this.settings.maxMemoryTokens
     );
+    // Wire MemoryManager into ToolExecutor so memory path-guards and
+    // save_memory / delete_memory tools are operational.
+    this.toolExecutor.setMemoryManager(this.memoryManager);
     this.contextBuilder = new ContextBuilder(
       this.app,
       this.settings,
