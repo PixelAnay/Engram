@@ -122,9 +122,12 @@ export class ProviderFactory {
       }
 
       // Append assistant message
+      // Use empty string rather than null: Anthropic rejects messages where
+      // content is null and there are no tool_calls (400: "assistant must
+      // provide content, reasoning_content or tool_calls").
       const assistantMsg: ChatMessage = {
         role: 'assistant',
-        content: assistantText || null,
+        content: assistantText || '',
         ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
       };
       workingMessages.push(assistantMsg);

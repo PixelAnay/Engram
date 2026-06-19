@@ -126,9 +126,18 @@ export class OpenAIProvider implements AIProvider {
     options: StreamOptions,
     onChunk: (chunk: StreamChunk) => void
   ): Promise<{ toolCalls: ToolCall[]; text: string; finishReason: string | null }> {
+    // Sanitize messages: some strict OpenAI-compat providers (DeepSeek, Qwen,
+    // etc.) reject assistant messages with content: null — they require at
+    // least one of content / reasoning_content / tool_calls to be present.
+    const sanitizedMessages = messages.map(m =>
+      m.role === 'assistant' && m.content === null
+        ? { ...m, content: '' }
+        : m
+    );
+
     const body: Record<string, unknown> = {
       model: options.model || undefined,
-      messages,
+      messages: sanitizedMessages,
       stream: true,
       temperature: options.temperature,
     };
