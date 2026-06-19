@@ -14,7 +14,7 @@ export interface ChatMessage {
   tool_call_id?: string;
   name?: string;
   /** Stripped before persistence — blobs only live for the duration of the API call */
-  attachments?: { name: string; type: string; dataUrl: string }[];
+  attachments?: { name: string; type: string; dataUrl?: string; content?: string }[];
   autoAttachedNotes?: string[];
 }
 

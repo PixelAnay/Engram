@@ -9,8 +9,10 @@ import { Notice } from 'obsidian';
 export interface Attachment {
   name: string;
   type: string;
-  /** base64 data URL (image/jpeg or other) */
-  dataUrl: string;
+  /** base64 data URL (image/jpeg or other) for images */
+  dataUrl?: string;
+  /** raw text content for text files */
+  content?: string;
 }
 
 /** Lightweight reference stored in chat history — no blob, just metadata. */
@@ -197,8 +199,23 @@ export class AttachmentHandler {
     return result;
   }
 
-  /** Read a generic file (image, text, etc.) as a base64 data URL. */
+  /** Read a generic file (image, text, etc.). Reads text files as plain text, others as base64 data URLs. */
   private async processGenericFile(file: File): Promise<Attachment | null> {
+    if (this.isTextFile(file)) {
+      return new Promise<Attachment | null>((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          resolve({
+            name: file.name,
+            type: file.type || 'text/plain',
+            content: reader.result as string,
+          });
+        };
+        reader.onerror = () => resolve(null);
+        reader.readAsText(file);
+      });
+    }
+
     return new Promise<Attachment | null>((resolve) => {
       const reader = new FileReader();
       reader.onload = () => {
@@ -213,6 +230,26 @@ export class AttachmentHandler {
     });
   }
 
+  private isTextFile(file: File): boolean {
+    if (file.type && (
+      file.type.startsWith('text/') || 
+      file.type === 'application/json' || 
+      file.type === 'application/xml' || 
+      file.type === 'application/javascript' ||
+      file.type === 'application/x-javascript' ||
+      file.type === 'application/typescript'
+    )) {
+      return true;
+    }
+    const textExtensions = [
+      '.txt', '.md', '.markdown', '.json', '.js', '.ts', '.tsx', '.jsx',
+      '.html', '.css', '.py', '.go', '.rs', '.c', '.cpp', '.h', '.sh',
+      '.yml', '.yaml', '.ini', '.csv', '.log'
+    ];
+    const nameLower = file.name.toLowerCase();
+    return textExtensions.some(ext => nameLower.endsWith(ext));
+  }
+
   /**
    * Build the content parts for a message that includes attachments.
    * Strips large base64 blobs when `forHistory` is true — stores only metadata.
@@ -223,13 +260,31 @@ export class AttachmentHandler {
     forHistory = false
   ): Array<{ type: string; text?: string; image_url?: { url: string } }> {
     const parts: Array<{ type: string; text?: string; image_url?: { url: string } }> = [];
-    if (text) parts.push({ type: 'text', text });
-    for (const att of attachments) {
+
+    // Prepend all text attachments to the main prompt text
+    let enrichedText = text;
+    const textAttachments = attachments.filter(att => att.content !== undefined);
+    const imageAttachments = attachments.filter(att => att.content === undefined);
+
+    if (textAttachments.length > 0) {
+      const textBlocks = textAttachments.map(att => {
+        return `[Attachment: ${att.name}]\n\`\`\`\n${att.content}\n\`\`\``;
+      }).join('\n\n');
+      enrichedText = textBlocks + (enrichedText ? `\n\n${enrichedText}` : '');
+    }
+
+    if (enrichedText) {
+      parts.push({ type: 'text', text: enrichedText });
+    }
+
+    for (const att of imageAttachments) {
       if (forHistory) {
         // Store only a placeholder — do NOT persist blobs in saved history
         parts.push({ type: 'text', text: `[Attachment: ${att.name}]` });
       } else {
-        parts.push({ type: 'image_url', image_url: { url: att.dataUrl } });
+        if (att.dataUrl) {
+          parts.push({ type: 'image_url', image_url: { url: att.dataUrl } });
+        }
       }
     }
     return parts;

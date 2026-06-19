@@ -1,6 +1,6 @@
 {
   "name": "engram-chat",
-  "version": "5.0.45",
+  "version": "5.0.46",
   "description": "Sidebar chat powered by your local LLM with full vault context",
   "main": "main.js",
   "scripts": {

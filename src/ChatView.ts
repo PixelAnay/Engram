@@ -285,6 +285,42 @@ export class ChatView extends ItemView {
     });
 
     this.tokenBudgetBar = new TokenBudgetBar(footer, this.plugin.settings.contextWindowTokens);
+
+    // Drag & Drop support
+    let dragCounter = 0;
+    root.addEventListener('dragenter', (e: DragEvent) => {
+      e.preventDefault();
+      dragCounter++;
+      if (dragCounter === 1) {
+        root.addClass('drag-over');
+      }
+    });
+
+    root.addEventListener('dragover', (e: DragEvent) => {
+      e.preventDefault();
+    });
+
+    root.addEventListener('dragleave', (e: DragEvent) => {
+      e.preventDefault();
+      dragCounter--;
+      if (dragCounter === 0) {
+        root.removeClass('drag-over');
+      }
+    });
+
+    root.addEventListener('drop', async (e: DragEvent) => {
+      e.preventDefault();
+      dragCounter = 0;
+      root.removeClass('drag-over');
+      const files = e.dataTransfer?.files;
+      if (files && files.length > 0) {
+        const newAtts = await this.attachmentHandler.processFiles(files);
+        if (newAtts.length > 0) {
+          this.pendingAttachments.push(...newAtts);
+          this.renderAttachmentPreviews();
+        }
+      }
+    });
   }
 
   // ── Connection ─────────────────────────────────────────────────────────────
