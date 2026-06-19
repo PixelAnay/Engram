@@ -316,7 +316,8 @@ export class AnthropicProvider implements AIProvider {
       }
 
       const role = (msg.role === 'user' || msg.role === 'assistant') ? msg.role : 'user';
-      const content = typeof msg.content === 'string' ? msg.content : '';
+      // Coerce null → '' so Anthropic never sees an assistant turn without content
+      const content = typeof msg.content === 'string' ? msg.content : (msg.content ?? '') as string;
 
       // Merge consecutive same-role (Anthropic requires strict alternation)
       const last = result[result.length - 1];

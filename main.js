@@ -94500,9 +94500,12 @@ var OpenAIProvider = class {
   // ── Stream ──────────────────────────────────────────────────────────────────
   async stream(messages, options, onChunk) {
     var _a2, _b, _c, _d, _e, _f;
+    const sanitizedMessages = messages.map(
+      (m) => m.role === "assistant" && m.content === null ? { ...m, content: "" } : m
+    );
     const body = {
       model: options.model || void 0,
-      messages,
+      messages: sanitizedMessages,
       stream: true,
       temperature: options.temperature
     };
@@ -94812,7 +94815,7 @@ var AnthropicProvider = class {
    * - must start with a user message
    */
   convertMessages(messages) {
-    var _a2;
+    var _a2, _b;
     const result = [];
     for (const msg of messages) {
       if (msg.role === "system")
@@ -94852,7 +94855,7 @@ var AnthropicProvider = class {
         continue;
       }
       const role = msg.role === "user" || msg.role === "assistant" ? msg.role : "user";
-      const content = typeof msg.content === "string" ? msg.content : "";
+      const content = typeof msg.content === "string" ? msg.content : (_b = msg.content) != null ? _b : "";
       const last = result[result.length - 1];
       if (last && last.role === role) {
         if (typeof last.content === "string") {
@@ -95633,7 +95636,7 @@ var ProviderFactory = class {
       }
       const assistantMsg = {
         role: "assistant",
-        content: assistantText || null,
+        content: assistantText || "",
         ...toolCalls.length > 0 ? { tool_calls: toolCalls } : {}
       };
       workingMessages.push(assistantMsg);
