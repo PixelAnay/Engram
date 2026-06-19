@@ -494,24 +494,28 @@ export class ToolExecutor {
     return `Found ${metaResults.length} notes:\n${lines.join('\n')}`;
   }
 
-  private async toolReadNote(args: Record<string, unknown>): Promise<string> {
-    const path = validateVaultPath(args.path);
-    if (!path) return 'Error: Invalid or missing path';
-    if (!isPathAllowed(path, this.settings)) {
-      return `Error: Access denied. Path is not within allowed knowledge scope: ${path}`;
-    }
-    // Memory file redirect: memory is already in system prompt; re-reading wastes tokens.
-    if (this.isMemoryPath(path)) {
-      return 'Note: Memory is already loaded in your system context — refer to the ' +
-        '"What You Know About This User" section above. ' +
-        'To save a new memory use save_memory(fact). To delete one use delete_memory(id).';
-    }
-
-    const content = await this.indexer.readNote(path);
-    if (content === null) return `Error: Note not found or excluded: ${path}`;
-
-    return `Content of "${path}":\n\n${content}`;
-  }
+  private async toolReadNote(args: Record<string, unknown>): Promise<string> {
+    const path = validateVaultPath(args.path);
+    if (!path) return 'Error: Invalid or missing path';
+    if (!isPathAllowed(path, this.settings)) {
+      return `Error: Access denied. Path is not within allowed knowledge scope: ${path}`;
+    }
+    // Memory file redirect: memory is already in system prompt; re-reading wastes tokens.
+    if (this.isMemoryPath(path)) {
+      const content = await this.indexer.readNote(path);
+      if (content === null) return `Error: Note not found or excluded: ${path}`;
+      return 'Note: Memory is already loaded in your system context — refer to the ' +
+        '"What You Know About This User" section above. ' +
+        'To save a new memory use save_memory(fact). To delete one use delete_memory(id).\n' +
+        'However, if you recently called save_memory() or delete_memory() in this turn, here is the current live content of the memory file:\n\n' +
+        `Content of "${path}":\n\n${content}`;
+    }
+
+    const content = await this.indexer.readNote(path);
+    if (content === null) return `Error: Note not found or excluded: ${path}`;
+
+    return `Content of "${path}":\n\n${content}`;
+  }
 
   private toolListFolder(args: Record<string, unknown>): string {
     const path = String(args.path ?? '').trim();
