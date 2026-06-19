@@ -2,8 +2,10 @@ import { App, TFile, TFolder, Notice } from 'obsidian';
 import type { VaultIndexer } from './indexer';
 import type { EngramSettings } from './types';
 import type { EmbeddingIndex } from './embeddings';
+import type { MemoryManager } from './memory/MemoryManager';
 import { validateVaultPath, isPathAllowed } from './utils/pathUtils';
 import { showConfirmDialog } from './ui/ConfirmDialog';
+
 
 // ─── Tool Definitions (OpenAI schema) ────────────────────────────────────────
 
@@ -13,7 +15,8 @@ export const TOOL_DEFINITIONS = [
     function: {
       name: 'search_vault',
       description:
-        'Search notes in the Obsidian vault by keyword, title, or tags. Returns a list of matching note paths with metadata.',
+        'Search notes in the Obsidian vault by keyword, title, or tags. Returns a list of matching note paths with metadata. ' +
+        'NOTE: Do NOT use this to look up personal facts, user preferences, or memories — those are already loaded in the system prompt memory block. Only use this for searching actual vault notes.',
       parameters: {
         type: 'object',
         properties: {
@@ -44,7 +47,9 @@ export const TOOL_DEFINITIONS = [
     type: 'function',
     function: {
       name: 'read_note',
-      description: 'Read the full Markdown content of a note by its vault path.',
+      description: 'Read the full Markdown content of a note by its vault path. ' +
+        'Do NOT use this to read the memory file — memory is already loaded in the system prompt. ' +
+        'Do NOT use this to look up personal user facts — check the memory block first.',
       parameters: {
         type: 'object',
         properties: {
@@ -241,6 +246,42 @@ export const TOOL_DEFINITIONS = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'save_memory',
+      description:
+        'Save a new fact to long-term memory about the user. Use this when the user explicitly asks you to remember something, or when you notice a clear, durable preference/fact. Do NOT use edit_note or create_note on the memory file.',
+      parameters: {
+        type: 'object',
+        properties: {
+          fact: {
+            type: 'string',
+            description: 'A single, standalone sentence describing the fact to remember, e.g. "The user prefers dark mode."',
+          },
+        },
+        required: ['fact'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'delete_memory',
+      description:
+        'Delete a specific memory entry by its ID. Use this when the user explicitly asks you to forget something. You can find the memory ID by reading the memory file.',
+      parameters: {
+        type: 'object',
+        properties: {
+          id: {
+            type: 'string',
+            description: 'The memory entry ID to delete, e.g. "mem_1234567890_abcd"',
+          },
+        },
+        required: ['id'],
+      },
+    },
+  },
 ] as const;
 
 // ─── Prompt-Injection Template (fallback mode) ────────────────────────────────
@@ -261,11 +302,15 @@ Available tools:
 - copy_note(source, destination): Copy a note to a new path
 - delete_note(path, confirm): Delete a note permanently (confirm must be true)
 - create_folder(path): Create a new folder
+- save_memory(fact): Save a new fact to long-term memory
+- delete_memory(id): Delete a memory entry by its ID
 
 Format:
 <tool_call>
 {"name": "tool_name", "arguments": {"arg": "value"}}
 </tool_call>
+
+⚠️ MEMORY FILE PROTECTION: Never use edit_note, create_note, append_to_note, or delete_note on the memory file path. Use save_memory() and delete_memory() ONLY for memory operations.
 `.trim();
 
 // ─── Undo History ────────────────────────────────────────────────────────────
@@ -285,6 +330,7 @@ export interface UndoEntry {
 
 export class ToolExecutor {
   private undoStack: UndoEntry[] = [];
+  private memoryManager: MemoryManager | null = null;
 
   /** Callback so ChatView can open notes without a circular dependency */
   onOpenNotes?: (paths: string[]) => void;
@@ -298,6 +344,24 @@ export class ToolExecutor {
 
   updateSettings(settings: EngramSettings): void {
     this.settings = settings;
+  }
+
+  /** Wire in the MemoryManager so memory tools and path-guards work. */
+  setMemoryManager(mm: MemoryManager): void {
+    this.memoryManager = mm;
+  }
+
+  // ── Memory path guard ───────────────────────────────────────────────────────────────
+
+  /**
+   * Returns true if the given (already-validated) path resolves to the
+   * memory file. Direct writes to this path are forbidden via normal
+   * note tools; they must go through save_memory / delete_memory.
+   */
+  private isMemoryPath(path: string): boolean {
+    if (!this.settings.memoryEnabled) return false;
+    const memPath = (this.settings.memoryPath ?? '').trim();
+    return memPath.length > 0 && path.trim() === memPath.trim();
   }
 
   /** Execute a tool call and return the result as a string */
@@ -323,6 +387,8 @@ export class ToolExecutor {
         case 'copy_note':      return await this.toolCopyNote(args);
         case 'delete_note':    return await this.toolDeleteNote(args);
         case 'create_folder':  return await this.toolCreateFolder(args);
+        case 'save_memory':    return await this.toolSaveMemory(args);
+        case 'delete_memory':  return await this.toolDeleteMemory(args);
         default:               return `Error: Unknown tool "${name}"`;
       }
     } catch (e) {
@@ -428,18 +494,24 @@ export class ToolExecutor {
     return `Found ${metaResults.length} notes:\n${lines.join('\n')}`;
   }
 
-  private async toolReadNote(args: Record<string, unknown>): Promise<string> {
-    const path = validateVaultPath(args.path);
-    if (!path) return 'Error: Invalid or missing path';
-    if (!isPathAllowed(path, this.settings)) {
-      return `Error: Access denied. Path is not within allowed knowledge scope: ${path}`;
-    }
-
-    const content = await this.indexer.readNote(path);
-    if (content === null) return `Error: Note not found or excluded: ${path}`;
-
-    return `Content of "${path}":\n\n${content}`;
-  }
+  private async toolReadNote(args: Record<string, unknown>): Promise<string> {
+    const path = validateVaultPath(args.path);
+    if (!path) return 'Error: Invalid or missing path';
+    if (!isPathAllowed(path, this.settings)) {
+      return `Error: Access denied. Path is not within allowed knowledge scope: ${path}`;
+    }
+    // Memory file redirect: memory is already in system prompt; re-reading wastes tokens.
+    if (this.isMemoryPath(path)) {
+      return 'Note: Memory is already loaded in your system context — refer to the ' +
+        '"What You Know About This User" section above. ' +
+        'To save a new memory use save_memory(fact). To delete one use delete_memory(id).';
+    }
+
+    const content = await this.indexer.readNote(path);
+    if (content === null) return `Error: Note not found or excluded: ${path}`;
+
+    return `Content of "${path}":\n\n${content}`;
+  }
 
   private toolListFolder(args: Record<string, unknown>): string {
     const path = String(args.path ?? '').trim();
@@ -467,6 +539,10 @@ export class ToolExecutor {
     if (!isPathAllowed(path, this.settings)) {
       return `Error: Access denied. Path is not within allowed knowledge scope: ${path}`;
     }
+    // ── Memory file protection ─────────────────────────────────────────────────────────
+    if (this.isMemoryPath(path)) {
+      return 'Error: The memory file is write-protected. Use the save_memory() tool to add new memories instead.';
+    }
     const content = String(args.content ?? '');
     if (!content.trim()) return 'Error: Content to append is empty';
 
@@ -492,6 +568,11 @@ export class ToolExecutor {
     if (!path) return 'Error: Invalid or missing path';
     if (!isPathAllowed(path, this.settings)) {
       return `Error: Access denied. Path is not within allowed knowledge scope: ${path}`;
+    }
+    // ── Memory file protection ─────────────────────────────────────────────────────────
+    if (this.isMemoryPath(path)) {
+      return 'Error: The memory file is write-protected and cannot be edited directly. ' +
+        'Use save_memory() to add new memories or delete_memory(id) to remove specific entries.';
     }
     const mode = String(args.mode ?? '');
 
@@ -584,6 +665,11 @@ export class ToolExecutor {
     if (!path) return 'Error: Invalid or missing path';
     if (!isPathAllowed(path, this.settings)) {
       return `Error: Access denied. Path is not within allowed knowledge scope: ${path}`;
+    }
+    // ── Memory file protection ─────────────────────────────────────────────────────────
+    if (this.isMemoryPath(path)) {
+      return 'Error: The memory file is write-protected and cannot be overwritten. ' +
+        'Use save_memory() to add new memories instead.';
     }
     const content = String(args.content ?? '');
     const overwrite = Boolean(args.overwrite ?? false);
@@ -763,6 +849,11 @@ export class ToolExecutor {
     const path = validateVaultPath(args.path);
     if (!path || !isPathAllowed(path, this.settings)) return `Error: Access denied or invalid path: ${path}`;
     if (!args.confirm) return 'Error: confirm must be set to true to delete a note.';
+    // ── Memory file protection ─────────────────────────────────────────────────────────
+    if (this.isMemoryPath(path)) {
+      return 'Error: The memory file cannot be deleted through this tool. ' +
+        'To clear all memories, ask the user to use the plugin\'s "Clear Memory" button in settings.';
+    }
 
     const file = this.app.vault.getAbstractFileByPath(path);
     if (!file) return `Error: File not found: ${path}`;
@@ -802,6 +893,42 @@ export class ToolExecutor {
 
     await this.app.vault.createFolder(path);
     return `✅ Created folder "${path}"`;
+  }
+
+  // ── Memory tools ──────────────────────────────────────────────────────────
+
+  private async toolSaveMemory(args: Record<string, unknown>): Promise<string> {
+    if (!this.settings.memoryEnabled) {
+      return 'Error: Memory is disabled. Enable it in plugin settings first.';
+    }
+    if (!this.memoryManager) {
+      return 'Error: Memory manager is not available.';
+    }
+    const fact = String(args.fact ?? '').trim();
+    if (!fact) return 'Error: fact must be a non-empty string.';
+    if (fact.length > 500) {
+      return 'Error: fact is too long (max 500 characters). Please summarise it into a single sentence.';
+    }
+
+    await this.memoryManager.append([{ fact }]);
+    return `✅ Saved to memory: "${fact}"`;
+  }
+
+  private async toolDeleteMemory(args: Record<string, unknown>): Promise<string> {
+    if (!this.settings.memoryEnabled) {
+      return 'Error: Memory is disabled. Enable it in plugin settings first.';
+    }
+    if (!this.memoryManager) {
+      return 'Error: Memory manager is not available.';
+    }
+    const id = String(args.id ?? '').trim();
+    if (!id) return 'Error: id must be a non-empty string.';
+
+    const deleted = await this.memoryManager.forget(id);
+    if (deleted) {
+      return `✅ Deleted memory entry: ${id}`;
+    }
+    return `Error: No memory entry found with id "${id}". Check the memory file for valid IDs.`;
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────

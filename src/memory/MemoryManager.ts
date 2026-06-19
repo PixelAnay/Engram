@@ -56,16 +56,28 @@ export class MemoryManager {
   /**
    * Append new facts to the memory file.
    * Creates the file (and parent folders) if it doesn't exist.
+   * Includes a sanity check: the new entry list must never be shorter than
+   * what was already on disk — guarding against silent data loss bugs.
    */
   async append(facts: Array<{ fact: string }>): Promise<void> {
     if (facts.length === 0) return;
 
     const parsed = await this.parse();
+    const previousCount = parsed.entries.length;
     const today = new Date().toISOString().slice(0, 10);
 
     for (const { fact } of facts) {
       const id = `mem_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
       parsed.entries.push({ id, fact, date: today });
+    }
+
+    // ── Sanity check: we should never write fewer entries than we read ──────
+    if (parsed.entries.length < previousCount) {
+      console.error(
+        `[Engram] Memory append sanity check FAILED: would write ${parsed.entries.length} entries ` +
+        `but disk has ${previousCount}. Aborting write to protect existing memories.`
+      );
+      return;
     }
 
     await this.writeBack(parsed.entries);
@@ -81,15 +93,15 @@ export class MemoryManager {
     parsed.entries = parsed.entries.filter(e => e.id !== entryId);
 
     if (parsed.entries.length < before) {
-      await this.writeBack(parsed.entries);
+      await this.writeBack(parsed.entries, false);
       return true;
     }
     return false;
   }
 
-  /** Clear all memory entries. */
+  /** Clear all memory entries. Requires explicit force flag to prevent accidental wipes. */
   async clearAll(): Promise<void> {
-    await this.writeBack([]);
+    await this.writeBack([], true /* force empty */);
   }
 
   // ── File management ───────────────────────────────────────────────────────
@@ -182,9 +194,49 @@ export class MemoryManager {
     return this.buildContent([]);
   }
 
-  private async writeBack(entries: MemoryEntry[]): Promise<void> {
+  /**
+   * Write entries back to disk.
+   *
+   * @param entries  The entries to persist.
+   * @param force    Must be `true` to allow writing an empty array.
+   *                 This prevents accidental full-wipes from code bugs.
+   */
+  private async writeBack(entries: MemoryEntry[], force = false): Promise<void> {
+    // ── Empty-array guard ────────────────────────────────────────────────────
+    if (entries.length === 0 && !force) {
+      console.error(
+        '[Engram] writeBack called with empty entries list without force=true. ' +
+        'Aborting to protect existing memories. Call clearAll() to intentionally wipe.'
+      );
+      return;
+    }
+
     const content = this.buildContent(entries);
     const file = await this.ensureFile();
+
+    // ── Pre-write backup ─────────────────────────────────────────────────────
+    // Save a .bak copy of the current content so the user can manually
+    // recover it if something goes wrong.
+    try {
+      const current = await this.app.vault.read(file);
+      if (current && current.trim().length > 0) {
+        const bakPath = this.memoryPath.replace(/\.md$/, '') + '.md.bak';
+        const bakFile = this.app.vault.getAbstractFileByPath(bakPath) as import('obsidian').TFile | null;
+        if (bakFile) {
+          await this.app.vault.modify(bakFile, current);
+        } else {
+          const bakParent = bakPath.substring(0, bakPath.lastIndexOf('/'));
+          if (bakParent) {
+            try { await this.app.vault.createFolder(bakParent); } catch { /* exists */ }
+          }
+          await this.app.vault.create(bakPath, current);
+        }
+      }
+    } catch (err) {
+      // Backup failure must never block the main write
+      console.warn('[Engram] Failed to create memory backup:', err);
+    }
+
     await this.app.vault.modify(file, content);
   }
 }
