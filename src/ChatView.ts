@@ -391,11 +391,21 @@ export class ChatView extends ItemView {
 
   /**
    * Called by EngramPlugin when chat sessions change due to an external vault sync
-   * (i.e., a new or modified .json file appeared in the chat history folder).
-   * Refreshes the session list controls without disturbing the active chat.
+   * (i.e., a new/modified/deleted .json file appeared in the chat history folder).
+   * Refreshes the session list. If the currently active session was deleted on
+   * another device, switches to the most recent remaining session.
    */
   onExternalSessionsChanged(): void {
-    this.refreshSessionControls();
+    const activeId = this.sessionManager.currentId;
+    const activeStillExists = this.plugin.chatSessions.some(s => s.id === activeId);
+
+    if (!activeStillExists && this.plugin.chatSessions.length > 0) {
+      // Active session was removed externally — switch to the first available
+      const next = this.plugin.chatSessions[0];
+      this.switchToSession(next.id);
+    } else {
+      this.refreshSessionControls();
+    }
   }
 
   // ── Sessions ───────────────────────────────────────────────────────────────

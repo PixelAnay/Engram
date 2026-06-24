@@ -90454,7 +90454,6 @@ var SessionManager = class {
   constructor(plugin) {
     this.plugin = plugin;
     this.currentChatId = "";
-    this.chatPersistTimer = null;
   }
   get currentId() {
     return this.currentChatId;
@@ -91950,11 +91949,19 @@ var ChatView = class extends import_obsidian3.ItemView {
   }
   /**
    * Called by EngramPlugin when chat sessions change due to an external vault sync
-   * (i.e., a new or modified .json file appeared in the chat history folder).
-   * Refreshes the session list controls without disturbing the active chat.
+   * (i.e., a new/modified/deleted .json file appeared in the chat history folder).
+   * Refreshes the session list. If the currently active session was deleted on
+   * another device, switches to the most recent remaining session.
    */
   onExternalSessionsChanged() {
-    this.refreshSessionControls();
+    const activeId = this.sessionManager.currentId;
+    const activeStillExists = this.plugin.chatSessions.some((s) => s.id === activeId);
+    if (!activeStillExists && this.plugin.chatSessions.length > 0) {
+      const next = this.plugin.chatSessions[0];
+      this.switchToSession(next.id);
+    } else {
+      this.refreshSessionControls();
+    }
   }
   // ── Sessions ───────────────────────────────────────────────────────────────
   switchToSession(id) {
@@ -96059,12 +96066,17 @@ var ChatHistoryStore = class {
       await this.app.vault.create(filePath, content);
     }
   }
-  /** Delete the vault file for a session. No-op if the file doesn't exist. */
-  async delete(id) {
+  /**
+   * Delete the vault file for a session.
+   * @param force  When true (default for UI-triggered deletes), permanently removes
+   *               the file instead of moving it to OS trash. This keeps the folder
+   *               contents in sync with what the plugin's UI shows.
+   */
+  async delete(id, force = false) {
     const filePath = this.sessionPath(id);
     const file = this.app.vault.getAbstractFileByPath(filePath);
     if (file instanceof import_obsidian10.TFile) {
-      await this.app.vault.delete(file);
+      await this.app.vault.delete(file, force);
     }
   }
   /** Load and parse a single session file by ID. Returns null if missing/corrupt. */
@@ -96302,6 +96314,9 @@ var EngramPlugin = class extends import_obsidian11.Plugin {
   /**
    * Upsert a session in memory and schedule a debounced write to its vault file.
    * Each session has its own independent debounce timer (800 ms).
+   *
+   * Empty sessions (no messages) are kept in memory for the UI but are NOT
+   * written to disk — the folder only contains real conversations.
    */
   upsertChatSession(session) {
     const withTouch = { ...session, updatedAt: session.updatedAt || Date.now() };
@@ -96311,6 +96326,8 @@ var EngramPlugin = class extends import_obsidian11.Plugin {
     else
       this.chatSessions.push(withTouch);
     this.chatSessions.sort((a, b) => b.updatedAt - a.updatedAt);
+    if (!withTouch.messages || withTouch.messages.length === 0)
+      return;
     const existing = this.chatPersistTimers.get(session.id);
     if (existing)
       window.clearTimeout(existing);
@@ -96322,7 +96339,7 @@ var EngramPlugin = class extends import_obsidian11.Plugin {
     }, 800);
     this.chatPersistTimers.set(session.id, timer);
   }
-  /** Delete a session from memory and remove its vault file. */
+  /** Delete a session from memory and permanently remove its vault file. */
   deleteChatSession(id) {
     const timer = this.chatPersistTimers.get(id);
     if (timer) {
@@ -96330,19 +96347,18 @@ var EngramPlugin = class extends import_obsidian11.Plugin {
       this.chatPersistTimers.delete(id);
     }
     this.chatSessions = this.chatSessions.filter((s) => s.id !== id);
-    this.chatHistoryStore.delete(id).catch(
+    this.chatHistoryStore.delete(id, true).catch(
       (e) => console.error(`[Engram] Failed to delete session "${id}":`, e)
     );
   }
   /**
-   * Manually re-import all sessions from vault files.
-   * Useful after an external sync has added/modified files without the plugin running.
+   * Re-import sessions from vault files (folder is single source of truth).
+   * Discards in-memory-only sessions (empty chats with no file) and rebuilds
+   * from disk. The current active session is preserved if it exists on disk.
    */
   async syncChatsFromVault() {
     const vaultSessions = await this.chatHistoryStore.loadAll();
-    const vaultIds = new Set(vaultSessions.map((s) => s.id));
-    const memOnly = this.chatSessions.filter((s) => !vaultIds.has(s.id));
-    this.chatSessions = [...vaultSessions, ...memOnly].sort((a, b) => b.updatedAt - a.updatedAt);
+    this.chatSessions = vaultSessions.sort((a, b) => b.updatedAt - a.updatedAt);
     this.notifyChatViewsSessionsChanged();
     new import_obsidian11.Notice(`\u{1F9E0} Engram: ${vaultSessions.length} chat session(s) loaded from vault`);
     console.log(`[Engram] syncChatsFromVault: loaded ${vaultSessions.length} session(s)`);
