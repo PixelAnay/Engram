@@ -90444,7 +90444,7 @@ __export(main_exports, {
   default: () => EngramPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian10 = require("obsidian");
+var import_obsidian11 = require("obsidian");
 
 // src/ChatView.ts
 var import_obsidian3 = require("obsidian");
@@ -91947,6 +91947,14 @@ var ChatView = class extends import_obsidian3.ItemView {
     (_a2 = this.tokenBudgetBar) == null ? void 0 : _a2.setMax(this.plugin.settings.contextWindowTokens);
     this.updateTokenBar();
     await this.checkConnection();
+  }
+  /**
+   * Called by EngramPlugin when chat sessions change due to an external vault sync
+   * (i.e., a new or modified .json file appeared in the chat history folder).
+   * Refreshes the session list controls without disturbing the active chat.
+   */
+  onExternalSessionsChanged() {
+    this.refreshSessionControls();
   }
   // ── Sessions ───────────────────────────────────────────────────────────────
   switchToSession(id) {
@@ -95239,7 +95247,9 @@ var DEFAULT_SETTINGS = {
   // Edit safety
   showDiffPreview: true,
   diffPreviewThreshold: 200,
-  showAdvancedSettings: false
+  showAdvancedSettings: false,
+  // Chat history persistence
+  chatHistoryPath: ".engram/chats"
 };
 var EngramSettingTab = class extends import_obsidian9.PluginSettingTab {
   constructor(app, plugin) {
@@ -95789,6 +95799,30 @@ var EngramSettingTab = class extends import_obsidian9.PluginSettingTab {
         }
       });
     });
+    const chatHistoryHeaderSetting = new import_obsidian9.Setting(containerEl).setName("Chat history").setHeading();
+    const chatHistoryPathSetting = new import_obsidian9.Setting(containerEl).setName("Chat history folder").setDesc(
+      "Vault-relative path where chat sessions are stored as JSON files. Because this folder is inside your vault, it syncs automatically with iCloud, Obsidian Sync, Dropbox, Git, or any other tool you use. Default: .engram/chats"
+    ).addText(
+      (text) => {
+        var _a2;
+        return text.setPlaceholder(".engram/chats").setValue((_a2 = this.plugin.settings.chatHistoryPath) != null ? _a2 : ".engram/chats").onChange(async (value) => {
+          this.plugin.settings.chatHistoryPath = value.trim() || ".engram/chats";
+          await this.save();
+        });
+      }
+    );
+    const chatSyncSetting = new import_obsidian9.Setting(containerEl).setName("Sync chat history from vault").setDesc(
+      "Re-import all chat sessions from the vault folder above. Use this after a manual vault sync to pick up sessions from other devices."
+    ).addButton((btn) => {
+      btn.setButtonText("Sync now").onClick(async () => {
+        btn.setButtonText("Syncing\u2026").setDisabled(true);
+        try {
+          await this.plugin.syncChatsFromVault();
+        } finally {
+          btn.setButtonText("Sync now").setDisabled(false);
+        }
+      });
+    });
     const applyVisibility = () => {
       var _a2, _b;
       const advanced = (_a2 = this.plugin.settings.showAdvancedSettings) != null ? _a2 : false;
@@ -95829,6 +95863,9 @@ var EngramSettingTab = class extends import_obsidian9.PluginSettingTab {
       customEmbedModelSetting.settingEl.style.display = isCustomEmbed ? "" : "none";
       customEmbedApiKeySetting.settingEl.style.display = isCustomEmbed ? "" : "none";
       indexEmbeddingsSetting.settingEl.style.display = showEmbed ? "" : "none";
+      chatHistoryHeaderSetting.settingEl.style.display = advanced ? "" : "none";
+      chatHistoryPathSetting.settingEl.style.display = advanced ? "" : "none";
+      chatSyncSetting.settingEl.style.display = advanced ? "" : "none";
     };
     applyVisibility();
   }
@@ -95972,17 +96009,158 @@ function parseInjectionToolCalls(text) {
   return calls;
 }
 
+// src/chat/ChatHistoryStore.ts
+var import_obsidian10 = require("obsidian");
+var SCHEMA_VERSION = 1;
+var ChatHistoryStore = class {
+  constructor(app, folderPath) {
+    this.app = app;
+    this.folderPath = (0, import_obsidian10.normalizePath)(folderPath);
+  }
+  // ── Public API ─────────────────────────────────────────────────────────────
+  /** Ensure the storage folder exists. Call once on plugin load. */
+  async initialize() {
+    await this.ensureFolder(this.folderPath);
+  }
+  /** Update the folder path (called after settings change). */
+  setFolderPath(folderPath) {
+    this.folderPath = (0, import_obsidian10.normalizePath)(folderPath);
+  }
+  /** Load all sessions from vault files. Corrupt/unreadable files are skipped. */
+  async loadAll() {
+    const folder = this.app.vault.getAbstractFileByPath(this.folderPath);
+    if (!(folder instanceof import_obsidian10.TFolder))
+      return [];
+    const sessions = [];
+    for (const child of folder.children) {
+      if (!(child instanceof import_obsidian10.TFile) || child.extension !== "json")
+        continue;
+      try {
+        const raw = await this.app.vault.read(child);
+        const parsed = JSON.parse(raw);
+        const session = this.deserialize(parsed);
+        if (session)
+          sessions.push(session);
+      } catch (e) {
+        console.warn(`[Engram] ChatHistoryStore: skipping corrupt file "${child.path}":`, e);
+      }
+    }
+    return sessions;
+  }
+  /** Write a single session to `<folderPath>/<session.id>.json`. */
+  async save(session) {
+    await this.ensureFolder(this.folderPath);
+    const filePath = this.sessionPath(session.id);
+    const content = JSON.stringify(this.serialize(session), null, 2);
+    const existing = this.app.vault.getAbstractFileByPath(filePath);
+    if (existing instanceof import_obsidian10.TFile) {
+      await this.app.vault.modify(existing, content);
+    } else {
+      await this.app.vault.create(filePath, content);
+    }
+  }
+  /** Delete the vault file for a session. No-op if the file doesn't exist. */
+  async delete(id) {
+    const filePath = this.sessionPath(id);
+    const file = this.app.vault.getAbstractFileByPath(filePath);
+    if (file instanceof import_obsidian10.TFile) {
+      await this.app.vault.delete(file);
+    }
+  }
+  /** Load and parse a single session file by ID. Returns null if missing/corrupt. */
+  async loadOne(id) {
+    const filePath = this.sessionPath(id);
+    const file = this.app.vault.getAbstractFileByPath(filePath);
+    if (!(file instanceof import_obsidian10.TFile))
+      return null;
+    try {
+      const raw = await this.app.vault.read(file);
+      return this.deserialize(JSON.parse(raw));
+    } catch (e) {
+      console.warn(`[Engram] ChatHistoryStore: failed to load session "${id}":`, e);
+      return null;
+    }
+  }
+  /** Returns true if the vault file for the given ID exists. */
+  exists(id) {
+    return this.app.vault.getAbstractFileByPath(this.sessionPath(id)) instanceof import_obsidian10.TFile;
+  }
+  /**
+   * Returns true if the given vault file path belongs to this store's folder.
+   * Use this in vault event handlers to filter relevant file changes.
+   */
+  isOwnedPath(filePath) {
+    const normalised = (0, import_obsidian10.normalizePath)(filePath);
+    return normalised.startsWith(this.folderPath + "/") && normalised.endsWith(".json");
+  }
+  /**
+   * Extract a session ID from a vault file path managed by this store.
+   * Returns null if the path is not a valid store path.
+   */
+  idFromPath(filePath) {
+    var _a2;
+    if (!this.isOwnedPath(filePath))
+      return null;
+    const fileName = (_a2 = filePath.split("/").pop()) != null ? _a2 : "";
+    return fileName.replace(/\.json$/, "") || null;
+  }
+  // ── Private ────────────────────────────────────────────────────────────────
+  sessionPath(id) {
+    return (0, import_obsidian10.normalizePath)(`${this.folderPath}/${id}.json`);
+  }
+  async ensureFolder(path) {
+    if (this.app.vault.getAbstractFileByPath(path) instanceof import_obsidian10.TFolder)
+      return;
+    try {
+      await this.app.vault.createFolder(path);
+    } catch (e) {
+    }
+  }
+  /** Serialize a session to a plain JSON-safe object with schema version. */
+  serialize(session) {
+    return {
+      schemaVersion: SCHEMA_VERSION,
+      id: session.id,
+      title: session.title,
+      createdAt: session.createdAt,
+      updatedAt: session.updatedAt,
+      messages: session.messages
+    };
+  }
+  /**
+   * Deserialize and validate a raw parsed object into a `ChatSession`.
+   * Returns null if the shape is invalid.
+   */
+  deserialize(raw) {
+    if (!raw || typeof raw.id !== "string" || !Array.isArray(raw.messages))
+      return null;
+    return {
+      schemaVersion: typeof raw.schemaVersion === "number" ? raw.schemaVersion : 1,
+      id: raw.id,
+      title: typeof raw.title === "string" && raw.title.trim() ? raw.title : "New chat",
+      createdAt: typeof raw.createdAt === "number" ? raw.createdAt : Date.now(),
+      updatedAt: typeof raw.updatedAt === "number" ? raw.updatedAt : Date.now(),
+      messages: raw.messages
+    };
+  }
+};
+
 // src/main.ts
-var EngramPlugin = class extends import_obsidian10.Plugin {
+var EngramPlugin = class extends import_obsidian11.Plugin {
   constructor() {
     super(...arguments);
     this.chatSessions = [];
     this.indexRebuildTimer = null;
-    this.chatPersistTimer = null;
+    this.chatPersistTimers = /* @__PURE__ */ new Map();
   }
   // ── Lifecycle ───────────────────────────────────────────────────────────────
   async onload() {
     await this.loadSettings();
+    this.chatHistoryStore = new ChatHistoryStore(
+      this.app,
+      this.settings.chatHistoryPath
+    );
+    await this.chatHistoryStore.initialize();
     await this.loadChatSessions();
     this.initServices();
     this.registerView(ENGRAM_VIEW_TYPE, (leaf) => new ChatView(leaf, this));
@@ -96002,6 +96180,11 @@ var EngramPlugin = class extends import_obsidian10.Plugin {
       name: "Open memory file",
       callback: () => this.openMemoryFile()
     });
+    this.addCommand({
+      id: "engram-sync-chats",
+      name: "Sync chat history from vault",
+      callback: () => this.syncChatsFromVault()
+    });
     this.addSettingTab(new EngramSettingTab(this.app, this));
     this.buildIndexInBackground();
     this.registerVaultEvents();
@@ -96009,8 +96192,10 @@ var EngramPlugin = class extends import_obsidian10.Plugin {
   onunload() {
     if (this.indexRebuildTimer)
       window.clearTimeout(this.indexRebuildTimer);
-    if (this.chatPersistTimer)
-      window.clearTimeout(this.chatPersistTimer);
+    for (const timer of this.chatPersistTimers.values()) {
+      window.clearTimeout(timer);
+    }
+    this.chatPersistTimers.clear();
   }
   // ── Settings ────────────────────────────────────────────────────────────────
   async loadSettings() {
@@ -96044,7 +96229,7 @@ var EngramPlugin = class extends import_obsidian10.Plugin {
     }
   }
   async saveSettings() {
-    var _a2, _b, _c, _d, _e, _f;
+    var _a2, _b, _c, _d, _e, _f, _g, _h;
     const existing = (_a2 = await this.loadData()) != null ? _a2 : {};
     await this.saveData({ ...existing, settings: this.settings });
     (_b = this.providerFactory) == null ? void 0 : _b.updateSettings(this.settings);
@@ -96052,6 +96237,8 @@ var EngramPlugin = class extends import_obsidian10.Plugin {
     (_d = this.contextBuilder) == null ? void 0 : _d.updateSettings(this.settings);
     (_e = this.indexer) == null ? void 0 : _e.updateSettings(this.settings);
     (_f = this.memoryManager) == null ? void 0 : _f.updateConfig(this.settings.memoryPath, this.settings.maxMemoryTokens);
+    (_g = this.chatHistoryStore) == null ? void 0 : _g.setFolderPath(this.settings.chatHistoryPath);
+    (_h = this.chatHistoryStore) == null ? void 0 : _h.initialize().catch(console.error);
     this.buildIndexInBackground();
     const leaves = this.app.workspace.getLeavesOfType(ENGRAM_VIEW_TYPE);
     for (const leaf of leaves) {
@@ -96075,40 +96262,90 @@ var EngramPlugin = class extends import_obsidian10.Plugin {
     await this.memoryManager.openInEditor();
   }
   // ── Chat Sessions ────────────────────────────────────────────────────────────
+  /**
+   * Load chat sessions at startup.
+   *
+   * Priority order:
+   *   1. Vault files (.engram/chats/<id>.json) — the source of truth after v5.1
+   *   2. Legacy data.json chatSessions — migrated automatically on first run
+   *
+   * After a successful migration the `chatSessions` key is removed from data.json
+   * to avoid stale duplicates.
+   */
   async loadChatSessions() {
+    var _a2;
+    const vaultSessions = await this.chatHistoryStore.loadAll();
+    const vaultIds = new Set(vaultSessions.map((s) => s.id));
     const data = await this.loadData();
-    const sessions = Array.isArray(data == null ? void 0 : data.chatSessions) ? data.chatSessions : [];
-    this.chatSessions = sessions.filter((s) => s && typeof s.id === "string" && Array.isArray(s.messages)).map((s) => ({
+    const legacySessions = Array.isArray(data == null ? void 0 : data.chatSessions) ? data.chatSessions.filter((s) => s && typeof s.id === "string" && Array.isArray(s.messages)).map((s) => ({
+      schemaVersion: 1,
       id: s.id,
       title: typeof s.title === "string" && s.title.trim() ? s.title : "New chat",
       createdAt: typeof s.createdAt === "number" ? s.createdAt : Date.now(),
       updatedAt: typeof s.updatedAt === "number" ? s.updatedAt : Date.now(),
       messages: s.messages
-    })).sort((a, b) => b.updatedAt - a.updatedAt);
+    })) : [];
+    const toMigrate = legacySessions.filter((s) => !vaultIds.has(s.id));
+    if (toMigrate.length > 0) {
+      console.log(`[Engram] Migrating ${toMigrate.length} chat session(s) from data.json \u2192 vault files`);
+      for (const session of toMigrate) {
+        await this.chatHistoryStore.save(session);
+      }
+      const existing = (_a2 = await this.loadData()) != null ? _a2 : {};
+      const { chatSessions: _removed, ...rest } = existing;
+      await this.saveData(rest);
+      console.log("[Engram] Migration complete \u2014 chat sessions removed from data.json");
+    }
+    const merged = [...vaultSessions, ...toMigrate];
+    this.chatSessions = merged.sort((a, b) => b.updatedAt - a.updatedAt);
   }
-  async saveChatSessions() {
-    var _a2;
-    const existing = (_a2 = await this.loadData()) != null ? _a2 : {};
-    await this.saveData({ ...existing, chatSessions: this.chatSessions });
-  }
-  scheduleSaveChatSessions() {
-    if (this.chatPersistTimer)
-      window.clearTimeout(this.chatPersistTimer);
-    this.chatPersistTimer = window.setTimeout(() => this.saveChatSessions(), 800);
-  }
+  /**
+   * Upsert a session in memory and schedule a debounced write to its vault file.
+   * Each session has its own independent debounce timer (800 ms).
+   */
   upsertChatSession(session) {
-    const idx = this.chatSessions.findIndex((s) => s.id === session.id);
     const withTouch = { ...session, updatedAt: session.updatedAt || Date.now() };
+    const idx = this.chatSessions.findIndex((s) => s.id === session.id);
     if (idx >= 0)
       this.chatSessions[idx] = withTouch;
     else
       this.chatSessions.push(withTouch);
     this.chatSessions.sort((a, b) => b.updatedAt - a.updatedAt);
-    this.scheduleSaveChatSessions();
+    const existing = this.chatPersistTimers.get(session.id);
+    if (existing)
+      window.clearTimeout(existing);
+    const timer = window.setTimeout(() => {
+      this.chatPersistTimers.delete(session.id);
+      this.chatHistoryStore.save(withTouch).catch(
+        (e) => console.error(`[Engram] Failed to save session "${session.id}":`, e)
+      );
+    }, 800);
+    this.chatPersistTimers.set(session.id, timer);
   }
+  /** Delete a session from memory and remove its vault file. */
   deleteChatSession(id) {
+    const timer = this.chatPersistTimers.get(id);
+    if (timer) {
+      window.clearTimeout(timer);
+      this.chatPersistTimers.delete(id);
+    }
     this.chatSessions = this.chatSessions.filter((s) => s.id !== id);
-    this.scheduleSaveChatSessions();
+    this.chatHistoryStore.delete(id).catch(
+      (e) => console.error(`[Engram] Failed to delete session "${id}":`, e)
+    );
+  }
+  /**
+   * Manually re-import all sessions from vault files.
+   * Useful after an external sync has added/modified files without the plugin running.
+   */
+  async syncChatsFromVault() {
+    const vaultSessions = await this.chatHistoryStore.loadAll();
+    const vaultIds = new Set(vaultSessions.map((s) => s.id));
+    const memOnly = this.chatSessions.filter((s) => !vaultIds.has(s.id));
+    this.chatSessions = [...vaultSessions, ...memOnly].sort((a, b) => b.updatedAt - a.updatedAt);
+    this.notifyChatViewsSessionsChanged();
+    new import_obsidian11.Notice(`\u{1F9E0} Engram: ${vaultSessions.length} chat session(s) loaded from vault`);
+    console.log(`[Engram] syncChatsFromVault: loaded ${vaultSessions.length} session(s)`);
   }
   // ── Services ─────────────────────────────────────────────────────────────────
   initServices() {
@@ -96160,16 +96397,22 @@ var EngramPlugin = class extends import_obsidian10.Plugin {
     await this.saveData(update);
   }
   async rebuildIndex() {
-    new import_obsidian10.Notice("\u{1F9E0} Engram: Re-indexing vault\u2026");
+    new import_obsidian11.Notice("\u{1F9E0} Engram: Re-indexing vault\u2026");
     await this.indexer.build(null);
     await this.persistIndex();
-    new import_obsidian10.Notice(`\u{1F9E0} Engram: ${this.indexer.noteCount} notes indexed`);
+    new import_obsidian11.Notice(`\u{1F9E0} Engram: ${this.indexer.noteCount} notes indexed`);
   }
   // ── Vault Events ──────────────────────────────────────────────────────────────
   registerVaultEvents() {
     this.registerEvent(
       this.app.vault.on("create", async (file) => {
-        if (file instanceof import_obsidian10.TFile && file.extension === "md") {
+        if (!(file instanceof import_obsidian11.TFile))
+          return;
+        if (this.chatHistoryStore.isOwnedPath(file.path)) {
+          await this.onChatFileChanged(file);
+          return;
+        }
+        if (file.extension === "md") {
           await this.indexer.updateFile(file);
           this.schedulePersist();
         }
@@ -96177,7 +96420,13 @@ var EngramPlugin = class extends import_obsidian10.Plugin {
     );
     this.registerEvent(
       this.app.vault.on("modify", async (file) => {
-        if (file instanceof import_obsidian10.TFile && file.extension === "md") {
+        if (!(file instanceof import_obsidian11.TFile))
+          return;
+        if (this.chatHistoryStore.isOwnedPath(file.path)) {
+          await this.onChatFileChanged(file);
+          return;
+        }
+        if (file.extension === "md") {
           await this.indexer.updateFile(file);
           this.schedulePersist();
         }
@@ -96185,7 +96434,17 @@ var EngramPlugin = class extends import_obsidian10.Plugin {
     );
     this.registerEvent(
       this.app.vault.on("delete", (file) => {
-        if (file instanceof import_obsidian10.TFile && file.extension === "md") {
+        if (!(file instanceof import_obsidian11.TFile))
+          return;
+        if (this.chatHistoryStore.isOwnedPath(file.path)) {
+          const id = this.chatHistoryStore.idFromPath(file.path);
+          if (id) {
+            this.chatSessions = this.chatSessions.filter((s) => s.id !== id);
+            this.notifyChatViewsSessionsChanged();
+          }
+          return;
+        }
+        if (file.extension === "md") {
           this.indexer.removeFile(file.path);
           this.embeddingIndex.removeFile(file.path);
           this.schedulePersist();
@@ -96194,7 +96453,7 @@ var EngramPlugin = class extends import_obsidian10.Plugin {
     );
     this.registerEvent(
       this.app.vault.on("rename", async (file, oldPath) => {
-        if (file instanceof import_obsidian10.TFile && file.extension === "md") {
+        if (file instanceof import_obsidian11.TFile && file.extension === "md") {
           await this.indexer.renameFile(file, oldPath);
           this.embeddingIndex.renameFile(oldPath, file.path, file.stat.mtime);
           this.schedulePersist();
@@ -96202,10 +96461,48 @@ var EngramPlugin = class extends import_obsidian10.Plugin {
       })
     );
   }
+  /**
+   * Called when a chat JSON file is created or modified by the vault file system
+   * (i.e., synced from another device). Merges the session into memory and
+   * refreshes any open chat views.
+   */
+  async onChatFileChanged(file) {
+    const id = this.chatHistoryStore.idFromPath(file.path);
+    if (!id)
+      return;
+    if (this.chatPersistTimers.has(id))
+      return;
+    const session = await this.chatHistoryStore.loadOne(id);
+    if (!session)
+      return;
+    const idx = this.chatSessions.findIndex((s) => s.id === id);
+    if (idx >= 0) {
+      if (session.updatedAt >= this.chatSessions[idx].updatedAt) {
+        this.chatSessions[idx] = session;
+      }
+    } else {
+      this.chatSessions.push(session);
+    }
+    this.chatSessions.sort((a, b) => b.updatedAt - a.updatedAt);
+    this.notifyChatViewsSessionsChanged();
+    console.log(`[Engram] Chat session synced from vault: "${session.title}" (${id})`);
+  }
   schedulePersist() {
     if (this.indexRebuildTimer)
       window.clearTimeout(this.indexRebuildTimer);
     this.indexRebuildTimer = window.setTimeout(() => this.persistIndex(), 5e3);
+  }
+  /**
+   * Notify all open ChatView instances that the session list has changed.
+   * Views will refresh their session sidebar without disturbing the active chat.
+   */
+  notifyChatViewsSessionsChanged() {
+    const leaves = this.app.workspace.getLeavesOfType(ENGRAM_VIEW_TYPE);
+    for (const leaf of leaves) {
+      if (leaf.view instanceof ChatView) {
+        leaf.view.onExternalSessionsChanged();
+      }
+    }
   }
   // ── View ──────────────────────────────────────────────────────────────────────
   async activateView() {

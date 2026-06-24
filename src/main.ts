@@ -8,6 +8,7 @@ import { MemoryManager } from './memory/MemoryManager';
 import { MemoryExtractor } from './memory/MemoryExtractor';
 import { ProviderFactory } from './providers/ProviderFactory';
 import { EngramSettingTab, DEFAULT_SETTINGS } from './settings';
+import { ChatHistoryStore } from './chat/ChatHistoryStore';
 import type { ChatSession, EngramSettings } from './types';
 import type { EmbeddingIndexData } from './embeddings';
 
@@ -20,16 +21,25 @@ export default class EngramPlugin extends Plugin {
   contextBuilder!: ContextBuilder;
   memoryManager!: MemoryManager;
   memoryExtractor!: MemoryExtractor;
+  chatHistoryStore!: ChatHistoryStore;
   chatSessions: ChatSession[] = [];
 
   private indexRebuildTimer: ReturnType<typeof setTimeout> | null = null;
-  private chatPersistTimer: ReturnType<typeof setTimeout> | null = null;
+  private chatPersistTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
 
   // ── Lifecycle ───────────────────────────────────────────────────────────────
 
   async onload(): Promise<void> {
     await this.loadSettings();
+
+    // Initialise vault-backed chat store (creates folder if needed)
+    this.chatHistoryStore = new ChatHistoryStore(
+      this.app,
+      this.settings.chatHistoryPath
+    );
+    await this.chatHistoryStore.initialize();
     await this.loadChatSessions();
+
     this.initServices();
 
     // Register sidebar view
@@ -57,20 +67,29 @@ export default class EngramPlugin extends Plugin {
       callback: () => this.openMemoryFile(),
     });
 
+    this.addCommand({
+      id: 'engram-sync-chats',
+      name: 'Sync chat history from vault',
+      callback: () => this.syncChatsFromVault(),
+    });
+
     // Settings tab
     this.addSettingTab(new EngramSettingTab(this.app, this));
 
     // Build vault index (non-blocking)
     this.buildIndexInBackground();
 
-    // Watch vault for changes
+    // Watch vault for changes (index + chat sync)
     this.registerVaultEvents();
   }
 
   onunload(): void {
     // this.app.workspace.detachLeavesOfType(ENGRAM_VIEW_TYPE);
     if (this.indexRebuildTimer) window.clearTimeout(this.indexRebuildTimer);
-    if (this.chatPersistTimer) window.clearTimeout(this.chatPersistTimer);
+    for (const timer of this.chatPersistTimers.values()) {
+      window.clearTimeout(timer);
+    }
+    this.chatPersistTimers.clear();
   }
 
   // ── Settings ────────────────────────────────────────────────────────────────
@@ -122,6 +141,10 @@ export default class EngramPlugin extends Plugin {
     this.indexer?.updateSettings(this.settings);
     this.memoryManager?.updateConfig(this.settings.memoryPath, this.settings.maxMemoryTokens);
 
+    // Update chat history store path (creates new folder if needed)
+    this.chatHistoryStore?.setFolderPath(this.settings.chatHistoryPath);
+    this.chatHistoryStore?.initialize().catch(console.error);
+
     // Run silent background build to immediately enforce rules on index
     this.buildIndexInBackground();
 
@@ -154,43 +177,110 @@ export default class EngramPlugin extends Plugin {
 
   // ── Chat Sessions ────────────────────────────────────────────────────────────
 
+  /**
+   * Load chat sessions at startup.
+   *
+   * Priority order:
+   *   1. Vault files (.engram/chats/<id>.json) — the source of truth after v5.1
+   *   2. Legacy data.json chatSessions — migrated automatically on first run
+   *
+   * After a successful migration the `chatSessions` key is removed from data.json
+   * to avoid stale duplicates.
+   */
   async loadChatSessions(): Promise<void> {
+    // 1. Load from vault files
+    const vaultSessions = await this.chatHistoryStore.loadAll();
+    const vaultIds = new Set(vaultSessions.map(s => s.id));
+
+    // 2. Load legacy sessions from data.json (backward compat / migration)
     const data = await this.loadData();
-    const sessions = Array.isArray(data?.chatSessions) ? data.chatSessions : [];
-    this.chatSessions = sessions
-      .filter((s: any) => s && typeof s.id === 'string' && Array.isArray(s.messages))
-      .map((s: any) => ({
-        id: s.id,
-        title: typeof s.title === 'string' && s.title.trim() ? s.title : 'New chat',
-        createdAt: typeof s.createdAt === 'number' ? s.createdAt : Date.now(),
-        updatedAt: typeof s.updatedAt === 'number' ? s.updatedAt : Date.now(),
-        messages: s.messages,
-      }))
-      .sort((a: ChatSession, b: ChatSession) => b.updatedAt - a.updatedAt);
+    const legacySessions: ChatSession[] = Array.isArray(data?.chatSessions)
+      ? (data.chatSessions as any[])
+          .filter((s: any) => s && typeof s.id === 'string' && Array.isArray(s.messages))
+          .map((s: any): ChatSession => ({
+            schemaVersion: 1,
+            id: s.id,
+            title: typeof s.title === 'string' && s.title.trim() ? s.title : 'New chat',
+            createdAt: typeof s.createdAt === 'number' ? s.createdAt : Date.now(),
+            updatedAt: typeof s.updatedAt === 'number' ? s.updatedAt : Date.now(),
+            messages: s.messages,
+          }))
+      : [];
+
+    // 3. Migrate legacy sessions not yet in vault
+    const toMigrate = legacySessions.filter(s => !vaultIds.has(s.id));
+    if (toMigrate.length > 0) {
+      console.log(`[Engram] Migrating ${toMigrate.length} chat session(s) from data.json → vault files`);
+      for (const session of toMigrate) {
+        await this.chatHistoryStore.save(session);
+      }
+
+      // Remove the now-migrated chatSessions key from data.json
+      const existing = (await this.loadData()) ?? {};
+      const { chatSessions: _removed, ...rest } = existing as any;
+      await this.saveData(rest);
+      console.log('[Engram] Migration complete — chat sessions removed from data.json');
+    }
+
+    // 4. Merge and sort all sessions
+    const merged = [...vaultSessions, ...toMigrate];
+    this.chatSessions = merged.sort((a, b) => b.updatedAt - a.updatedAt);
   }
 
-  async saveChatSessions(): Promise<void> {
-    const existing = (await this.loadData()) ?? {};
-    await this.saveData({ ...existing, chatSessions: this.chatSessions });
-  }
-
-  scheduleSaveChatSessions(): void {
-    if (this.chatPersistTimer) window.clearTimeout(this.chatPersistTimer);
-    this.chatPersistTimer = window.setTimeout(() => this.saveChatSessions(), 800) as any;
-  }
-
+  /**
+   * Upsert a session in memory and schedule a debounced write to its vault file.
+   * Each session has its own independent debounce timer (800 ms).
+   */
   upsertChatSession(session: ChatSession): void {
-    const idx = this.chatSessions.findIndex(s => s.id === session.id);
     const withTouch = { ...session, updatedAt: session.updatedAt || Date.now() };
+    const idx = this.chatSessions.findIndex(s => s.id === session.id);
     if (idx >= 0) this.chatSessions[idx] = withTouch;
     else this.chatSessions.push(withTouch);
     this.chatSessions.sort((a, b) => b.updatedAt - a.updatedAt);
-    this.scheduleSaveChatSessions();
+
+    // Debounce per-session write
+    const existing = this.chatPersistTimers.get(session.id);
+    if (existing) window.clearTimeout(existing);
+    const timer = window.setTimeout(() => {
+      this.chatPersistTimers.delete(session.id);
+      this.chatHistoryStore.save(withTouch).catch(e =>
+        console.error(`[Engram] Failed to save session "${session.id}":`, e)
+      );
+    }, 800) as any;
+    this.chatPersistTimers.set(session.id, timer);
   }
 
+  /** Delete a session from memory and remove its vault file. */
   deleteChatSession(id: string): void {
+    // Cancel any pending write for this session
+    const timer = this.chatPersistTimers.get(id);
+    if (timer) {
+      window.clearTimeout(timer);
+      this.chatPersistTimers.delete(id);
+    }
     this.chatSessions = this.chatSessions.filter(s => s.id !== id);
-    this.scheduleSaveChatSessions();
+    this.chatHistoryStore.delete(id).catch(e =>
+      console.error(`[Engram] Failed to delete session "${id}":`, e)
+    );
+  }
+
+  /**
+   * Manually re-import all sessions from vault files.
+   * Useful after an external sync has added/modified files without the plugin running.
+   */
+  async syncChatsFromVault(): Promise<void> {
+    const vaultSessions = await this.chatHistoryStore.loadAll();
+    const vaultIds = new Set(vaultSessions.map(s => s.id));
+
+    // Keep in-memory sessions that have no vault file (e.g. pending writes)
+    const memOnly = this.chatSessions.filter(s => !vaultIds.has(s.id));
+
+    this.chatSessions = [...vaultSessions, ...memOnly]
+      .sort((a, b) => b.updatedAt - a.updatedAt);
+
+    this.notifyChatViewsSessionsChanged();
+    new Notice(`🧠 Engram: ${vaultSessions.length} chat session(s) loaded from vault`);
+    console.log(`[Engram] syncChatsFromVault: loaded ${vaultSessions.length} session(s)`);
   }
 
   // ── Services ─────────────────────────────────────────────────────────────────
@@ -262,7 +352,15 @@ export default class EngramPlugin extends Plugin {
   private registerVaultEvents(): void {
     this.registerEvent(
       this.app.vault.on('create', async file => {
-        if (file instanceof TFile && file.extension === 'md') {
+        if (!(file instanceof TFile)) return;
+
+        // Chat sync: a new chat file arrived (e.g. from external vault sync)
+        if (this.chatHistoryStore.isOwnedPath(file.path)) {
+          await this.onChatFileChanged(file);
+          return;
+        }
+
+        if (file.extension === 'md') {
           await this.indexer.updateFile(file);
           this.schedulePersist();
         }
@@ -271,7 +369,15 @@ export default class EngramPlugin extends Plugin {
 
     this.registerEvent(
       this.app.vault.on('modify', async file => {
-        if (file instanceof TFile && file.extension === 'md') {
+        if (!(file instanceof TFile)) return;
+
+        // Chat sync: a chat file was modified externally
+        if (this.chatHistoryStore.isOwnedPath(file.path)) {
+          await this.onChatFileChanged(file);
+          return;
+        }
+
+        if (file.extension === 'md') {
           await this.indexer.updateFile(file);
           this.schedulePersist();
         }
@@ -280,7 +386,19 @@ export default class EngramPlugin extends Plugin {
 
     this.registerEvent(
       this.app.vault.on('delete', file => {
-        if (file instanceof TFile && file.extension === 'md') {
+        if (!(file instanceof TFile)) return;
+
+        // Chat sync: a chat file was deleted externally
+        if (this.chatHistoryStore.isOwnedPath(file.path)) {
+          const id = this.chatHistoryStore.idFromPath(file.path);
+          if (id) {
+            this.chatSessions = this.chatSessions.filter(s => s.id !== id);
+            this.notifyChatViewsSessionsChanged();
+          }
+          return;
+        }
+
+        if (file.extension === 'md') {
           this.indexer.removeFile(file.path);
           this.embeddingIndex.removeFile(file.path);
           this.schedulePersist();
@@ -299,9 +417,52 @@ export default class EngramPlugin extends Plugin {
     );
   }
 
+  /**
+   * Called when a chat JSON file is created or modified by the vault file system
+   * (i.e., synced from another device). Merges the session into memory and
+   * refreshes any open chat views.
+   */
+  private async onChatFileChanged(file: TFile): Promise<void> {
+    const id = this.chatHistoryStore.idFromPath(file.path);
+    if (!id) return;
+
+    // Skip if this write was initiated by us (the pending timer is a reliable signal)
+    if (this.chatPersistTimers.has(id)) return;
+
+    const session = await this.chatHistoryStore.loadOne(id);
+    if (!session) return;
+
+    const idx = this.chatSessions.findIndex(s => s.id === id);
+    if (idx >= 0) {
+      // Only overwrite in-memory copy if the file is newer
+      if (session.updatedAt >= this.chatSessions[idx].updatedAt) {
+        this.chatSessions[idx] = session;
+      }
+    } else {
+      this.chatSessions.push(session);
+    }
+    this.chatSessions.sort((a, b) => b.updatedAt - a.updatedAt);
+
+    this.notifyChatViewsSessionsChanged();
+    console.log(`[Engram] Chat session synced from vault: "${session.title}" (${id})`);
+  }
+
   private schedulePersist(): void {
     if (this.indexRebuildTimer) window.clearTimeout(this.indexRebuildTimer);
     this.indexRebuildTimer = window.setTimeout(() => this.persistIndex(), 5000) as any;
+  }
+
+  /**
+   * Notify all open ChatView instances that the session list has changed.
+   * Views will refresh their session sidebar without disturbing the active chat.
+   */
+  notifyChatViewsSessionsChanged(): void {
+    const leaves = this.app.workspace.getLeavesOfType(ENGRAM_VIEW_TYPE);
+    for (const leaf of leaves) {
+      if (leaf.view instanceof ChatView) {
+        leaf.view.onExternalSessionsChanged();
+      }
+    }
   }
 
   // ── View ──────────────────────────────────────────────────────────────────────

@@ -111,6 +111,9 @@ export const DEFAULT_SETTINGS: EngramSettings = {
   showDiffPreview: true,
   diffPreviewThreshold: 200,
   showAdvancedSettings: false,
+
+  // Chat history persistence
+  chatHistoryPath: '.engram/chats',
 };
 
 // ── Settings Tab ────────────────────────────────────────────────────────────
@@ -973,6 +976,46 @@ export class EngramSettingTab extends PluginSettingTab {
         });
     });
 
+    // ── 7. Chat History ──────────────────────────────────────────────────────
+
+    const chatHistoryHeaderSetting = new Setting(containerEl)
+      .setName('Chat history')
+      .setHeading();
+
+    const chatHistoryPathSetting = new Setting(containerEl)
+      .setName('Chat history folder')
+      .setDesc(
+        'Vault-relative path where chat sessions are stored as JSON files. ' +
+        'Because this folder is inside your vault, it syncs automatically with iCloud, ' +
+        'Obsidian Sync, Dropbox, Git, or any other tool you use. ' +
+        'Default: .engram/chats'
+      )
+      .addText(text => text
+        .setPlaceholder('.engram/chats')
+        .setValue(this.plugin.settings.chatHistoryPath ?? '.engram/chats')
+        .onChange(async (value) => {
+          this.plugin.settings.chatHistoryPath = value.trim() || '.engram/chats';
+          await this.save();
+        })
+      );
+
+    const chatSyncSetting = new Setting(containerEl)
+      .setName('Sync chat history from vault')
+      .setDesc(
+        'Re-import all chat sessions from the vault folder above. ' +
+        'Use this after a manual vault sync to pick up sessions from other devices.'
+      )
+      .addButton(btn => {
+        btn.setButtonText('Sync now').onClick(async () => {
+          btn.setButtonText('Syncing…').setDisabled(true);
+          try {
+            await this.plugin.syncChatsFromVault();
+          } finally {
+            btn.setButtonText('Sync now').setDisabled(false);
+          }
+        });
+      });
+
     // ── Unified Visibility Handler ───────────────────────────────────────────
     const applyVisibility = () => {
       const advanced = this.plugin.settings.showAdvancedSettings ?? false;
@@ -1034,6 +1077,11 @@ export class EngramSettingTab extends PluginSettingTab {
       customEmbedApiKeySetting.settingEl.style.display = isCustomEmbed ? '' : 'none';
 
       indexEmbeddingsSetting.settingEl.style.display = showEmbed ? '' : 'none';
+
+      // 7. Chat History
+      chatHistoryHeaderSetting.settingEl.style.display = advanced ? '' : 'none';
+      chatHistoryPathSetting.settingEl.style.display = advanced ? '' : 'none';
+      chatSyncSetting.settingEl.style.display = advanced ? '' : 'none';
     };
 
     applyVisibility();

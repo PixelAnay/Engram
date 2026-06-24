@@ -119,6 +119,11 @@ export interface EngramSettings {
   showDiffPreview: boolean;
   diffPreviewThreshold: number;
   showAdvancedSettings?: boolean;
+
+  // Chat history persistence
+  /** Vault-relative path where chat sessions are stored as individual JSON files.
+   *  Defaults to '.engram/chats'. Change this to move the folder. */
+  chatHistoryPath: string;
 }
 
 // ─── Persisted Chat Session ───────────────────────────────────────────────────
@@ -129,6 +134,8 @@ export interface ChatSession {
   createdAt: number;
   updatedAt: number;
   messages: ChatMessage[];
+  /** Schema version for forward-compatible migration. Current: 1 */
+  schemaVersion?: number;
 }
 
 // ─── Stream / UI Event Types ──────────────────────────────────────────────────
