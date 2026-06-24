@@ -230,6 +230,9 @@ export default class EngramPlugin extends Plugin {
   /**
    * Upsert a session in memory and schedule a debounced write to its vault file.
    * Each session has its own independent debounce timer (800 ms).
+   *
+   * Empty sessions (no messages) are kept in memory for the UI but are NOT
+   * written to disk — the folder only contains real conversations.
    */
   upsertChatSession(session: ChatSession): void {
     const withTouch = { ...session, updatedAt: session.updatedAt || Date.now() };
@@ -237,6 +240,9 @@ export default class EngramPlugin extends Plugin {
     if (idx >= 0) this.chatSessions[idx] = withTouch;
     else this.chatSessions.push(withTouch);
     this.chatSessions.sort((a, b) => b.updatedAt - a.updatedAt);
+
+    // Only persist sessions that have at least one message
+    if (!withTouch.messages || withTouch.messages.length === 0) return;
 
     // Debounce per-session write
     const existing = this.chatPersistTimers.get(session.id);
@@ -250,34 +256,30 @@ export default class EngramPlugin extends Plugin {
     this.chatPersistTimers.set(session.id, timer);
   }
 
-  /** Delete a session from memory and remove its vault file. */
+  /** Delete a session from memory and permanently remove its vault file. */
   deleteChatSession(id: string): void {
-    // Cancel any pending write for this session
+    // Cancel any pending write for this session first
     const timer = this.chatPersistTimers.get(id);
     if (timer) {
       window.clearTimeout(timer);
       this.chatPersistTimers.delete(id);
     }
     this.chatSessions = this.chatSessions.filter(s => s.id !== id);
-    this.chatHistoryStore.delete(id).catch(e =>
+    // force:true permanently removes the file (no OS trash) so the folder
+    // stays in sync with what the UI shows.
+    this.chatHistoryStore.delete(id, true).catch(e =>
       console.error(`[Engram] Failed to delete session "${id}":`, e)
     );
   }
 
   /**
-   * Manually re-import all sessions from vault files.
-   * Useful after an external sync has added/modified files without the plugin running.
+   * Re-import sessions from vault files (folder is single source of truth).
+   * Discards in-memory-only sessions (empty chats with no file) and rebuilds
+   * from disk. The current active session is preserved if it exists on disk.
    */
   async syncChatsFromVault(): Promise<void> {
     const vaultSessions = await this.chatHistoryStore.loadAll();
-    const vaultIds = new Set(vaultSessions.map(s => s.id));
-
-    // Keep in-memory sessions that have no vault file (e.g. pending writes)
-    const memOnly = this.chatSessions.filter(s => !vaultIds.has(s.id));
-
-    this.chatSessions = [...vaultSessions, ...memOnly]
-      .sort((a, b) => b.updatedAt - a.updatedAt);
-
+    this.chatSessions = vaultSessions.sort((a, b) => b.updatedAt - a.updatedAt);
     this.notifyChatViewsSessionsChanged();
     new Notice(`🧠 Engram: ${vaultSessions.length} chat session(s) loaded from vault`);
     console.log(`[Engram] syncChatsFromVault: loaded ${vaultSessions.length} session(s)`);

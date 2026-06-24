@@ -8,7 +8,6 @@ import type { ChatSession, ChatMessage } from '../types';
 
 export class SessionManager {
   private currentChatId = '';
-  private chatPersistTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private plugin: EngramPlugin) {}
 

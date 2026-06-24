@@ -74,12 +74,17 @@ export class ChatHistoryStore {
     }
   }
 
-  /** Delete the vault file for a session. No-op if the file doesn't exist. */
-  async delete(id: string): Promise<void> {
+  /**
+   * Delete the vault file for a session.
+   * @param force  When true (default for UI-triggered deletes), permanently removes
+   *               the file instead of moving it to OS trash. This keeps the folder
+   *               contents in sync with what the plugin's UI shows.
+   */
+  async delete(id: string, force = false): Promise<void> {
     const filePath = this.sessionPath(id);
     const file = this.app.vault.getAbstractFileByPath(filePath);
     if (file instanceof TFile) {
-      await this.app.vault.delete(file);
+      await this.app.vault.delete(file, force);
     }
   }
 
