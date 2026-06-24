@@ -389,6 +389,15 @@ export class ChatView extends ItemView {
     await this.checkConnection();
   }
 
+  /**
+   * Called by EngramPlugin when chat sessions change due to an external vault sync
+   * (i.e., a new or modified .json file appeared in the chat history folder).
+   * Refreshes the session list controls without disturbing the active chat.
+   */
+  onExternalSessionsChanged(): void {
+    this.refreshSessionControls();
+  }
+
   // ── Sessions ───────────────────────────────────────────────────────────────
 
   private switchToSession(id: string): void {
