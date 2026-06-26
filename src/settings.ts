@@ -113,7 +113,7 @@ export const DEFAULT_SETTINGS: EngramSettings = {
   showAdvancedSettings: false,
 
   // Chat history persistence
-  chatHistoryPath: '.engram/chats',
+  chatHistoryPath: 'Intelligence/Chats',
 };
 
 // ── Settings Tab ────────────────────────────────────────────────────────────
@@ -986,15 +986,15 @@ export class EngramSettingTab extends PluginSettingTab {
       .setName('Chat history folder')
       .setDesc(
         'Vault-relative path where chat sessions are stored as JSON files. ' +
-        'Because this folder is inside your vault, it syncs automatically with iCloud, ' +
+        'This folder lives inside your vault so it syncs automatically with iCloud, ' +
         'Obsidian Sync, Dropbox, Git, or any other tool you use. ' +
-        'Default: .engram/chats'
+        'Default: Intelligence/Chats'
       )
       .addText(text => text
-        .setPlaceholder('.engram/chats')
-        .setValue(this.plugin.settings.chatHistoryPath ?? '.engram/chats')
+        .setPlaceholder('Intelligence/Chats')
+        .setValue(this.plugin.settings.chatHistoryPath ?? 'Intelligence/Chats')
         .onChange(async (value) => {
-          this.plugin.settings.chatHistoryPath = value.trim() || '.engram/chats';
+          this.plugin.settings.chatHistoryPath = value.trim() || 'Intelligence/Chats';
           await this.save();
         })
       );

@@ -180,14 +180,25 @@ export default class EngramPlugin extends Plugin {
   /**
    * Load chat sessions at startup.
    *
-   * Priority order:
-   *   1. Vault files (.engram/chats/<id>.json) — the source of truth after v5.1
-   *   2. Legacy data.json chatSessions — migrated automatically on first run
+   * Migration priority (in order):
+   *   1. One-time folder migration: .engram/chats → Intelligence/Chats (v5.0.47 → v5.0.49)
+   *   2. One-time data.json migration: legacy chatSessions key → vault files (pre-v5.0.47)
+   *   3. Load from vault files (Intelligence/Chats/) — the source of truth
    *
-   * After a successful migration the `chatSessions` key is removed from data.json
-   * to avoid stale duplicates.
+   * After each migration step the stale source is cleaned up.
    */
   async loadChatSessions(): Promise<void> {
+    // 0. One-time folder migration: .engram/chats → current path (Intelligence/Chats)
+    //    Runs only if the old hidden folder still exists.
+    const OLD_HIDDEN_PATH = '.engram/chats';
+    if (this.settings.chatHistoryPath !== OLD_HIDDEN_PATH) {
+      const moved = await this.chatHistoryStore.migrateFrom(OLD_HIDDEN_PATH);
+      if (moved > 0) {
+        console.log(`[Engram] Moved ${moved} chat file(s) from ${OLD_HIDDEN_PATH} → ${this.settings.chatHistoryPath}`);
+        new Notice(`🧠 Engram: Moved ${moved} chat(s) to ${this.settings.chatHistoryPath}`);
+      }
+    }
+
     // 1. Load from vault files
     const vaultSessions = await this.chatHistoryStore.loadAll();
     const vaultIds = new Set(vaultSessions.map(s => s.id));

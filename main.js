@@ -95256,7 +95256,7 @@ var DEFAULT_SETTINGS = {
   diffPreviewThreshold: 200,
   showAdvancedSettings: false,
   // Chat history persistence
-  chatHistoryPath: ".engram/chats"
+  chatHistoryPath: "Intelligence/Chats"
 };
 var EngramSettingTab = class extends import_obsidian9.PluginSettingTab {
   constructor(app, plugin) {
@@ -95808,12 +95808,12 @@ var EngramSettingTab = class extends import_obsidian9.PluginSettingTab {
     });
     const chatHistoryHeaderSetting = new import_obsidian9.Setting(containerEl).setName("Chat history").setHeading();
     const chatHistoryPathSetting = new import_obsidian9.Setting(containerEl).setName("Chat history folder").setDesc(
-      "Vault-relative path where chat sessions are stored as JSON files. Because this folder is inside your vault, it syncs automatically with iCloud, Obsidian Sync, Dropbox, Git, or any other tool you use. Default: .engram/chats"
+      "Vault-relative path where chat sessions are stored as JSON files. This folder lives inside your vault so it syncs automatically with iCloud, Obsidian Sync, Dropbox, Git, or any other tool you use. Default: Intelligence/Chats"
     ).addText(
       (text) => {
         var _a2;
-        return text.setPlaceholder(".engram/chats").setValue((_a2 = this.plugin.settings.chatHistoryPath) != null ? _a2 : ".engram/chats").onChange(async (value) => {
-          this.plugin.settings.chatHistoryPath = value.trim() || ".engram/chats";
+        return text.setPlaceholder("Intelligence/Chats").setValue((_a2 = this.plugin.settings.chatHistoryPath) != null ? _a2 : "Intelligence/Chats").onChange(async (value) => {
+          this.plugin.settings.chatHistoryPath = value.trim() || "Intelligence/Chats";
           await this.save();
         });
       }
@@ -96116,6 +96116,45 @@ var ChatHistoryStore = class {
     const fileName = (_a2 = filePath.split("/").pop()) != null ? _a2 : "";
     return fileName.replace(/\.json$/, "") || null;
   }
+  /**
+   * Migrate all JSON files from `oldFolderPath` into the current folder.
+   * Used for the one-time `.engram/chats` → `Intelligence/Chats` move.
+   * After all files are moved, removes the old (now-empty) folder.
+   * Returns the number of sessions migrated.
+   */
+  async migrateFrom(oldFolderPath) {
+    const normOld = (0, import_obsidian10.normalizePath)(oldFolderPath);
+    const oldFolder = this.app.vault.getAbstractFileByPath(normOld);
+    if (!(oldFolder instanceof import_obsidian10.TFolder))
+      return 0;
+    await this.ensureFolder(this.folderPath);
+    let count = 0;
+    for (const child of [...oldFolder.children]) {
+      if (!(child instanceof import_obsidian10.TFile) || child.extension !== "json")
+        continue;
+      try {
+        const content = await this.app.vault.read(child);
+        const newPath = (0, import_obsidian10.normalizePath)(`${this.folderPath}/${child.name}`);
+        const existing = this.app.vault.getAbstractFileByPath(newPath);
+        if (existing instanceof import_obsidian10.TFile) {
+          await this.app.vault.delete(child, true);
+        } else {
+          await this.app.vault.rename(child, newPath);
+        }
+        count++;
+      } catch (e) {
+        console.warn(`[Engram] migrateFrom: could not move "${child.path}":`, e);
+      }
+    }
+    try {
+      const refreshed = this.app.vault.getAbstractFileByPath(normOld);
+      if (refreshed instanceof import_obsidian10.TFolder && refreshed.children.length === 0) {
+        await this.app.vault.delete(refreshed, true);
+      }
+    } catch (e) {
+    }
+    return count;
+  }
   // ── Private ────────────────────────────────────────────────────────────────
   sessionPath(id) {
     return (0, import_obsidian10.normalizePath)(`${this.folderPath}/${id}.json`);
@@ -96277,15 +96316,23 @@ var EngramPlugin = class extends import_obsidian11.Plugin {
   /**
    * Load chat sessions at startup.
    *
-   * Priority order:
-   *   1. Vault files (.engram/chats/<id>.json) — the source of truth after v5.1
-   *   2. Legacy data.json chatSessions — migrated automatically on first run
+   * Migration priority (in order):
+   *   1. One-time folder migration: .engram/chats → Intelligence/Chats (v5.0.47 → v5.0.49)
+   *   2. One-time data.json migration: legacy chatSessions key → vault files (pre-v5.0.47)
+   *   3. Load from vault files (Intelligence/Chats/) — the source of truth
    *
-   * After a successful migration the `chatSessions` key is removed from data.json
-   * to avoid stale duplicates.
+   * After each migration step the stale source is cleaned up.
    */
   async loadChatSessions() {
     var _a2;
+    const OLD_HIDDEN_PATH = ".engram/chats";
+    if (this.settings.chatHistoryPath !== OLD_HIDDEN_PATH) {
+      const moved = await this.chatHistoryStore.migrateFrom(OLD_HIDDEN_PATH);
+      if (moved > 0) {
+        console.log(`[Engram] Moved ${moved} chat file(s) from ${OLD_HIDDEN_PATH} \u2192 ${this.settings.chatHistoryPath}`);
+        new import_obsidian11.Notice(`\u{1F9E0} Engram: Moved ${moved} chat(s) to ${this.settings.chatHistoryPath}`);
+      }
+    }
     const vaultSessions = await this.chatHistoryStore.loadAll();
     const vaultIds = new Set(vaultSessions.map((s) => s.id));
     const data = await this.loadData();

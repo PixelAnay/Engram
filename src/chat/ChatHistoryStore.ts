@@ -1,13 +1,14 @@
 /**
  * ChatHistoryStore.ts
  *
- * Persists each chat session as an individual JSON file inside a hidden folder
- * in the user's vault (default: `.engram/chats/`).
+ * Persists each chat session as an individual JSON file inside a visible folder
+ * in the user's vault (default: `Intelligence/Chats/`).
  *
  * Why vault files instead of data.json?
  *   - Vault files are synced by iCloud, Obsidian Sync, Dropbox, Git, etc.
  *   - data.json lives inside .obsidian/plugins/ which most sync tools skip.
  *   - One file per session → only changed sessions cause sync conflicts.
+ *   - A visible folder (not dot-prefixed) works reliably across all sync tools.
  */
 
 import { App, TFile, TFolder, normalizePath } from 'obsidian';
@@ -125,6 +126,49 @@ export class ChatHistoryStore {
     if (!this.isOwnedPath(filePath)) return null;
     const fileName = filePath.split('/').pop() ?? '';
     return fileName.replace(/\.json$/, '') || null;
+  }
+
+  /**
+   * Migrate all JSON files from `oldFolderPath` into the current folder.
+   * Used for the one-time `.engram/chats` → `Intelligence/Chats` move.
+   * After all files are moved, removes the old (now-empty) folder.
+   * Returns the number of sessions migrated.
+   */
+  async migrateFrom(oldFolderPath: string): Promise<number> {
+    const normOld = normalizePath(oldFolderPath);
+    const oldFolder = this.app.vault.getAbstractFileByPath(normOld);
+    if (!(oldFolder instanceof TFolder)) return 0;
+
+    await this.ensureFolder(this.folderPath);
+    let count = 0;
+
+    for (const child of [...oldFolder.children]) {
+      if (!(child instanceof TFile) || child.extension !== 'json') continue;
+      try {
+        const content = await this.app.vault.read(child);
+        const newPath = normalizePath(`${this.folderPath}/${child.name}`);
+        const existing = this.app.vault.getAbstractFileByPath(newPath);
+        if (existing instanceof TFile) {
+          // Already exists in new location — skip to avoid overwriting newer data
+          await this.app.vault.delete(child, true);
+        } else {
+          await this.app.vault.rename(child, newPath);
+        }
+        count++;
+      } catch (e) {
+        console.warn(`[Engram] migrateFrom: could not move "${child.path}":`, e);
+      }
+    }
+
+    // Delete old folder if now empty
+    try {
+      const refreshed = this.app.vault.getAbstractFileByPath(normOld);
+      if (refreshed instanceof TFolder && refreshed.children.length === 0) {
+        await this.app.vault.delete(refreshed, true);
+      }
+    } catch { /* best-effort */ }
+
+    return count;
   }
 
   // ── Private ────────────────────────────────────────────────────────────────
