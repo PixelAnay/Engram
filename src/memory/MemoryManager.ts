@@ -6,7 +6,8 @@
  * New facts are appended; old entries are trimmed when the file exceeds maxMemoryTokens.
  */
 
-import type { App, TFile } from 'obsidian';
+import { TFile } from 'obsidian';
+import type { App } from 'obsidian';
 import { estimateTokens } from '../utils/tokenEstimator';
 
 export interface MemoryEntry {
@@ -24,11 +25,18 @@ export class MemoryManager {
   private app: App;
   private memoryPath: string;
   private maxTokens: number;
+  private writeQueue: Promise<unknown> = Promise.resolve();
 
   constructor(app: App, memoryPath: string, maxTokens: number) {
     this.app = app;
     this.memoryPath = memoryPath;
     this.maxTokens = maxTokens;
+  }
+
+  private enqueue<T>(op: () => Promise<T>): Promise<T> {
+    const nextOp = this.writeQueue.then(op);
+    this.writeQueue = nextOp.catch(() => {});
+    return nextOp as Promise<T>;
   }
 
   updateConfig(memoryPath: string, maxTokens: number): void {
@@ -60,48 +68,54 @@ export class MemoryManager {
    * what was already on disk — guarding against silent data loss bugs.
    */
   async append(facts: Array<{ fact: string }>): Promise<void> {
-    if (facts.length === 0) return;
+    return this.enqueue(async () => {
+      if (facts.length === 0) return;
 
-    const parsed = await this.parse();
-    const previousCount = parsed.entries.length;
-    const today = new Date().toISOString().slice(0, 10);
+      const parsed = await this.parse();
+      const previousCount = parsed.entries.length;
+      const today = new Date().toISOString().slice(0, 10);
 
-    for (const { fact } of facts) {
-      const id = `mem_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-      parsed.entries.push({ id, fact, date: today });
-    }
+      for (const { fact } of facts) {
+        const id = `mem_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+        parsed.entries.push({ id, fact, date: today });
+      }
 
-    // ── Sanity check: we should never write fewer entries than we read ──────
-    if (parsed.entries.length < previousCount) {
-      console.error(
-        `[Engram] Memory append sanity check FAILED: would write ${parsed.entries.length} entries ` +
-        `but disk has ${previousCount}. Aborting write to protect existing memories.`
-      );
-      return;
-    }
+      // ── Sanity check: we should never write fewer entries than we read ──────
+      if (parsed.entries.length < previousCount) {
+        console.error(
+          `[Engram] Memory append sanity check FAILED: would write ${parsed.entries.length} entries ` +
+          `but disk has ${previousCount}. Aborting write to protect existing memories.`
+        );
+        return;
+      }
 
-    await this.writeBack(parsed.entries);
-    await this.trimIfNeeded();
+      await this.writeBack(parsed.entries);
+      await this.trimIfNeeded();
+    });
   }
 
   /**
    * Delete a specific memory entry by its ID.
    */
   async forget(entryId: string): Promise<boolean> {
-    const parsed = await this.parse();
-    const before = parsed.entries.length;
-    parsed.entries = parsed.entries.filter(e => e.id !== entryId);
+    return this.enqueue(async () => {
+      const parsed = await this.parse();
+      const before = parsed.entries.length;
+      parsed.entries = parsed.entries.filter(e => e.id !== entryId);
 
-    if (parsed.entries.length < before) {
-      await this.writeBack(parsed.entries, false);
-      return true;
-    }
-    return false;
+      if (parsed.entries.length < before) {
+        await this.writeBack(parsed.entries, false);
+        return true;
+      }
+      return false;
+    });
   }
 
   /** Clear all memory entries. Requires explicit force flag to prevent accidental wipes. */
   async clearAll(): Promise<void> {
-    await this.writeBack([], true /* force empty */);
+    return this.enqueue(async () => {
+      await this.writeBack([], true /* force empty */);
+    });
   }
 
   // ── File management ───────────────────────────────────────────────────────
@@ -114,7 +128,10 @@ export class MemoryManager {
 
   private async ensureFile(): Promise<TFile> {
     const existing = this.app.vault.getAbstractFileByPath(this.memoryPath);
-    if (existing) return existing as TFile;
+    if (existing instanceof TFile) return existing;
+    if (existing) {
+      throw new Error(`The memory path "${this.memoryPath}" already exists as a folder. Please choose a different path in settings.`);
+    }
 
     // Create parent folders
     const parentPath = this.memoryPath.substring(0, this.memoryPath.lastIndexOf('/'));
@@ -144,25 +161,37 @@ export class MemoryManager {
       trimmed = true;
     }
 
-    if (trimmed) await this.writeBack(entries);
+    if (trimmed) await this.writeBack(entries, true);
   }
 
   // ── Serialisation ─────────────────────────────────────────────────────────
 
   private parseRaw(raw: string): MemoryEntry[] {
     const result: MemoryEntry[] = [];
-    // Parse lines like: - [2025-06-14|mem_xxx] fact text
+    const lines = raw.split('\n');
     const lineRegex = /^-\s+\[(\d{4}-\d{2}-\d{2})\|([^\]]+)\]\s+(.+)$/;
 
-    for (const line of raw.split('\n')) {
+    let currentEntry: MemoryEntry | null = null;
+
+    for (const line of lines) {
       const match = lineRegex.exec(line.trim());
       if (match) {
-        result.push({
+        if (currentEntry) {
+          result.push(currentEntry);
+        }
+        currentEntry = {
           date: match[1],
           id: match[2],
           fact: match[3],
-        });
+        };
+      } else if (currentEntry && line.trim() !== '' && !line.trim().startsWith('-')) {
+        // Multi-line continuation: append this line to the current entry (M-13)
+        currentEntry.fact += '\n' + line.trim();
       }
+    }
+
+    if (currentEntry) {
+      result.push(currentEntry);
     }
 
     return result;
@@ -182,7 +211,10 @@ export class MemoryManager {
       lines.push('');
     } else {
       for (const e of entries) {
-        lines.push(`- [${e.date}|${e.id}] ${e.fact}`);
+        // Indent continuation lines with 2 spaces for beautiful markdown lists (M-13)
+        const parts = e.fact.split('\n');
+        const formattedFact = parts.map((line, idx) => idx === 0 ? line : `  ${line}`).join('\n');
+        lines.push(`- [${e.date}|${e.id}] ${formattedFact}`);
       }
       lines.push('');
     }

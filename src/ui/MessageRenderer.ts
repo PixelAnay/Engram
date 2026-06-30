@@ -9,8 +9,8 @@
  * - Debounced Markdown renders during streaming (at most every 200ms)
  */
 
-import { MarkdownRenderer, setIcon, Component } from 'obsidian';
-import type { App } from 'obsidian';
+import { App, Component, MarkdownRenderer, setIcon } from 'obsidian';
+import type { VaultIndexer } from '../indexer';
 import type { ChatMessage } from '../types';
 
 export interface DisplayMessage {
@@ -28,6 +28,21 @@ export interface ToolEvent {
   result?: string;
 }
 
+/** Strips unsafe HTML tags and inline events to prevent arbitrary code execution (C-20) */
+function sanitizeMarkdownSource(source: string): string {
+  // Strip <script>...</script> tags case-insensitively
+  let clean = source.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
+  
+  // Strip inline event handlers like onload, onerror, onclick, etc.
+  clean = clean.replace(/\bon[a-zA-Z]+\s*=\s*(?:'[^']*'|"[^"]*"|[^\s>]+)/gi, '');
+  
+  // Strip javascript: URIs in href/src
+  clean = clean.replace(/href\s*=\s*(?:'javascript:[^']*'|"javascript:[^"]*"|javascript:[^\s>]+)/gi, '');
+  clean = clean.replace(/src\s*=\s*(?:'javascript:[^']*'|"javascript:[^"]*"|javascript:[^\s>]+)/gi, '');
+  
+  return clean;
+}
+
 /** Render Markdown safely across Obsidian versions */
 function renderMarkdownCompat(
   app: App,
@@ -35,10 +50,11 @@ function renderMarkdownCompat(
   el: HTMLElement,
   component: Component
 ): void {
+  const sanitized = sanitizeMarkdownSource(source);
   try {
-    MarkdownRenderer.render(app, source, el, '', component);
+    MarkdownRenderer.render(app, sanitized, el, '', component);
   } catch {
-    (MarkdownRenderer as any).renderMarkdown(source, el, '', component);
+    (MarkdownRenderer as any).renderMarkdown(sanitized, el, '', component);
   }
 }
 
@@ -59,13 +75,17 @@ export class MessageRenderer {
   /** Ref to the streaming bubble's raw text node (for fast token patching) */
   private streamingTextNode: Text | null = null;
 
+  /** Cache for resolved note paths to speed up text node resolving (H-21) */
+  private resolvedPathCache = new Map<string, string | null>();
+
   constructor(
     private app: App,
     private container: HTMLElement,
     private component: Component,
     private onCopyMessage: (content: string) => void,
     private onEditMessage: (msg: DisplayMessage) => void,
-    private onNoteClick: (path: string) => void
+    private onNoteClick: (path: string) => void,
+    private indexer?: VaultIndexer
   ) {}
 
   /**
@@ -73,9 +93,14 @@ export class MessageRenderer {
    * Clears all existing DOM and rebuilds.
    */
   renderAll(messages: DisplayMessage[]): void {
+    if (this.mdDebounceTimer !== null) {
+      clearTimeout(this.mdDebounceTimer);
+      this.mdDebounceTimer = null;
+    }
     this.container.empty();
     this.renderedBubbles.clear();
     this.streamingTextNode = null;
+    this.resolvedPathCache.clear();
 
     for (const msg of messages) {
       const el = this.renderBubble(msg);
@@ -394,6 +419,15 @@ export class MessageRenderer {
    * Returns the resolved path string or null.
    */
   private resolveFile(rawPath: string): string | null {
+    const cached = this.resolvedPathCache.get(rawPath);
+    if (cached !== undefined) return cached;
+
+    const result = this.doResolveFile(rawPath);
+    this.resolvedPathCache.set(rawPath, result);
+    return result;
+  }
+
+  private doResolveFile(rawPath: string): string | null {
     // We access the Obsidian vault via the app instance
     const vault = (this.app as any).vault;
     if (!vault) return null;
@@ -423,7 +457,11 @@ export class MessageRenderer {
     const toKey = (v: string) => v.replace(/\\/g, '/').normalize('NFC').toLowerCase();
     const toLoose = (v: string) => v.normalize('NFC').toLowerCase().replace(/[^a-z0-9]/g, '');
     const cKeys = new Set(Array.from(candidates).map(toKey));
-    const files = vault.getMarkdownFiles() as Array<{ path: string; name: string }>;
+
+    // O(1) optimization using indexer note paths if available (H-21)
+    const files = this.indexer
+      ? this.indexer.getAllPaths().map(p => ({ path: p, name: p.split('/').pop() ?? p }))
+      : (vault.getMarkdownFiles() as Array<{ path: string; name: string }>);
 
     for (const f of files) if (cKeys.has(toKey(f.path))) return f.path;
 

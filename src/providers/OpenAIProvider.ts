@@ -136,7 +136,7 @@ export class OpenAIProvider implements AIProvider {
     );
 
     const body: Record<string, unknown> = {
-      model: options.model || undefined,
+      model: options.model,
       messages: sanitizedMessages,
       stream: true,
       temperature: options.temperature,
@@ -190,8 +190,9 @@ export class OpenAIProvider implements AIProvider {
     let finishReason: string | null = null;
     const partialToolCalls: Record<number, { id: string; name: string; args: string }> = {};
 
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     try {
-      const reader = response.body.getReader();
+      reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
 
@@ -200,7 +201,9 @@ export class OpenAIProvider implements AIProvider {
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
+        // Normalize carriage returns to avoid trailing \r (M-20)
+        const normalizedBuffer = buffer.replace(/\r\n/g, '\n');
+        const lines = normalizedBuffer.split('\n');
         buffer = lines.pop() ?? '';
 
         for (const line of lines) {
@@ -218,7 +221,7 @@ export class OpenAIProvider implements AIProvider {
           if (choice.finish_reason) finishReason = choice.finish_reason;
           const delta = choice.delta;
 
-          if (delta.content) {
+          if (delta.content !== undefined && delta.content !== null) {
             assistantText += delta.content;
             onChunk({ type: 'token', content: delta.content });
           }
@@ -241,13 +244,23 @@ export class OpenAIProvider implements AIProvider {
         return { toolCalls: [], text: assistantText, finishReason: 'abort' };
       }
       throw e;
+    } finally {
+      if (reader) {
+        try {
+          reader.cancel();
+        } catch {
+          // Ignored
+        }
+      }
     }
 
-    const toolCalls: ToolCall[] = Object.values(partialToolCalls).map(tc => ({
-      id: tc.id || `call_${Date.now()}_${Math.random().toString(36).slice(2)}`,
-      type: 'function' as const,
-      function: { name: tc.name, arguments: tc.args },
-    }));
+    const toolCalls: ToolCall[] = Object.values(partialToolCalls)
+      .filter(tc => tc.name)
+      .map(tc => ({
+        id: tc.id || `call_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+        type: 'function' as const,
+        function: { name: tc.name, arguments: tc.args },
+      }));
 
     return { toolCalls, text: assistantText, finishReason };
   }

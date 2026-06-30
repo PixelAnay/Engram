@@ -13,6 +13,7 @@ import { MessageRenderer, type DisplayMessage, type ToolEvent } from './ui/Messa
 import { TokenBudgetBar } from './ui/TokenBudgetBar';
 import { SlashCommandHandler } from './commands/SlashCommandHandler';
 import { estimateMessagesTokens } from './utils/tokenEstimator';
+import { showConfirmDialog } from './ui/ConfirmDialog';
 
 export const ENGRAM_VIEW_TYPE = 'engram-view';
 /** @deprecated Use ENGRAM_VIEW_TYPE */
@@ -76,7 +77,8 @@ export class ChatView extends ItemView {
       this,
       (content) => navigator.clipboard.writeText(content),
       (msg) => this.editMessage(msg),
-      (path) => this.openNotes([path])
+      (path) => this.openNotes([path]),
+      this.plugin.indexer
     );
 
     this.plugin.toolExecutor.onOpenNotes = (paths: string[]) => this.openNotes(paths);
@@ -118,6 +120,14 @@ export class ChatView extends ItemView {
     this.plugin.providerFactory.abort();
     this.isStreaming = false;
     this.tokenBudgetBar?.destroy();
+    this.mentionAutocomplete?.destroy();
+    this.slashCommandHandler?.hide();
+
+    // Clean up overlays
+    const doc = activeDocument;
+    doc.querySelectorAll(
+      '.engram-chat-overlay, .engram-persona-overlay, .engram-undo-panel-overlay, .engram-modal-overlay'
+    ).forEach(el => el.remove());
   }
 
   // ── UI Construction ────────────────────────────────────────────────────────
@@ -225,7 +235,17 @@ export class ChatView extends ItemView {
       setTimeout(() => {
         this.mentionAutocomplete?.hide();
         this.slashCommandHandler?.hide();
-      }, 150);
+      }, 200);
+    });
+
+    this.inputArea.addEventListener('keyup', (e) => {
+      if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'Backspace'].includes(e.key)) {
+        this.mentionAutocomplete?.handleCursorMove();
+      }
+    });
+
+    this.inputArea.addEventListener('click', () => {
+      this.mentionAutocomplete?.handleCursorMove();
     });
 
     const btnGroup = inputBar.createDiv('engram-btn-group');
@@ -305,7 +325,7 @@ export class ChatView extends ItemView {
 
     root.addEventListener('dragleave', (e: DragEvent) => {
       e.preventDefault();
-      dragCounter--;
+      dragCounter = Math.max(0, dragCounter - 1);
       if (dragCounter === 0) {
         root.removeClass('drag-over');
       }
@@ -399,6 +419,7 @@ export class ChatView extends ItemView {
    * another device, switches to the most recent remaining session.
    */
   onExternalSessionsChanged(): void {
+    if (this.isStreaming) return;
     const activeId = this.sessionManager.currentId;
     const activeStillExists = this.plugin.chatSessions.some(s => s.id === activeId);
 
@@ -414,6 +435,7 @@ export class ChatView extends ItemView {
   // ── Sessions ───────────────────────────────────────────────────────────────
 
   private switchToSession(id: string): void {
+    if (this.isStreaming) return;
     const session = this.sessionManager.switchTo(id);
     if (!session) return;
     this.messages = [...session.messages];
@@ -470,6 +492,8 @@ export class ChatView extends ItemView {
     const hasAtts = this.pendingAttachments.length > 0;
     if ((!text && !hasAtts) || this.isStreaming) return;
 
+    this.setStreaming(true);
+
     this.inputArea.value = '';
     this.inputArea.setCssStyles({ height: 'auto' });
 
@@ -493,7 +517,6 @@ export class ChatView extends ItemView {
 
     this.messageRenderer.appendBubble(userDisplayMsg);
     this.scrollToBottom();
-    this.setStreaming(true);
 
     try {
       this.showContextStatus('Building context…');
@@ -546,7 +569,8 @@ export class ChatView extends ItemView {
         } else if (chunk.type === 'error' && chunk.error) {
           assistantDisplay.content = chunk.error;
           (assistantDisplay as any).role = 'error';
-          this.messageRenderer.patchStreamingContent(assistantDisplay);
+          assistantDisplay.streaming = false;
+          this.messageRenderer.finalizeStreamingBubble(assistantDisplay);
         } else if (chunk.type === 'done') {
           assistantDisplay.streaming = false;
           this.messageRenderer.finalizeStreamingBubble(assistantDisplay);
@@ -579,6 +603,7 @@ export class ChatView extends ItemView {
         .slice(enriched.length)
         .filter(m => m.role !== 'system');
       this.messages = [...this.messages, ...newTurnMessages];
+      this.displayMessages = MessageRenderer.buildDisplayMessages(this.messages);
       this.sessionManager.save(this.messages);
       this.updateTokenBar();
     } catch (e) {
@@ -702,25 +727,32 @@ export class ChatView extends ItemView {
 
         input.addEventListener('keydown', (ke) => {
           if (ke.key === 'Enter') {
+            input.removeEventListener('blur', saveRename);
             saveRename();
           } else if (ke.key === 'Escape') {
             saved = true;
+            input.removeEventListener('blur', saveRename);
             this.showChatSwitcher();
           }
         });
 
-        input.addEventListener('blur', () => {
-          saveRename();
-        });
+        input.addEventListener('blur', saveRename);
       });
 
       const deleteBtn = actions.appendChild(document.createElement('button'));
       deleteBtn.className = 'engram-chat-item-btn is-danger';
       deleteBtn.title = 'Delete chat';
       setIcon(deleteBtn, 'trash-2');
-      deleteBtn.addEventListener('click', (e) => {
+      deleteBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
-        if (window.confirm(`Delete chat "${session.title}"?`)) {
+        const confirmed = await showConfirmDialog(this.app, {
+          title: 'Delete Chat',
+          message: `Are you sure you want to delete chat "${session.title}"?`,
+          confirmLabel: 'Delete',
+          cancelLabel: 'Cancel',
+          danger: true,
+        });
+        if (confirmed) {
           const next = this.sessionManager.delete(session.id);
           this.messages = [...next.messages];
           this.displayMessages = MessageRenderer.buildDisplayMessages(this.messages);
@@ -808,7 +840,9 @@ export class ChatView extends ItemView {
     const session = this.sessionManager.currentSession;
     const title = session?.title ?? 'Conversation';
     const date = new Date().toISOString().slice(0, 10);
-    const path = `Exports/${title} ${date}.md`;
+    // Sanitize title to remove path-unsafe characters (M-03)
+    const sanitizedTitle = title.replace(/[*"\\/<>:|?]/g, '-').trim();
+    const path = `Exports/${sanitizedTitle} ${date}.md`;
 
     let content = `# ${title}\n*Exported ${date}*\n\n`;
     for (const msg of this.messages.filter(m => m.role !== 'system')) {
@@ -897,8 +931,8 @@ export class ChatView extends ItemView {
   // ── Rendering ─────────────────────────────────────────────────────────────
 
   private renderMessages(): void {
-    this.messagesContainer.empty();
     if (this.displayMessages.length === 0) {
+      this.messageRenderer.renderAll(this.displayMessages); // Clear memory/debounces (M-04)
       this.renderWelcome();
       return;
     }
@@ -939,6 +973,7 @@ export class ChatView extends ItemView {
   }
 
   private editMessage(msg: DisplayMessage): void {
+    if (this.isStreaming) return;
     const idx = this.displayMessages.indexOf(msg);
     if (idx === -1) return;
     let userCount = 0;

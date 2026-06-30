@@ -75,13 +75,14 @@ export class MemoryExtractor {
     // Quick check — skip extraction for very short exchanges
     if (conversationText.length < 100) return [];
 
-    const existingMemory = await this.memoryManager.load();
+    const parsedMem = await this.memoryManager.parse();
+    const existingFacts = parsedMem.entries.map(e => e.fact.toLowerCase().trim());
 
     const messages: ChatMessage[] = [
       { role: 'system', content: EXTRACTION_SYSTEM_PROMPT },
       {
         role: 'user',
-        content: `Existing Memories:\n\`\`\`markdown\n${existingMemory || 'No existing memories.'}\n\`\`\`\n\nRecent Conversation:\n\n${conversationText}\n\nExtract new, memorable facts from this recent conversation. DO NOT extract any fact that is already present in the "Existing Memories" list (even if worded differently). If a fact is already known, redundant, or similar to an existing one, ignore it. Return a JSON array of new facts as strings. Return [] if nothing new or worth saving is found.`,
+        content: `Existing Memories:\n\`\`\`markdown\n${parsedMem.raw || 'No existing memories.'}\n\`\`\`\n\nRecent Conversation:\n\n${conversationText}\n\nExtract new, memorable facts from this recent conversation. DO NOT extract any fact that is already present in the "Existing Memories" list (even if worded differently). If a fact is already known, redundant, or similar to an existing one, ignore it. Return a JSON array of new facts as strings. Return [] if nothing new or worth saving is found.`,
       },
     ];
 
@@ -91,7 +92,7 @@ export class MemoryExtractor {
     const { text } = await this.providerFactory.provider.stream(
       messages,
       {
-        model: this.providerFactory['settings'].model || '',
+        model: this.providerFactory.activeSettings.model || '',
         temperature: 0.1, // Low temperature for deterministic extraction
         maxTokens: 500,
       },
@@ -99,10 +100,10 @@ export class MemoryExtractor {
     );
     responseText = text;
 
-    return this.parse(responseText, existingMemory);
+    return this.parse(responseText, existingFacts);
   }
 
-  private parse(raw: string, existingMemory: string): ExtractedFact[] {
+  private parse(raw: string, existingFacts: string[]): ExtractedFact[] {
     // Strip markdown code fences if present
     const cleaned = raw
       .replace(/```json\s*/g, '')
@@ -117,13 +118,13 @@ export class MemoryExtractor {
       const parsed = JSON.parse(arrayMatch[0]) as unknown;
       if (!Array.isArray(parsed)) return [];
 
-      const existingLower = existingMemory.toLowerCase();
       const facts: ExtractedFact[] = [];
       for (const item of parsed) {
         if (typeof item === 'string' && item.trim().length > 5) {
           const cleanFact = item.trim();
-          // Skip if already exists in memory (fallback exact check)
-          if (existingLower.includes(cleanFact.toLowerCase())) {
+          const cleanFactLower = cleanFact.toLowerCase();
+          // Skip if exact duplicate exists, or if it is exactly contained in an existing fact (M-12)
+          if (existingFacts.some(f => f === cleanFactLower || f.includes(cleanFactLower))) {
             continue;
           }
           facts.push({

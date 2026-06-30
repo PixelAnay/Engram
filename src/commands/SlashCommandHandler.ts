@@ -142,7 +142,8 @@ export class SlashCommandHandler {
     return false;
   }
 
-  hide(): void {
+  hide(force = false): void {
+    if (this.isHovered && !force) return;
     this.active = false;
     this.dropdownEl?.remove();
     this.dropdownEl = null;
@@ -155,6 +156,8 @@ export class SlashCommandHandler {
 
     if (!this.dropdownEl) {
       this.dropdownEl = this.containerEl.createDiv('engram-slash-dropdown');
+      this.dropdownEl.addEventListener('mouseenter', () => this.isHovered = true);
+      this.dropdownEl.addEventListener('mouseleave', () => this.isHovered = false);
     }
 
     this.renderItems();
@@ -181,12 +184,15 @@ export class SlashCommandHandler {
     });
   }
 
+  private isHovered = false;
+
   private selectActive(): void {
     const cmd = this.visibleCommands[this.activeIndex];
     if (!cmd) return;
 
     this.inputEl.value = '';
-    this.hide();
+    this.isHovered = false;
+    this.hide(true);
 
     this.execute(cmd);
   }

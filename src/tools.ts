@@ -318,6 +318,8 @@ Format:
 export interface UndoEntry {
   /** Vault-relative path of the file that was modified */
   path: string;
+  /** Optional destination path (used for move/rename operations to delete the copy) */
+  destinationPath?: string;
   /** Full content before the edit (null if the file was created new and should be deleted on undo) */
   previousContent: string | null;
   /** Human-readable description of the operation */
@@ -361,7 +363,7 @@ export class ToolExecutor {
   private isMemoryPath(path: string): boolean {
     if (!this.settings.memoryEnabled) return false;
     const memPath = (this.settings.memoryPath ?? '').trim();
-    return memPath.length > 0 && path.trim() === memPath.trim();
+    return memPath.length > 0 && path.trim().toLowerCase() === memPath.trim().toLowerCase();
   }
 
   /** Execute a tool call and return the result as a string */
@@ -410,7 +412,28 @@ export class ToolExecutor {
     if (index < 0 || index >= this.undoStack.length) return null;
 
     const entry = this.undoStack[index];
+
+    // Check permission/scope before performing modifications (C-15)
+    if (!isPathAllowed(entry.path, this.settings)) {
+      return null;
+    }
+    if (entry.destinationPath && !isPathAllowed(entry.destinationPath, this.settings)) {
+      return null;
+    }
+    if (this.isMemoryPath(entry.path) || (entry.destinationPath && this.isMemoryPath(entry.destinationPath))) {
+      return null;
+    }
+
     this.undoStack.splice(index, 1);
+
+    // Clean up destination copy first (C-13)
+    if (entry.destinationPath) {
+      const destFile = this.app.vault.getAbstractFileByPath(entry.destinationPath);
+      if (destFile) {
+        await this.app.vault.trash(destFile, true);
+        this.indexer.removeFile(entry.destinationPath);
+      }
+    }
 
     // If previousContent is null the file was newly created → delete it
     if (entry.previousContent === null) {
@@ -445,10 +468,13 @@ export class ToolExecutor {
   // ── Tools ─────────────────────────────────────────────────────────────────
 
   private async toolSearchVault(args: Record<string, unknown>): Promise<string> {
+    if (args.query !== undefined && args.query !== null && typeof args.query !== 'string') {
+      return 'Error: query must be a string.';
+    }
     const query = String(args.query ?? '');
     const tags = Array.isArray(args.tags) ? args.tags.map(String) : undefined;
     const fullText = Boolean(args.full_text);
-    const limit = typeof args.limit === 'number' ? Math.min(args.limit, 50) : 10;
+    const limit = typeof args.limit === 'number' ? Math.max(1, Math.min(args.limit, 50)) : 10;
 
     let metaResults = this.indexer.search(query, tags, limit);
 
@@ -483,15 +509,21 @@ export class ToolExecutor {
       }
     }
 
+    // Filter out memory file path to prevent leaking memory content (C-07)
+    const memPath = (this.settings.memoryPath ?? '').trim().toLowerCase();
+    metaResults = metaResults.filter(r => r.path.toLowerCase() !== memPath);
+
     if (metaResults.length === 0) return 'No notes found matching your search.';
 
-    const lines = metaResults.slice(0, limit).map(r => {
+    const sliced = metaResults.slice(0, limit);
+    const lines = sliced.map(r => {
       const tags = r.tags.length > 0 ? ` [${r.tags.join(', ')}]` : '';
       const snippet = r.snippet ? `\n  > ${r.snippet}` : '';
       return `- ${r.path}${tags}${snippet}`;
     });
 
-    return `Found ${metaResults.length} notes:\n${lines.join('\n')}`;
+    // H-28: Report sliced count correctly
+    return `Found ${sliced.length} notes (out of ${metaResults.length} matches):\n${lines.join('\n')}`;
   }
 
   private async toolReadNote(args: Record<string, unknown>): Promise<string> {
@@ -518,7 +550,18 @@ export class ToolExecutor {
   }
 
   private toolListFolder(args: Record<string, unknown>): string {
-    const path = String(args.path ?? '').trim();
+    if (args.path !== undefined && args.path !== null && typeof args.path !== 'string') {
+      return 'Error: path must be a string.';
+    }
+    const rawPath = String(args.path ?? '').trim();
+    let path = '';
+    if (rawPath !== '') {
+      const validated = validateVaultPath(rawPath);
+      if (validated === null) {
+        return `Error: Access denied or invalid path: ${rawPath}`;
+      }
+      path = validated;
+    }
     if (path && !isPathAllowed(path, this.settings)) {
       return `Error: Access denied. Path is not within allowed knowledge scope: ${path}`;
     }
@@ -762,10 +805,10 @@ export class ToolExecutor {
     });
     if (!confirmed) return 'Cancelled: User declined the move operation.';
 
-    // Save undo entry: content + old path (we'll restore to old path on undo)
+    // Save undo entry: content + old path (we'll restore to old path on undo) (C-13)
     if (file instanceof TFile) {
       const content = await this.app.vault.read(file);
-      this.pushUndo(source, content, `move ${source} → ${destination}`);
+      this.pushUndo(source, content, `move ${source} → ${destination}`, destination);
     }
 
     // Ensure destination parent folder exists
@@ -801,10 +844,10 @@ export class ToolExecutor {
     const newPath = parentFolder + newName;
     if (!isPathAllowed(newPath, this.settings)) return `Error: Access denied. Renamed path is not within allowed knowledge scope: ${newPath}`;
 
-    // Save undo snapshot
+    // Save undo snapshot (C-13)
     if (file instanceof TFile) {
       const content = await this.app.vault.read(file);
-      this.pushUndo(path, content, `rename ${path} → ${newPath}`);
+      this.pushUndo(path, content, `rename ${path} → ${newPath}`, newPath);
     }
 
     await this.app.fileManager.renameFile(file, newPath);
@@ -817,13 +860,16 @@ export class ToolExecutor {
   }
 
   private async toolCopyNote(args: Record<string, unknown>): Promise<string> {
-    if (this.settings.editPermission === 'read_only') {
-      return 'Error: Edit permission is set to read-only. Change it in plugin settings.';
+    if (this.settings.editPermission !== 'full_edit') {
+      return 'Error: Copying notes requires "full_edit" permission in plugin settings.';
     }
     const source = validateVaultPath(args.source);
     const destination = validateVaultPath(args.destination);
     if (!source || !isPathAllowed(source, this.settings)) return `Error: Access denied or invalid source path: ${source}`;
     if (!destination || !isPathAllowed(destination, this.settings)) return `Error: Access denied or invalid destination path: ${destination}`;
+    if (this.isMemoryPath(destination)) {
+      return 'Error: Cannot overwrite the memory file. Use save_memory / delete_memory to modify memories.';
+    }
 
     const file = this.app.vault.getAbstractFileByPath(source);
     if (!(file instanceof TFile)) return `Error: Note not found: ${source}`;
@@ -852,7 +898,7 @@ export class ToolExecutor {
     }
     const path = validateVaultPath(args.path);
     if (!path || !isPathAllowed(path, this.settings)) return `Error: Access denied or invalid path: ${path}`;
-    if (!args.confirm) return 'Error: confirm must be set to true to delete a note.';
+    if (args.confirm !== true) return 'Error: confirm must be set to true to delete a note.';
     // ── Memory file protection ─────────────────────────────────────────────────────────
     if (this.isMemoryPath(path)) {
       return 'Error: The memory file cannot be deleted through this tool. ' +
@@ -948,11 +994,22 @@ export class ToolExecutor {
    */
   private async ensureParentFolder(filePath: string): Promise<void> {
     if (!filePath.includes('/')) return;
-    const folder = filePath.substring(0, filePath.lastIndexOf('/'));
-    if (!folder) return;
-    const exists = this.app.vault.getAbstractFileByPath(folder);
-    if (!exists) {
-      await this.app.vault.createFolder(folder);
+    const folderPath = filePath.substring(0, filePath.lastIndexOf('/'));
+    if (!folderPath) return;
+
+    const segments = folderPath.split('/');
+    let currentPath = '';
+    for (const segment of segments) {
+      if (!segment) continue;
+      currentPath = currentPath ? `${currentPath}/${segment}` : segment;
+      const exists = this.app.vault.getAbstractFileByPath(currentPath);
+      if (!exists) {
+        try {
+          await this.app.vault.createFolder(currentPath);
+        } catch (e) {
+          // Folder might have been created concurrently, or exists but is not tracked
+        }
+      }
     }
   }
 
@@ -960,8 +1017,8 @@ export class ToolExecutor {
    * Push an undo entry. previousContent = null means the file is newly created.
    * Keeps the last 20 undo entries.
    */
-  private pushUndo(path: string, previousContent: string | null, description: string): void {
-    this.undoStack.push({ path, previousContent, description, timestamp: Date.now() });
+  private pushUndo(path: string, previousContent: string | null, description: string, destinationPath?: string): void {
+    this.undoStack.push({ path, previousContent, description, timestamp: Date.now(), destinationPath });
     if (this.undoStack.length > 20) this.undoStack.shift();
   }
 }

@@ -64,9 +64,17 @@ export class SessionManager {
   }
 
   cleanEmptySessions(): void {
-    const activeId = this.currentChatId;
+    const activeIds = new Set<string>();
+    this.plugin.app.workspace.getLeavesOfType('engram-view').forEach(leaf => {
+      const view = leaf.view as any;
+      if (view && view.sessionManager && view.sessionManager.currentChatId) {
+        activeIds.add(view.sessionManager.currentChatId);
+      }
+    });
+    if (this.currentChatId) activeIds.add(this.currentChatId);
+
     const toDelete = this.plugin.chatSessions.filter(
-      s => s.id !== activeId && (!s.messages || s.messages.length === 0)
+      s => !activeIds.has(s.id) && (!s.messages || s.messages.length === 0)
     );
     for (const session of toDelete) {
       this.plugin.deleteChatSession(session.id);
@@ -103,7 +111,8 @@ export class SessionManager {
     if (!session || session.title !== 'New chat' || session.messages.length > 1) return;
 
     const normalized = prompt.replace(/\s+/g, ' ').trim();
-    session.title = normalized.length > 48 ? `${normalized.slice(0, 48)}…` : normalized;
+    const chars = [...normalized];
+    session.title = chars.length > 48 ? `${chars.slice(0, 48).join('')}…` : normalized;
     session.updatedAt = Date.now();
     this.plugin.upsertChatSession(session);
   }

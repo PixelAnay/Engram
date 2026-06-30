@@ -28,6 +28,10 @@ export class ProviderFactory {
     this._provider = null; // invalidate cached provider
   }
 
+  get activeSettings(): EngramSettings {
+    return this.settings;
+  }
+
   get provider(): AIProvider {
     if (!this._provider) {
       this._provider = this.create();
@@ -76,97 +80,129 @@ export class ProviderFactory {
     let depth = 0;
     const maxDepth = this.settings.maxToolCallDepth;
 
-    while (depth < maxDepth) {
-      this.abortController = new AbortController();
-
-      const useTools = this.settings.toolCallingMode !== 'disabled';
-      const useNative = this.settings.toolCallingMode === 'native' && this.provider.supportsTools;
-
-      const streamOptions: StreamOptions = {
-        model: this.settings.model || '',
-        temperature: this.settings.temperature,
-        signal: this.abortController.signal,
-        ...(useNative ? { tools: TOOL_DEFINITIONS as any, toolChoice: 'auto' } : {}),
-      };
-
-      // For Anthropic, max_tokens is required
-      if (this.settings.providerType === 'anthropic') {
-        streamOptions.maxTokens = Math.floor(this.settings.contextWindowTokens * 0.3);
-      }
-
-      let result: { toolCalls: ToolCall[]; text: string; finishReason: string | null };
-
-      try {
-        result = await this.provider.stream(workingMessages, streamOptions, onChunk);
-      } catch (e) {
-        onChunk({ type: 'error', error: `Unexpected error: ${(e as Error).message}` });
-        onChunk({ type: 'done' });
-        yield workingMessages;
-        return;
-      }
-
-      let { toolCalls, text: assistantText, finishReason } = result;
-
-      // Prompt-injection fallback: parse <tool_call> blocks from text
-      if (
-        this.settings.toolCallingMode === 'prompt_injection' &&
-        assistantText &&
-        toolCalls.length === 0
-      ) {
-        const injected = parseInjectionToolCalls(assistantText);
-        if (injected.length > 0) {
-          toolCalls = injected;
-          assistantText = assistantText.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '').trim();
-          finishReason = 'tool_calls';
+    // Inject the tool prompt if using prompt injection (H-02)
+    if (this.settings.toolCallingMode === 'prompt_injection') {
+      const sysIdx = workingMessages.findIndex(m => m.role === 'system');
+      if (sysIdx >= 0) {
+        const sysMsg = workingMessages[sysIdx];
+        if (typeof sysMsg.content === 'string' && !sysMsg.content.includes('Available tools:')) {
+          workingMessages[sysIdx] = {
+            ...sysMsg,
+            content: sysMsg.content + '\n\n' + TOOL_INJECTION_PROMPT,
+          };
         }
       }
-
-      // Append assistant message
-      // Use empty string rather than null: Anthropic rejects messages where
-      // content is null and there are no tool_calls (400: "assistant must
-      // provide content, reasoning_content or tool_calls").
-      const assistantMsg: ChatMessage = {
-        role: 'assistant',
-        content: assistantText || '',
-        ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
-      };
-      workingMessages.push(assistantMsg);
-
-      // No tool calls → done
-      if (toolCalls.length === 0 || finishReason === 'stop' || finishReason === 'end_turn') {
-        onChunk({ type: 'done' });
-        yield workingMessages;
-        return;
-      }
-
-      if (finishReason === 'abort') {
-        yield workingMessages;
-        return;
-      }
-
-      // Execute tools
-      for (const tc of toolCalls) {
-        onChunk({ type: 'tool_start', toolName: tc.function.name, toolArgs: tc.function.arguments });
-        const toolResult = await toolExecutor.execute(tc.function.name, tc.function.arguments);
-        onChunk({ type: 'tool_end', toolName: tc.function.name, toolResult });
-
-        workingMessages.push({
-          role: 'tool',
-          tool_call_id: tc.id,
-          name: tc.function.name,
-          content: toolResult,
-        });
-      }
-
-      depth++;
     }
 
-    onChunk({
-      type: 'error',
-      error: `Max tool call depth (${maxDepth}) reached. Stopping.`,
-    });
-    onChunk({ type: 'done' });
-    yield workingMessages;
+    this.abortController = new AbortController();
+
+    try {
+      while (depth < maxDepth) {
+        if (this.abortController.signal.aborted) {
+          onChunk({ type: 'done' });
+          yield workingMessages;
+          return;
+        }
+
+        const useTools = this.settings.toolCallingMode !== 'disabled';
+        const useNative = this.settings.toolCallingMode === 'native' && this.provider.supportsTools;
+
+        const streamOptions: StreamOptions = {
+          model: this.settings.model || '',
+          temperature: this.settings.temperature,
+          signal: this.abortController.signal,
+          ...(useNative ? { tools: TOOL_DEFINITIONS as any, toolChoice: 'auto' } : {}),
+        };
+
+        // For Anthropic, max_tokens is required
+        if (this.settings.providerType === 'anthropic') {
+          const val = Math.floor(this.settings.contextWindowTokens * 0.3);
+          streamOptions.maxTokens = val > 0 ? val : 4096;
+        }
+
+        let result: { toolCalls: ToolCall[]; text: string; finishReason: string | null };
+
+        try {
+          result = await this.provider.stream(workingMessages, streamOptions, onChunk);
+        } catch (e) {
+          onChunk({ type: 'error', error: `Unexpected error: ${(e as Error).message}` });
+          onChunk({ type: 'done' });
+          yield workingMessages;
+          return;
+        }
+
+        let { toolCalls, text: assistantText, finishReason } = result;
+
+        // Prompt-injection fallback: parse <tool_call> blocks from text
+        if (
+          this.settings.toolCallingMode === 'prompt_injection' &&
+          assistantText &&
+          toolCalls.length === 0
+        ) {
+          const injected = parseInjectionToolCalls(assistantText);
+          if (injected.length > 0) {
+            toolCalls = injected;
+            assistantText = assistantText.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '').trim();
+            finishReason = 'tool_calls';
+          }
+        }
+
+        // Append assistant message
+        // Use empty string rather than null: Anthropic rejects messages where
+        // content is null and there are no tool_calls (400: "assistant must
+        // provide content, reasoning_content or tool_calls").
+        const assistantMsg: ChatMessage = {
+          role: 'assistant',
+          content: assistantText || '',
+          ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+        };
+        workingMessages.push(assistantMsg);
+
+        // No tool calls → done
+        if (toolCalls.length === 0) {
+          onChunk({ type: 'done' });
+          yield workingMessages;
+          return;
+        }
+
+        if (finishReason === 'abort') {
+          yield workingMessages;
+          return;
+        }
+
+        // Execute tools
+        for (const tc of toolCalls) {
+          // Check aborted during tool calls execution
+          if (this.abortController.signal.aborted) {
+            onChunk({ type: 'done' });
+            yield workingMessages;
+            return;
+          }
+
+          onChunk({ type: 'tool_start', toolName: tc.function.name, toolArgs: tc.function.arguments });
+          const toolResult = await toolExecutor.execute(tc.function.name, tc.function.arguments);
+          onChunk({ type: 'tool_end', toolName: tc.function.name, toolResult });
+
+          workingMessages.push({
+            role: 'tool',
+            tool_call_id: tc.id,
+            name: tc.function.name,
+            content: toolResult,
+          });
+        }
+
+        depth++;
+      }
+
+      onChunk({
+        type: 'error',
+        error: `Max tool call depth (${maxDepth}) reached. Stopping.`,
+      });
+      onChunk({ type: 'done' });
+      yield workingMessages;
+    } finally {
+      this.abortController = null;
+    }
   }
 }
 
