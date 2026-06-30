@@ -118,16 +118,22 @@ export function isPathAllowed(path: string, settings: EngramSettings): boolean {
   // 1. Block .obsidian internals
   if (isObsidianInternal(normalised)) return false;
 
+  // Memory path is ALWAYS allowed (M-24)
+  const memPath = settings.memoryPath ? normalisePath(settings.memoryPath) : '';
+  if (memPath && normalised.toLowerCase() === memPath.toLowerCase()) return true;
+
   // 2. Block exclude patterns (globs)
   const matchesGlob = (p: string, pattern: string) => {
-    // Compile glob to regex
-    const escaped = pattern
+    const normalizedPat = pattern.replace(/\\/g, '/');
+    const escaped = normalizedPat
       .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-      .replace(/\*\*/g, '<<<DS>>>')
+      .replace(/\?/g, '.')
+      .replace(/\*\*/g, '<<<DOUBLESTAR>>>')
       .replace(/\*/g, '[^/]*')
-      .replace(/<<<DS>>>/g, '.*');
+      .replace(/<<<DOUBLESTAR>>>/g, '.*');
     try {
-      const regex = new RegExp(`^${escaped}$`, 'i');
+      // Match either the pattern exactly or any subpath under it (M-17, M-23)
+      const regex = new RegExp(`^(?:${escaped}|${escaped}/.*)$`, 'i');
       return regex.test(p);
     } catch {
       return false;

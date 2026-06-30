@@ -1,4 +1,4 @@
-import { App, TFile, getAllTags, CachedMetadata } from 'obsidian';
+import { App, TFile, getAllTags, CachedMetadata, Notice } from 'obsidian';
 import type { NoteMetadata, SearchResult, EngramSettings } from './types';
 import { normalisePath, isPathAllowed } from './utils/pathUtils';
 
@@ -14,14 +14,14 @@ const LRU_MAX = 100; // max full-content entries to keep in memory
 
 /** Simple glob → regex (supports * and **) */
 function globToRegex(pattern: string): RegExp {
-  // 1. Escape all regex special chars except *
-  // 2. Replace ** before * (order matters)
-  const escaped = pattern
+  const normalized = pattern.replace(/\\/g, '/');
+  const escaped = normalized
     .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-    .replace(/\*\*/g, '<<<DS>>>')
+    .replace(/\?/g, '.')
+    .replace(/\*\*/g, '<<<DOUBLESTAR>>>')
     .replace(/\*/g, '[^/]*')
-    .replace(/<<<DS>>>/g, '.*');
-  return new RegExp(`^${escaped}$`);
+    .replace(/<<<DOUBLESTAR>>>/g, '.*');
+  return new RegExp(`^(?:${escaped}|${escaped}/.*)$`, 'i');
 }
 
 /** Lightweight LRU cache for note full-text content */
@@ -60,6 +60,7 @@ export class VaultIndexer {
   private contentCache = new LRUCache<string, string>(LRU_MAX);
   private excludeRegexes: RegExp[] = [];
   private ready = false;
+  private _lastUpdated = Date.now();
 
   // ── Caches invalidated by settings/index changes ──────────────────────────
   private _excludedCount: number | null = null;
@@ -74,6 +75,10 @@ export class VaultIndexer {
 
   get isReady(): boolean {
     return this.ready;
+  }
+
+  get lastUpdated(): number {
+    return this._lastUpdated;
   }
 
   get noteCount(): number {
@@ -105,13 +110,26 @@ export class VaultIndexer {
     this.rebuildExcludeRegexes();
 
     const files = this.app.vault.getMarkdownFiles();
-    const needsRebuild = !saved ||
-      saved.version !== INDEX_VERSION ||
-      // Check if any file has changed since the last index
-      files.some(f => {
-        const meta = saved.notes[f.path];
-        return !meta || meta.mtime !== f.stat.mtime;
-      });
+    let needsRebuild = !saved || saved.version !== INDEX_VERSION;
+
+    if (!needsRebuild && saved) {
+      // Chunk check to avoid blocking the UI thread (M-25)
+      const CHECK_CHUNK = 500;
+      for (let i = 0; i < files.length; i += CHECK_CHUNK) {
+        const chunk = files.slice(i, i + CHECK_CHUNK);
+        const changed = chunk.some(f => {
+          const meta = saved.notes[f.path];
+          return !meta || meta.mtime !== f.stat.mtime;
+        });
+        if (changed) {
+          needsRebuild = true;
+          break;
+        }
+        if (files.length > 2000) {
+          await new Promise(resolve => setTimeout(resolve, 0));
+        }
+      }
+    }
 
     if (!needsRebuild && saved) {
       // Restore from cache but remove any deleted files
@@ -127,13 +145,30 @@ export class VaultIndexer {
       return;
     }
 
+    const startTime = Date.now();
+    const TIMEOUT_MS = 15000; // 15 seconds max
+
     // Batch-index all files in chunks to avoid blocking the UI
     this.index = { version: INDEX_VERSION, buildTime: Date.now(), notes: {} };
     const CHUNK = 50;
     for (let i = 0; i < files.length; i += CHUNK) {
+      if (Date.now() - startTime > TIMEOUT_MS) {
+        console.warn(`[Engram] VaultIndexer: Indexing timeout reached. Only ${Object.keys(this.index.notes).length} files indexed.`);
+        new Notice('Engram: Vault indexing took too long. Vault map may be incomplete.');
+        break;
+      }
       const chunk = files.slice(i, i + CHUNK);
       for (const file of chunk) {
+        // Verify the file still exists in the vault (H-23)
+        const currentFile = this.app.vault.getAbstractFileByPath(file.path);
+        if (!(currentFile instanceof TFile)) {
+          continue;
+        }
         if (!this.isExcluded(file.path)) {
+          const existing = this.index.notes[file.path];
+          if (existing && existing.mtime >= file.stat.mtime) {
+            continue;
+          }
           this.index.notes[file.path] = await this.buildMeta(file);
         }
       }
@@ -293,6 +328,10 @@ export class VaultIndexer {
     for (let i = 0; i < candidates.length; i += CHUNK) {
       const batch = candidates.slice(i, i + CHUNK);
       for (const path of batch) {
+        // Skip files that are too large (e.g. > 10MB) to prevent RAM spike / freeze (H-08)
+        const meta = this.index.notes[path];
+        if (meta && meta.size > 10 * 1024 * 1024) continue;
+
         const content = await this.readNote(path);
         if (!content) continue;
 
@@ -394,7 +433,12 @@ export class VaultIndexer {
   // ── Private Helpers ───────────────────────────────────────────────────────
 
   private isExcluded(path: string): boolean {
-    return !isPathAllowed(path, this.settings);
+    if (!isPathAllowed(path, this.settings)) return true;
+    if (this.excludeRegexes && this.excludeRegexes.length > 0) {
+      const normPath = path.replace(/\\/g, '/');
+      return this.excludeRegexes.some(rx => rx.test(normPath));
+    }
+    return false;
   }
 
   private rebuildExcludeRegexes(): void {
@@ -403,6 +447,7 @@ export class VaultIndexer {
 
   /** Invalidate computed caches that depend on index state. */
   private invalidateCaches(): void {
+    this._lastUpdated = Date.now();
     this._excludedCount = null;
     this._vaultMapCache = null;
     this._vaultMapNoteCount = null;

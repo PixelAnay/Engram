@@ -71,7 +71,7 @@ export class AnthropicProvider implements AIProvider {
 
   async healthCheck(model?: string): Promise<ProviderStatus> {
     const start = Date.now();
-    const testModel = model || 'claude-fable-5';
+    const testModel = model || 'claude-3-5-haiku-20241022';
     try {
       const res = await requestUrl({
         url: `${this.baseUrl}/v1/messages`,
@@ -141,7 +141,7 @@ export class AnthropicProvider implements AIProvider {
     };
 
     if (system) body.system = system;
-    if (tools && tools.length > 0) {
+    if (tools && tools.length > 0 && options.toolChoice !== 'none') {
       body.tools = tools;
       body.tool_choice = { type: 'auto' };
     }
@@ -184,8 +184,9 @@ export class AnthropicProvider implements AIProvider {
     const toolUseBlocks: Record<number, { id: string; name: string; args: string }> = {};
     let currentBlockIndex = -1;
 
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     try {
-      const reader = response.body.getReader();
+      reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
 
@@ -194,52 +195,61 @@ export class AnthropicProvider implements AIProvider {
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
+        // Normalize carriage returns to avoid trailing \r (M-20)
+        const normalizedBuffer = buffer.replace(/\r\n/g, '\n');
+        const lines = normalizedBuffer.split('\n');
         buffer = lines.pop() ?? '';
 
         for (const line of lines) {
           const trimmed = line.trim();
-          if (trimmed.startsWith('event:')) continue; // skip event type lines
+          if (trimmed.startsWith('event:')) continue; // Skip event lines
           if (!trimmed.startsWith('data:')) continue;
-
           const payload = trimmed.slice(5).trim();
-          let event: AnthropicStreamEvent;
-          try { event = JSON.parse(payload) as AnthropicStreamEvent; } catch { continue; }
+          if (payload === '[DONE]') break;
 
-          switch (event.type) {
-            case 'content_block_start':
-              currentBlockIndex = event.index ?? 0;
-              if (event.content_block?.type === 'tool_use') {
-                toolUseBlocks[currentBlockIndex] = {
-                  id: event.content_block.id ?? '',
-                  name: event.content_block.name ?? '',
-                  args: '',
-                };
-              }
-              break;
-
-            case 'content_block_delta':
-              if (!event.delta) break;
-              if (event.delta.type === 'text_delta' && event.delta.text) {
-                assistantText += event.delta.text;
-                onChunk({ type: 'token', content: event.delta.text });
-              } else if (event.delta.type === 'input_json_delta' && event.delta.partial_json) {
-                const idx = event.index ?? currentBlockIndex;
-                if (toolUseBlocks[idx]) {
-                  toolUseBlocks[idx].args += event.delta.partial_json;
+          try {
+            const event = JSON.parse(payload);
+            
+            switch (event.type) {
+              case 'content_block_start':
+                currentBlockIndex = event.index ?? 0;
+                if (event.content_block?.type === 'tool_use') {
+                  toolUseBlocks[currentBlockIndex] = {
+                    id: event.content_block.id ?? '',
+                    name: event.content_block.name ?? '',
+                    args: '',
+                  };
                 }
-              }
-              break;
+                break;
 
-            case 'message_delta':
-              if ((event as any).delta?.stop_reason) {
-                finishReason = (event as any).delta.stop_reason;
-              }
-              break;
+              case 'content_block_delta':
+                if (!event.delta) break;
+                if (event.delta.type === 'text_delta' && event.delta.text) {
+                  assistantText += event.delta.text;
+                  onChunk({ type: 'token', content: event.delta.text });
+                } else if (event.delta.type === 'input_json_delta' && event.delta.partial_json) {
+                  const idx = event.index !== undefined ? event.index : currentBlockIndex;
+                  if (idx >= 0) {
+                    if (!toolUseBlocks[idx]) {
+                      toolUseBlocks[idx] = { id: '', name: '', args: '' };
+                    }
+                    toolUseBlocks[idx].args += event.delta.partial_json;
+                  }
+                }
+                break;
 
-            case 'message_stop':
-              finishReason = finishReason ?? 'end_turn';
-              break;
+              case 'message_delta':
+                if ((event as any).delta?.stop_reason) {
+                  finishReason = (event as any).delta.stop_reason;
+                }
+                break;
+
+              case 'message_stop':
+                finishReason = finishReason ?? 'end_turn';
+                break;
+            }
+          } catch {
+            // Ignore malformed JSON lines
           }
         }
       }
@@ -249,6 +259,14 @@ export class AnthropicProvider implements AIProvider {
         return { toolCalls: [], text: assistantText, finishReason: 'abort' };
       }
       throw e;
+    } finally {
+      if (reader) {
+        try {
+          reader.cancel();
+        } catch {
+          // Ignored
+        }
+      }
     }
 
     // Convert tool_use blocks to our ToolCall format
@@ -282,7 +300,7 @@ export class AnthropicProvider implements AIProvider {
         // Tool results become user messages
         const toolResult: AnthropicContentBlock = {
           type: 'tool_result',
-          tool_use_id: msg.tool_call_id ?? '',
+          tool_use_id: msg.tool_call_id || `inj_fallback_${Date.now()}_${Math.random().toString(36).slice(2)}`,
           content: typeof msg.content === 'string' ? msg.content : '',
         };
 
@@ -324,10 +342,17 @@ export class AnthropicProvider implements AIProvider {
       if (last && last.role === role) {
         if (typeof last.content === 'string') {
           last.content += '\n\n' + content;
+        } else if (Array.isArray(last.content)) {
+          last.content.push({ type: 'text', text: content });
         }
       } else {
         result.push({ role, content });
       }
+    }
+
+    // Ensure the first message is a user message (H-04)
+    if (result.length > 0 && result[0].role !== 'user') {
+      result.unshift({ role: 'user', content: '...' });
     }
 
     return result;

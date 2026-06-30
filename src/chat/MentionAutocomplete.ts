@@ -17,6 +17,8 @@ export class MentionAutocomplete {
   ) {
     this.dropdownEl = container.createDiv('engram-mention-dropdown');
     this.dropdownEl.setCssStyles({ display: 'none' });
+    this.dropdownEl.addEventListener('mouseenter', () => this.isHovered = true);
+    this.dropdownEl.addEventListener('mouseleave', () => this.isHovered = false);
   }
 
   /** Call this from the textarea's 'input' event handler. */
@@ -114,9 +116,32 @@ export class MentionAutocomplete {
     return this.dropdownEl.style.display !== 'none';
   }
 
-  hide(): void {
+  private isHovered = false;
+
+  hide(force = false): void {
+    if (this.isHovered && !force) return;
     this.dropdownEl.setCssStyles({ display: 'none' });
     this.mentionStart = -1;
+  }
+
+  destroy(): void {
+    this.dropdownEl?.remove();
+  }
+
+  handleCursorMove(): void {
+    if (this.dropdownEl.style.display === 'none') return;
+    const val = this.inputEl.value;
+    const pos = this.inputEl.selectionStart ?? val.length;
+
+    if (this.mentionStart === -1 || pos < this.mentionStart || pos > val.length) {
+      this.hide(true);
+      return;
+    }
+
+    const between = val.slice(this.mentionStart, pos);
+    if (/\s/.test(between) || (between.includes('@') && between.indexOf('@') !== 0)) {
+      this.hide(true);
+    }
   }
 
   private select(notePath: string): void {
@@ -128,7 +153,8 @@ export class MentionAutocomplete {
     this.inputEl.value = before + inserted + after;
     const newCursor = before.length + inserted.length;
     this.inputEl.setSelectionRange(newCursor, newCursor);
-    this.hide();
+    this.isHovered = false;
+    this.hide(true);
     this.inputEl.focus();
     this.onSelect(notePath);
   }

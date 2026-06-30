@@ -75,12 +75,15 @@ export class TokenBudgetBar {
     this.update(0);
   }
 
+  private lastUsedTokens = 0;
+
   /**
    * Refresh the bar for the given used-token count.
    *
    * @param usedTokens - Number of tokens consumed so far.
    */
   update(usedTokens: number): void {
+    this.lastUsedTokens = usedTokens;
     const safeUsed = Math.max(0, usedTokens);
     const pct      = Math.min(1, safeUsed / this.maxTokens);
     const pctPx    = Math.round(pct * 100);
@@ -118,6 +121,7 @@ export class TokenBudgetBar {
    */
   setMax(maxTokens: number): void {
     this.maxTokens = Math.max(1, maxTokens);
+    this.update(this.lastUsedTokens);
   }
 
   /**

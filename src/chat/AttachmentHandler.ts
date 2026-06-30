@@ -141,9 +141,14 @@ export class AttachmentHandler {
    */
   async processFiles(files: FileList): Promise<Attachment[]> {
     const result: Attachment[] = [];
+    const MAX_SIZE = 10 * 1024 * 1024; // 10MB limit (C-06)
 
     for (let i = 0; i < files.length; i++) {
       const f = files[i];
+      if (f.size > MAX_SIZE) {
+        new Notice(`File "${f.name}" exceeds the 10MB size limit.`);
+        continue;
+      }
       if (f.type === 'application/pdf') {
         const pages = await this.processPdf(f);
         result.push(...pages);

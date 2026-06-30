@@ -12,7 +12,7 @@
  */
 
 import { App, TFile, TFolder, normalizePath } from 'obsidian';
-import type { ChatSession } from '../types';
+import type { ChatSession, ChatMessage } from '../types';
 
 /** Current on-disk schema version. Increment when the shape of ChatSession changes. */
 const SCHEMA_VERSION = 1;
@@ -38,7 +38,6 @@ export class ChatHistoryStore {
     this.folderPath = normalizePath(folderPath);
   }
 
-  /** Load all sessions from vault files. Corrupt/unreadable files are skipped. */
   async loadAll(): Promise<ChatSession[]> {
     const folder = this.app.vault.getAbstractFileByPath(this.folderPath);
     if (!(folder instanceof TFolder)) return [];
@@ -49,10 +48,33 @@ export class ChatHistoryStore {
       if (!(child instanceof TFile) || child.extension !== 'json') continue;
 
       try {
-        const raw = await this.app.vault.read(child);
-        const parsed = JSON.parse(raw);
-        const session = this.deserialize(parsed);
-        if (session) sessions.push(session);
+        let raw = '';
+        try {
+          raw = await this.app.vault.read(child);
+          const parsed = JSON.parse(raw);
+          const session = this.deserialize(parsed);
+          if (session) {
+            sessions.push(session);
+            continue;
+          }
+        } catch (e) {
+          console.warn(`[Engram] Primary file "${child.path}" corrupt, attempting recovery from .bak:`, e);
+          const bakPath = child.path + '.bak';
+          const bakFile = this.app.vault.getAbstractFileByPath(bakPath);
+          if (bakFile instanceof TFile) {
+            raw = await this.app.vault.read(bakFile);
+            const parsed = JSON.parse(raw);
+            const session = this.deserialize(parsed);
+            if (session) {
+              sessions.push(session);
+              // Restore backup to primary location
+              await this.app.vault.modify(child, raw);
+              console.info(`[Engram] Successfully recovered session from backup for "${child.path}"`);
+              continue;
+            }
+          }
+          throw e; // rethrow if backup recovery also fails
+        }
       } catch (e) {
         console.warn(`[Engram] ChatHistoryStore: skipping corrupt file "${child.path}":`, e);
       }
@@ -61,17 +83,52 @@ export class ChatHistoryStore {
     return sessions;
   }
 
-  /** Write a single session to `<folderPath>/<session.id>.json`. */
   async save(session: ChatSession): Promise<void> {
     await this.ensureFolder(this.folderPath);
     const filePath = this.sessionPath(session.id);
-    const content = JSON.stringify(this.serialize(session), null, 2);
 
     const existing = this.app.vault.getAbstractFileByPath(filePath);
     if (existing instanceof TFile) {
+      // Create backup copy of existing file before writing to protect against corruption
+      try {
+        const current = await this.app.vault.read(existing);
+        if (current && current.trim().length > 0) {
+          const bakPath = filePath + '.bak';
+          const bakFile = this.app.vault.getAbstractFileByPath(bakPath);
+          if (bakFile instanceof TFile) {
+            await this.app.vault.modify(bakFile, current);
+          } else {
+            await this.app.vault.create(bakPath, current);
+          }
+
+          // Preserve original session createdAt timestamp if available (H-27)
+          try {
+            const parsed = JSON.parse(current);
+            if (parsed && typeof parsed.createdAt === 'number') {
+              session.createdAt = Math.min(session.createdAt, parsed.createdAt);
+            }
+          } catch {
+            // Ignore parse errors
+          }
+        }
+      } catch (err) {
+        console.warn(`[Engram] Failed to create session backup for ${session.id}:`, err);
+      }
+      const content = JSON.stringify(this.serialize(session), null, 2);
       await this.app.vault.modify(existing, content);
     } else {
-      await this.app.vault.create(filePath, content);
+      const content = JSON.stringify(this.serialize(session), null, 2);
+      try {
+        await this.app.vault.create(filePath, content);
+      } catch (err) {
+        // If file already exists, it is a TOCTOU race. Retry modifying the existing file (M-09)
+        const retryFile = this.app.vault.getAbstractFileByPath(filePath);
+        if (retryFile instanceof TFile) {
+          await this.app.vault.modify(retryFile, content);
+        } else {
+          throw err;
+        }
+      }
     }
   }
 
@@ -153,8 +210,8 @@ export class ChatHistoryStore {
           await this.app.vault.delete(child, true);
         } else {
           await this.app.vault.rename(child, newPath);
+          count++; // Only increment if actually migrated, not deleted as duplicate (M-11)
         }
-        count++;
       } catch (e) {
         console.warn(`[Engram] migrateFrom: could not move "${child.path}":`, e);
       }
@@ -205,13 +262,34 @@ export class ChatHistoryStore {
   private deserialize(raw: any): ChatSession | null {
     if (!raw || typeof raw.id !== 'string' || !Array.isArray(raw.messages)) return null;
 
+    // Validate and sanitize the messages structure to filter out nulls/malformed shapes (M-10)
+    const sanitizedMessages: ChatMessage[] = [];
+    for (const msg of raw.messages) {
+      if (
+        msg &&
+        typeof msg === 'object' &&
+        typeof msg.role === 'string' &&
+        ['user', 'assistant', 'system', 'tool'].includes(msg.role)
+      ) {
+        sanitizedMessages.push({
+          role: msg.role,
+          content: msg.content ?? '',
+          ...(msg.tool_calls ? { tool_calls: msg.tool_calls } : {}),
+          ...(msg.tool_call_id ? { tool_call_id: msg.tool_call_id } : {}),
+          ...(msg.name ? { name: msg.name } : {}),
+          ...(msg.attachments ? { attachments: msg.attachments } : {}),
+          ...(msg.autoAttachedNotes ? { autoAttachedNotes: msg.autoAttachedNotes } : {}),
+        });
+      }
+    }
+
     return {
       schemaVersion: typeof raw.schemaVersion === 'number' ? raw.schemaVersion : 1,
       id: raw.id,
       title: typeof raw.title === 'string' && raw.title.trim() ? raw.title : 'New chat',
       createdAt: typeof raw.createdAt === 'number' ? raw.createdAt : Date.now(),
       updatedAt: typeof raw.updatedAt === 'number' ? raw.updatedAt : Date.now(),
-      messages: raw.messages,
+      messages: sanitizedMessages,
     };
   }
 }

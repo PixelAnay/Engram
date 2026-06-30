@@ -26,6 +26,7 @@ export default class EngramPlugin extends Plugin {
 
   private indexRebuildTimer: ReturnType<typeof setTimeout> | null = null;
   private chatPersistTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+  private chatDeletions: Set<string> = new Set();
 
   // ── Lifecycle ───────────────────────────────────────────────────────────────
 
@@ -252,17 +253,28 @@ export default class EngramPlugin extends Plugin {
     else this.chatSessions.push(withTouch);
     this.chatSessions.sort((a, b) => b.updatedAt - a.updatedAt);
 
-    // Only persist sessions that have at least one message
-    if (!withTouch.messages || withTouch.messages.length === 0) return;
+    // Only persist sessions that have at least one message (H-20)
+    if (!withTouch.messages || withTouch.messages.length === 0) {
+      const pendingTimer = this.chatPersistTimers.get(session.id);
+      if (pendingTimer) {
+        window.clearTimeout(pendingTimer);
+        this.chatPersistTimers.delete(session.id);
+      }
+      this.chatHistoryStore.delete(session.id, true).catch(() => {});
+      return;
+    }
 
     // Debounce per-session write
     const existing = this.chatPersistTimers.get(session.id);
     if (existing) window.clearTimeout(existing);
-    const timer = window.setTimeout(() => {
-      this.chatPersistTimers.delete(session.id);
-      this.chatHistoryStore.save(withTouch).catch(e =>
-        console.error(`[Engram] Failed to save session "${session.id}":`, e)
-      );
+    const timer = window.setTimeout(async () => {
+      try {
+        await this.chatHistoryStore.save(withTouch);
+      } catch (e) {
+        console.error(`[Engram] Failed to save session "${session.id}":`, e);
+      } finally {
+        this.chatPersistTimers.delete(session.id);
+      }
     }, 800) as any;
     this.chatPersistTimers.set(session.id, timer);
   }
@@ -275,12 +287,16 @@ export default class EngramPlugin extends Plugin {
       window.clearTimeout(timer);
       this.chatPersistTimers.delete(id);
     }
+    this.chatDeletions.add(id);
     this.chatSessions = this.chatSessions.filter(s => s.id !== id);
     // force:true permanently removes the file (no OS trash) so the folder
     // stays in sync with what the UI shows.
-    this.chatHistoryStore.delete(id, true).catch(e =>
-      console.error(`[Engram] Failed to delete session "${id}":`, e)
-    );
+    this.chatHistoryStore.delete(id, true)
+      .catch(e => console.error(`[Engram] Failed to delete session "${id}":`, e))
+      .finally(() => {
+        window.setTimeout(() => this.chatDeletions.delete(id), 2000);
+      });
+    this.notifyChatViewsSessionsChanged();
   }
 
   /**
@@ -405,6 +421,9 @@ export default class EngramPlugin extends Plugin {
         if (this.chatHistoryStore.isOwnedPath(file.path)) {
           const id = this.chatHistoryStore.idFromPath(file.path);
           if (id) {
+            if (this.chatDeletions.has(id)) {
+              return; // Ignore deletion events initiated by our own UI (M-07)
+            }
             this.chatSessions = this.chatSessions.filter(s => s.id !== id);
             this.notifyChatViewsSessionsChanged();
           }

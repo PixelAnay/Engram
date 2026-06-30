@@ -228,7 +228,13 @@ export function showConfirmDialog(app: App, options: ConfirmOptions): Promise<bo
   } = options;
 
   return new Promise<boolean>((resolve) => {
-    new ConfirmModal(app, title, message, confirmLabel, cancelLabel, danger, resolve).open();
+    let resolved = false;
+    new ConfirmModal(app, title, message, confirmLabel, cancelLabel, danger, (res) => {
+      if (!resolved) {
+        resolved = true;
+        resolve(res);
+      }
+    }).open();
   });
 }
 
@@ -246,6 +252,12 @@ export function showPromptDialog(app: App, options: PromptOptions): Promise<stri
   } = options;
 
   return new Promise<string | null>((resolve) => {
-    new PromptModal(app, title, message, placeholder, value, confirmLabel, cancelLabel, resolve).open();
+    let resolved = false;
+    new PromptModal(app, title, message, placeholder, value, confirmLabel, cancelLabel, (res) => {
+      if (!resolved) {
+        resolved = true;
+        resolve(res);
+      }
+    }).open();
   });
 }
