@@ -26,6 +26,9 @@ export class ChatView extends ItemView {
   private displayMessages: DisplayMessage[] = [];
   private isStreaming = false;
   private pendingAttachments: Attachment[] = [];
+  /** Token estimate of the last-built system prompt (persona + memory + vault map).
+   *  Used to show accurate context usage in the token budget bar. */
+  private lastSystemTokens = 0;
 
   // ── Sub-components ────────────────────────────────────────────────────────
   private sessionManager!: SessionManager;
@@ -502,6 +505,10 @@ export class ChatView extends ItemView {
         (paths) => { attachedNotesList = paths; }
       );
 
+      // Capture system prompt token cost for accurate token bar display.
+      // Must be done before the user message is pushed onto enriched.
+      this.lastSystemTokens = estimateMessagesTokens(enriched.filter(m => m.role === 'system'));
+
       if (attachedNotesList.length > 0) {
         const userMsg = this.messages[this.messages.length - 1];
         if (userMsg) {
@@ -559,7 +566,19 @@ export class ChatView extends ItemView {
         this.messageRenderer.finalizeStreamingBubble(assistantDisplay);
       }
 
-      this.messages = finalMessages.filter(m => m.role !== 'system');
+      // ── Critical: preserve full message history ──────────────────────────
+      // finalMessages is built from a TRUNCATED working set (maxRecentMessages).
+      // Replacing this.messages with it would permanently delete older messages
+      // from disk every turn. Instead, only append the NEW messages produced in
+      // this turn (assistant reply + any tool messages) to the full history.
+      //
+      // enriched = [system, ...truncated_history, user_msg]  (length = enriched.length)
+      // finalMessages = enriched + [assistant_msg, ...tool_msgs, ...]
+      // New turn messages = finalMessages.slice(enriched.length)
+      const newTurnMessages = finalMessages
+        .slice(enriched.length)
+        .filter(m => m.role !== 'system');
+      this.messages = [...this.messages, ...newTurnMessages];
       this.sessionManager.save(this.messages);
       this.updateTokenBar();
     } catch (e) {
@@ -964,7 +983,14 @@ export class ChatView extends ItemView {
   }
 
   private updateTokenBar(): void {
-    const used = estimateMessagesTokens(this.messages);
+    // Show the token count that will actually be sent to the API on the NEXT turn:
+    //   • system prompt (persona + memory + vault map) — captured after last build
+    //   • recent chat messages (capped at maxRecentMessages, same as the API payload)
+    // This gives an accurate picture of real context-window usage, not just history size.
+    const maxRecent = this.plugin.settings.maxRecentMessages ?? 20;
+    const recentMessages = this.messages.slice(-maxRecent);
+    const chatTokens = estimateMessagesTokens(recentMessages);
+    const used = chatTokens + this.lastSystemTokens;
     this.tokenBudgetBar?.setMax(this.plugin.settings.contextWindowTokens);
     this.tokenBudgetBar?.update(used);
   }

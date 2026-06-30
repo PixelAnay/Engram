@@ -91655,6 +91655,9 @@ var ChatView = class extends import_obsidian3.ItemView {
     this.displayMessages = [];
     this.isStreaming = false;
     this.pendingAttachments = [];
+    /** Token estimate of the last-built system prompt (persona + memory + vault map).
+     *  Used to show accurate context usage in the token budget bar. */
+    this.lastSystemTokens = 0;
     this.plugin = plugin;
   }
   getViewType() {
@@ -92047,6 +92050,7 @@ var ChatView = class extends import_obsidian3.ItemView {
           attachedNotesList = paths;
         }
       );
+      this.lastSystemTokens = estimateMessagesTokens(enriched.filter((m) => m.role === "system"));
       if (attachedNotesList.length > 0) {
         const userMsg = this.messages[this.messages.length - 1];
         if (userMsg) {
@@ -92105,7 +92109,8 @@ var ChatView = class extends import_obsidian3.ItemView {
         assistantDisplay.streaming = false;
         this.messageRenderer.finalizeStreamingBubble(assistantDisplay);
       }
-      this.messages = finalMessages.filter((m) => m.role !== "system");
+      const newTurnMessages = finalMessages.slice(enriched.length).filter((m) => m.role !== "system");
+      this.messages = [...this.messages, ...newTurnMessages];
       this.sessionManager.save(this.messages);
       this.updateTokenBar();
     } catch (e) {
@@ -92473,10 +92478,13 @@ var ChatView = class extends import_obsidian3.ItemView {
     this.contextStatusEl.textContent = "";
   }
   updateTokenBar() {
-    var _a2, _b;
-    const used = estimateMessagesTokens(this.messages);
-    (_a2 = this.tokenBudgetBar) == null ? void 0 : _a2.setMax(this.plugin.settings.contextWindowTokens);
-    (_b = this.tokenBudgetBar) == null ? void 0 : _b.update(used);
+    var _a2, _b, _c;
+    const maxRecent = (_a2 = this.plugin.settings.maxRecentMessages) != null ? _a2 : 20;
+    const recentMessages = this.messages.slice(-maxRecent);
+    const chatTokens = estimateMessagesTokens(recentMessages);
+    const used = chatTokens + this.lastSystemTokens;
+    (_b = this.tokenBudgetBar) == null ? void 0 : _b.setMax(this.plugin.settings.contextWindowTokens);
+    (_c = this.tokenBudgetBar) == null ? void 0 : _c.update(used);
   }
   setStreaming(streaming) {
     this.isStreaming = streaming;
@@ -94237,7 +94245,7 @@ ${oldText}
     if (deleted) {
       return `\u2705 Deleted memory entry: ${id}`;
     }
-    return `Error: No memory entry found with id "${id}". Check the memory file for valid IDs.`;
+    return `Error: No memory entry found with id "${id}". Memory IDs are shown in your system context under "What You Know About This User". Each line has the format: "- [DATE|ID] fact" \u2014 the ID is the part between | and ]. For example: "- [2025-06-14|mem_1719000000_abc1] fact text" \u2192 id is "mem_1719000000_abc1". If you need to see the current live memory content, call read_note("${this.settings.memoryPath}").`;
   }
   // ── Helpers ───────────────────────────────────────────────────────────────
   /**
@@ -94329,6 +94337,12 @@ ${memory}
 - NEVER use edit_note, create_note, append_to_note, delete_note, or any other file-writing tool on the memory file path.
 - To save a new memory: call save_memory(fact). To delete a specific entry: call delete_memory(id).
 - If the user asks you to "remember" something, always use save_memory(). Never write it elsewhere.
+
+**Reading memory IDs (how to delete a specific memory):**
+- Each line in the memory block above has the format: \`- [DATE|ID] fact text\`
+- The ID is the part between | and ] \u2014 for example in \`- [2025-06-14|mem_1719000000_abc1] The user prefers dark mode.\` the ID is \`mem_1719000000_abc1\`
+- To delete that entry, call: delete_memory("mem_1719000000_abc1")
+- The IDs are already visible in the "What You Know About This User" section above \u2014 you do NOT need to call read_note or any other tool just to find them.
 
 **Lookup rules (EFFICIENT):**
 - Memory is reloaded fresh at the start of every message turn, so the block above is always up-to-date as of when this message was sent.
