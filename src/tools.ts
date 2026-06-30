@@ -932,7 +932,13 @@ export class ToolExecutor {
     if (deleted) {
       return `✅ Deleted memory entry: ${id}`;
     }
-    return `Error: No memory entry found with id "${id}". Check the memory file for valid IDs.`;
+    return (
+      `Error: No memory entry found with id "${id}". ` +
+      `Memory IDs are shown in your system context under "What You Know About This User". ` +
+      `Each line has the format: "- [DATE|ID] fact" — the ID is the part between | and ]. ` +
+      `For example: "- [2025-06-14|mem_1719000000_abc1] fact text" → id is "mem_1719000000_abc1". ` +
+      `If you need to see the current live memory content, call read_note("${this.settings.memoryPath}").`
+    );
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────

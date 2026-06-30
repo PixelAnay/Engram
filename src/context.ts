@@ -108,6 +108,12 @@ ${memory}
 - To save a new memory: call save_memory(fact). To delete a specific entry: call delete_memory(id).
 - If the user asks you to "remember" something, always use save_memory(). Never write it elsewhere.
 
+**Reading memory IDs (how to delete a specific memory):**
+- Each line in the memory block above has the format: \`- [DATE|ID] fact text\`
+- The ID is the part between | and ] — for example in \`- [2025-06-14|mem_1719000000_abc1] The user prefers dark mode.\` the ID is \`mem_1719000000_abc1\`
+- To delete that entry, call: delete_memory("mem_1719000000_abc1")
+- The IDs are already visible in the "What You Know About This User" section above — you do NOT need to call read_note or any other tool just to find them.
+
 **Lookup rules (EFFICIENT):**
 - Memory is reloaded fresh at the start of every message turn, so the block above is always up-to-date as of when this message was sent.
 - If you use read_note on the memory file, note that it is already injected above. Re-reading is usually unnecessary unless you just performed a save_memory() and need to verify the state.
