@@ -43,16 +43,27 @@ export class MemoryExtractor {
     onSaved?: (count: number) => void
   ): Promise<number> {
     try {
-      const facts = await this.extract(recentMessages);
+      const facts = await this.extractCandidates(recentMessages);
       if (facts.length === 0) return 0;
 
-      await this.memoryManager.append(facts);
+      const result = await this.memoryManager.add(facts);
+      if (result.status !== 'saved') return 0;
       onSaved?.(facts.length);
       return facts.length;
     } catch {
       // Silent failure — memory extraction must never crash the chat
       return 0;
     }
+  }
+
+  /**
+   * Ask the model for new facts worth remembering. Returns candidates only;
+   * NOTHING is written. Throws if the provider reports an error so callers
+   * (e.g. /memory) can tell "nothing found" from "request failed".
+   */
+  async extractCandidates(recentMessages: ChatMessage[]): Promise<string[]> {
+    const facts = await this.extract(recentMessages);
+    return facts.map(f => f.fact);
   }
 
   private async extract(recentMessages: ChatMessage[]): Promise<ExtractedFact[]> {
@@ -87,6 +98,7 @@ export class MemoryExtractor {
     ];
 
     let responseText = '';
+    let streamError = '';
 
     // Use a simple non-streaming call via the provider
     const { text } = await this.providerFactory.provider.stream(
@@ -96,8 +108,12 @@ export class MemoryExtractor {
         temperature: 0.1, // Low temperature for deterministic extraction
         maxTokens: 500,
       },
-      () => { /* no-op — we don't stream extraction output */ }
+      chunk => {
+        // Output is not streamed anywhere, but provider errors must not look like "no facts"
+        if (chunk.type === 'error') streamError = chunk.error ?? 'Provider error';
+      }
     );
+    if (streamError) throw new Error(streamError);
     responseText = text;
 
     return this.parse(responseText, existingFacts);

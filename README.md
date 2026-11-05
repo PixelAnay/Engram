@@ -7,7 +7,7 @@
 
 <p align="center">
   <img alt="Downloads" src="https://img.shields.io/badge/downloads-1K%2B-brightgreen?logo=obsidian&logoColor=white" />
-  <img alt="Version" src="https://img.shields.io/badge/version-5.0.55-7c3aed" />
+  <img alt="Version" src="https://img.shields.io/badge/version-5.0.56-7c3aed" />
   <img alt="Obsidian" src="https://img.shields.io/badge/Obsidian-1.7.2%2B-483699?logo=obsidian&logoColor=white" />
   <img alt="Desktop and mobile" src="https://img.shields.io/badge/platform-desktop%20%7C%20mobile-blue" />
   <img alt="License" src="https://img.shields.io/badge/license-MIT-green" />
@@ -46,8 +46,11 @@
 ### Memory
 - Memory lives in `Intelligence/Memory.md` by default. It's a normal note you can read and edit.
 - Run `/memory` to pull key facts from the current chat. You review them before they're saved.
-- Engram can also save facts automatically, and skips duplicates.
-- When memory exceeds its token budget (4,000 by default), the oldest entries are dropped. A `.bak` backup is kept before each write.
+- Automatic saving after each reply is **off by default** (it costs one extra model call per reply). You can turn it on under Advanced settings → *Auto-extract memories*.
+- The AI can add (`save_memory`), change (`update_memory`) or delete (`delete_memory`) a single entry. Only that entry's line is touched; everything else in the file, including your own headings and text, stays exactly as it is.
+- **The memory file is never trimmed.** The *Max memory tokens* setting (4,000 by default) only limits how much memory is sent to the model with each message. When it is exceeded, the oldest entries are left out of the prompt, not out of the file.
+- **Safety:** if the memory file goes missing (for example while a sync is still running), Engram does not create a blank one. New facts are queued and added when the file is back. Before every change a local backup is saved in the plugin folder (the last 20 are kept). Use the command **Restore memory from backup**, or the button in settings, to recover.
+- Changing the memory path in settings moves your existing file to the new path after you confirm.
 
 ### Semantic search
 - Embedding providers: **Ollama**, **OpenAI**, or any **OpenAI-compatible** `/v1/embeddings` endpoint (for example, llama.cpp).
@@ -60,20 +63,22 @@
 - **Cloud:** OpenAI, Anthropic Claude, Google Gemini, DeepSeek, Groq, Mistral, xAI (Grok)
 - **Aggregator:** OpenRouter (one key, many models)
 - **Custom:** any OpenAI-compatible API
-- Replies stream in, and requests go through Obsidian's own network API, so cloud providers don't hit CORS errors.
+- Replies stream in. Each provider has its own API key; a key is only ever sent to the provider it was entered for. Claude is called directly using Anthropic's browser-access header. The reply length limit is set in Advanced settings (*Max reply length*).
+- Connection tests only list models; they never send a billable chat request.
 - Tool calling can be native, prompt-based (for models without tool support), or turned off.
 
 ### Safety
 - **Scope:** an allowlist or denylist of folders, plus exclude patterns (`Private/**`, `*.secret.md` by default). Excluded files are never indexed, searched, or sent to the model.
 - **Permissions:** one click on the chat footer badge switches between:
   - `🔍 Read`: search and read only
-  - `✏️ Append`: can add to the end of notes
-  - `⚠️ Full edit`: can create, overwrite, move, and delete
+  - `✏️ Append`: can only add text to the end of notes
+  - `⚠️ Full edit`: can create, edit, overwrite, move, rename, and delete
+- **Protected files:** the AI's tools can never change, move, rename, copy or delete the memory file, the chat history folder, or any folder that contains them. This holds even when memory is switched off.
 - **Confirmation:** destructive actions open a confirmation dialog first.
 - **Undo panel:** review and revert changes the AI made.
 
 ### Interface
-- Type `/` for commands and `@` to link a note as context.
+- Type `/` for commands and `@` to insert a link to a note (`[[Note]]`) into your message. The AI can then open it with its read tools.
 - A token budget bar shows how much of the model's context window is in use.
 - Personas let you switch between saved system prompts.
 
@@ -179,7 +184,7 @@ Click the 🧠 icon in the left ribbon and start talking. Semantic search runs a
 
 | Command | Action |
 |---|---|
-| `/memory` | Save key facts from this chat to memory |
+| `/memory` | Propose key facts from this chat; you tick the ones to save |
 | `/forget` | Open the memory file to review or delete entries |
 | `/persona` | Switch the active persona |
 | `/export` | Export this chat to a vault note |
@@ -191,7 +196,8 @@ Click the 🧠 icon in the left ribbon and start talking. Semantic search runs a
 | Command | Action |
 |---|---|
 | Open Engram sidebar | Open the chat panel |
-| Re-index vault | Rebuild the semantic search index |
+| Re-index vault | Rebuild the note list (titles, tags). For semantic search, use **Index Vault** in settings |
+| Restore memory from backup | Pick a local backup and restore the memory file |
 | Open memory file | Open your memory note |
 | Sync chat history from vault | Reload chats saved in the vault |
 

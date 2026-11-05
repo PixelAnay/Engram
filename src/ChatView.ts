@@ -14,6 +14,8 @@ import { TokenBudgetBar } from './ui/TokenBudgetBar';
 import { SlashCommandHandler } from './commands/SlashCommandHandler';
 import { estimateMessagesTokens } from './utils/tokenEstimator';
 import { showConfirmDialog } from './ui/ConfirmDialog';
+import { showMemoryReviewDialog } from './ui/MemoryReviewModal';
+import { findTurnUserIndex, lastAssistantIndexFrom } from './chat/turnHelpers';
 
 export const ENGRAM_VIEW_TYPE = 'engram-view';
 /** @deprecated Use ENGRAM_VIEW_TYPE */
@@ -106,6 +108,8 @@ export class ChatView extends ItemView {
       () => { /* note selected */ }
     );
 
+    // Sessions are loaded once the workspace layout is ready; wait for them
+    await this.plugin.chatsReady;
     const session = this.sessionManager.initialize();
     this.messages = [...session.messages];
     this.displayMessages = MessageRenderer.buildDisplayMessages(this.messages);
@@ -117,9 +121,16 @@ export class ChatView extends ItemView {
     await this.checkConnection();
   }
 
+  /** Id of the chat shown in this view ('' before it has loaded). */
+  getActiveSessionId(): string {
+    return this.sessionManager?.currentId ?? '';
+  }
+
   async onClose(): Promise<void> {
     this.plugin.providerFactory.abort();
     this.isStreaming = false;
+    // Never lose the last messages: write pending chat changes now
+    await this.plugin.flushAllChats();
     this.tokenBudgetBar?.destroy();
     this.mentionAutocomplete?.destroy();
     this.slashCommandHandler?.hide();
@@ -277,8 +288,10 @@ export class ChatView extends ItemView {
     setIcon(this.stopBtn, 'square');
     this.stopBtn.setCssStyles({ display: 'none' });
     this.stopBtn.addEventListener('click', () => {
+      // Only ask the running turn to stop. The input stays locked until executeTurn
+      // has finished and saved, so a new message can never overlap the old turn.
       this.plugin.providerFactory.abort();
-      this.setStreaming(false);
+      this.stopBtn.disabled = true;
     });
 
     // ── Footer ─────────────────────────────────────────────────────────────────
@@ -404,13 +417,13 @@ export class ChatView extends ItemView {
     this.personaBadge.createSpan('engram-persona-name').textContent = persona?.name ?? 'Default';
   }
 
-  async onSettingsUpdate(): Promise<void> {
+  async onSettingsUpdate(providerChanged = true): Promise<void> {
     this.updateProviderBadge();
     this.updatePersonaBadge();
     this.updatePermBadge();
     this.tokenBudgetBar?.setMax(this.plugin.settings.contextWindowTokens);
     this.updateTokenBar();
-    await this.checkConnection();
+    if (providerChanged) await this.checkConnection();
   }
 
   /**
@@ -468,6 +481,7 @@ export class ChatView extends ItemView {
     this.displayMessages = [];
     this.sessionManager.clearCurrentMessages();
     this.renderMessages();
+    this.refreshSessionControls();
     this.updateTokenBar();
   }
 
@@ -513,6 +527,7 @@ export class ChatView extends ItemView {
     const userDisplayMsg: DisplayMessage = { role: 'user', content: text, attachments: attachmentsForSend };
     this.displayMessages.push(userDisplayMsg);
     this.messages.push({ role: 'user', content: historyContent, attachments: [] });
+    userDisplayMsg.sourceIndex = this.messages.length - 1;
     this.sessionManager.updateTitleFromPrompt(text);
     this.sessionManager.save(this.messages);
 
@@ -558,6 +573,7 @@ export class ChatView extends ItemView {
       this.messageRenderer.appendBubble(assistantDisplay);
 
       let finalMessages: ChatMessage[] = enriched;
+      let turnFailed = false;
 
       const onChunk = (chunk: StreamChunk) => {
         if (chunk.type === 'token' && chunk.content) {
@@ -589,10 +605,12 @@ export class ChatView extends ItemView {
 
       try {
         const gen = this.plugin.providerFactory.runTurn(enriched, this.plugin.toolExecutor, onChunk);
-        for await (const msgs of gen) {
-          finalMessages = msgs;
+        for await (const turn of gen) {
+          finalMessages = turn.messages;
+          if (turn.error) turnFailed = true;
         }
       } catch (e) {
+        turnFailed = true;
         assistantDisplay.content = `Error: ${(e as Error).message}`;
         (assistantDisplay as any).role = 'error';
         assistantDisplay.streaming = false;
@@ -600,11 +618,20 @@ export class ChatView extends ItemView {
       }
 
       // ── Critical: preserve full message history ──────────────────────────
+      // A failed reply is never in newTurnMessages (runTurn does not store it), so the
+      // user's message stays saved and the next request is not poisoned.
       const newTurnMessages = finalMessages
         .slice(enriched.length)
         .filter(m => m.role !== 'system');
+      const firstNew = this.messages.length;
       this.messages = [...this.messages, ...newTurnMessages];
+      // Link the live bubble to its place in the history (used by Regenerate)
+      const lastAssistant = lastAssistantIndexFrom(this.messages, firstNew);
+      if (lastAssistant !== -1) assistantDisplay.sourceIndex = lastAssistant;
+
       this.displayMessages = MessageRenderer.buildDisplayMessages(this.messages);
+      // The error bubble is shown but not part of the saved conversation
+      if (turnFailed || assistantDisplay.role === 'error') this.displayMessages.push(assistantDisplay);
       this.sessionManager.save(this.messages);
       this.updateTokenBar();
     } catch (e) {
@@ -632,12 +659,28 @@ export class ChatView extends ItemView {
       new Notice('Not enough conversation to extract from');
       return;
     }
-    new Notice('🧠 Extracting memories…');
-    const count = await this.plugin.memoryExtractor.extractAndSave(
-      this.messages.slice(-10),
-      (n) => { if (n > 0) this.showMemoryToast(n); }
-    );
-    if (count === 0) new Notice('Nothing new worth remembering in this conversation');
+    new Notice('🧠 Looking for facts worth remembering…');
+
+    let candidates: string[];
+    try {
+      candidates = await this.plugin.memoryExtractor.extractCandidates(this.messages.slice(-10));
+    } catch (e) {
+      new Notice(`Could not extract memories: ${(e as Error).message}`);
+      return;
+    }
+    if (candidates.length === 0) {
+      new Notice('Nothing new worth remembering in this conversation');
+      return;
+    }
+
+    // The user decides what is saved
+    const selected = await showMemoryReviewDialog(this.app, candidates);
+    if (!selected || selected.length === 0) return;
+
+    const result = await this.plugin.memoryManager.add(selected);
+    if (result.status === 'saved') this.showMemoryToast(selected.length);
+    else if (result.status === 'failed') new Notice(`Could not save to memory: ${result.message}`);
+    // 'queued' already shows its own notice from MemoryManager
   }
 
   private showMemoryToast(count: number): void {
@@ -754,13 +797,16 @@ export class ChatView extends ItemView {
         });
         if (confirmed) {
           const next = this.sessionManager.delete(session.id);
-          this.messages = [...next.messages];
-          this.displayMessages = MessageRenderer.buildDisplayMessages(this.messages);
-          this.pendingAttachments = [];
-          this.renderMessages();
+          // Only reload the conversation if the ACTIVE chat was the one deleted
+          if (next) {
+            this.messages = [...next.messages];
+            this.displayMessages = MessageRenderer.buildDisplayMessages(this.messages);
+            this.pendingAttachments = [];
+            this.renderMessages();
+            this.updateTokenBar();
+          }
           this.refreshSessionControls();
-          this.updateTokenBar();
-          
+
           this.showChatSwitcher();
         }
       });
@@ -946,23 +992,15 @@ export class ChatView extends ItemView {
     welcome.createEl('div', { cls: 'engram-welcome-subtitle', text: 'The AI that remembers you' });
   }
 
-  private editMessage(idx: number): void {
+  private editMessage(msg: DisplayMessage): void {
     if (this.isStreaming) return;
-    if (idx < 0 || idx >= this.displayMessages.length) return;
-    const msg = this.displayMessages[idx];
-    let userCount = 0;
-    for (let i = 0; i < idx; i++) {
-      if (this.displayMessages[i].role === 'user') userCount++;
-    }
-    let mIdx = -1, mUserCount = 0;
-    for (let i = 0; i < this.messages.length; i++) {
-      if (this.messages[i].role === 'user') {
-        if (mUserCount === userCount) { mIdx = i; break; }
-        mUserCount++;
-      }
-    }
-    if (mIdx !== -1) this.messages = this.messages.slice(0, mIdx);
-    this.displayMessages = this.displayMessages.slice(0, idx);
+    // The bubble knows which history entry it shows; no counting of bubbles or roles
+    const idx = msg.sourceIndex;
+    if (idx === undefined || idx < 0 || idx >= this.messages.length) return;
+    if (this.messages[idx].role !== 'user') return;
+
+    this.messages = this.messages.slice(0, idx);
+    this.displayMessages = MessageRenderer.buildDisplayMessages(this.messages);
     this.inputArea.value = msg.content;
     this.inputArea.focus();
     this.inputArea.setCssStyles({ height: 'auto' });
@@ -970,30 +1008,24 @@ export class ChatView extends ItemView {
     if (msg.attachments) { this.pendingAttachments = [...msg.attachments]; this.renderAttachmentPreviews(); }
     this.renderMessages();
     this.sessionManager.save(this.messages);
+    this.updateTokenBar();
   }
 
-  private async regenerateMessage(idx: number): Promise<void> {
+  private async regenerateMessage(msg: DisplayMessage): Promise<void> {
     if (this.isStreaming) return;
-    if (idx < 0 || idx >= this.displayMessages.length) return;
+    if (msg.sourceIndex === undefined) return;
 
-    let userCount = 0;
-    for (let i = 0; i < idx; i++) {
-      if (this.displayMessages[i].role === 'user') userCount++;
-    }
-    let mIdx = -1, mUserCount = 0;
-    for (let i = 0; i < this.messages.length; i++) {
-      if (this.messages[i].role === 'user') {
-        if (mUserCount === userCount - 1) { mIdx = i; break; }
-        mUserCount++;
-      }
-    }
+    // A turn may contain several assistant/tool messages: go back to the user message that started it
+    const mIdx = findTurnUserIndex(this.messages, msg.sourceIndex);
     if (mIdx === -1) return;
 
     const userMsg = this.messages[mIdx];
-    const userDisplayMsg = this.displayMessages[idx - 1];
 
     this.messages = this.messages.slice(0, mIdx + 1);
-    this.displayMessages = this.displayMessages.slice(0, idx);
+    this.displayMessages = MessageRenderer.buildDisplayMessages(this.messages);
+    const userDisplayMsg: DisplayMessage =
+      [...this.displayMessages].reverse().find(d => d.role === 'user')
+      ?? { role: 'user', content: '', sourceIndex: mIdx };
 
     this.sessionManager.save(this.messages);
     this.renderMessages();
@@ -1015,7 +1047,6 @@ export class ChatView extends ItemView {
 
     await this.executeTurn(text, apiContent, userDisplayMsg);
   }
-
   // ── Helpers ───────────────────────────────────────────────────────────────
 
   private async openNotes(paths: string[]): Promise<void> {
@@ -1052,6 +1083,7 @@ export class ChatView extends ItemView {
     this.isStreaming = streaming;
     this.sendBtn.setCssStyles({ display: streaming ? 'none' : 'flex' });
     this.stopBtn.setCssStyles({ display: streaming ? 'flex' : 'none' });
+    this.stopBtn.disabled = false;
     this.inputArea.disabled = streaming;
     this.refreshSessionControls();
     if (!streaming) {

@@ -2,6 +2,11 @@ import { App, PluginSettingTab, Setting, Notice, TFolder } from 'obsidian';
 import type { EngramSettings } from './types';
 import { normalisePath } from './utils/pathUtils';
 import { showPromptDialog, showConfirmDialog } from './ui/ConfirmDialog';
+import { createDebouncer } from './utils/debounce';
+import { commitOnBlurOrEnter } from './utils/commitField';
+import { changeMemoryPath } from './memory/memoryPathChange';
+import { changeChatHistoryPath } from './chat/chatPathChange';
+import { getProviderApiKey, setProviderApiKey } from './utils/apiKeys';
 
 // ── Provider Presets ────────────────────────────────────────────────────────
 
@@ -27,7 +32,8 @@ export const DEFAULT_SETTINGS: EngramSettings = {
   activeProviderId: 'local_llamacpp',
   providerType: 'openai_compat',
   providerBaseUrl: 'http://localhost:8080',
-  providerApiKey: '',   // stored in data.json — do not sync to public git repos
+  providerApiKey: '',   // legacy; keys now live in providerApiKeys (per provider)
+  providerApiKeys: {},  // stored in data.json — do not sync to public git repos
   model: '',
   temperature: 0.7,
 
@@ -80,7 +86,7 @@ export const DEFAULT_SETTINGS: EngramSettings = {
   memoryPath: 'Intelligence/Memory.md',
   memoryEnabled: true,
   maxMemoryTokens: 4000,
-  autoExtractMemory: true,
+  autoExtractMemory: false,
 
   // Vault scope
   scopeMode: 'all',
@@ -94,6 +100,7 @@ export const DEFAULT_SETTINGS: EngramSettings = {
   autoInjectNotes: 0,
   toolCallingMode: 'native',
   maxToolCallDepth: 8,
+  maxOutputTokens: 4096,
 
   // Embeddings
   ollamaEmbedEndpoint: 'http://localhost:11434',
@@ -129,7 +136,21 @@ export class EngramSettingTab extends PluginSettingTab {
 
   /** Convenience: save + optional re-render trigger */
   private async save(): Promise<void> {
+    // An immediate save supersedes any pending debounced one
+    this.debouncedSave.cancel();
     await this.plugin.saveSettings();
+  }
+
+  /** Text inputs save 500 ms after the last keystroke instead of on every key. */
+  private debouncedSave = createDebouncer(() => this.plugin.saveSettings(), 500);
+
+  private saveDebounced(): void {
+    this.debouncedSave.call();
+  }
+
+  /** Persist any pending typed value when the settings tab is closed. */
+  hide(): void {
+    this.debouncedSave.flush();
   }
 
   display(): void {
@@ -208,6 +229,8 @@ export class EngramSettingTab extends PluginSettingTab {
           } else if (value === 'custom' && customTypeDropdown) {
             customTypeDropdown.setValue(this.plugin.settings.providerType);
           }
+          // Show the key saved for the newly selected provider (empty if none)
+          if (apiKeyInputEl) apiKeyInputEl.value = getProviderApiKey(this.plugin.settings);
           applyVisibility();
           await this.save();
         });
@@ -219,17 +242,20 @@ export class EngramSettingTab extends PluginSettingTab {
         .setValue(this.plugin.settings.providerBaseUrl)
         .onChange(async value => {
           this.plugin.settings.providerBaseUrl = value.replace(/\/$/, '');
-          await this.save();
+          this.saveDebounced();
         })
     );
 
+    let apiKeyInputEl: HTMLInputElement | null = null;
     apiKeySetting.addText(text => {
+      apiKeyInputEl = text.inputEl;
       text
         .setPlaceholder('sk-...')
-        .setValue(this.plugin.settings.providerApiKey)
+        .setValue(getProviderApiKey(this.plugin.settings))
         .onChange(async value => {
-          this.plugin.settings.providerApiKey = value.trim();
-          await this.save();
+          // Stored per provider: switching providers never carries a key along
+          setProviderApiKey(this.plugin.settings, value);
+          this.saveDebounced();
         });
       text.inputEl.type = 'password';
     });
@@ -245,7 +271,7 @@ export class EngramSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.model)
           .onChange(async value => {
             this.plugin.settings.model = value.trim();
-            await this.save();
+            this.saveDebounced();
           });
       });
 
@@ -261,7 +287,7 @@ export class EngramSettingTab extends PluginSettingTab {
             const parsed = Number.parseFloat(value.trim());
             if (!Number.isNaN(parsed)) {
               this.plugin.settings.temperature = Math.max(0, Math.min(2, parsed));
-              await this.save();
+              this.saveDebounced();
             }
           })
       );
@@ -348,7 +374,7 @@ export class EngramSettingTab extends PluginSettingTab {
         .onChange(async value => {
           const persona = getActivePersona();
           persona.systemPrompt = value;
-          await this.save();
+          this.saveDebounced();
         });
     });
 
@@ -419,16 +445,28 @@ export class EngramSettingTab extends PluginSettingTab {
 
     const memoryPathSetting = new Setting(containerEl)
       .setName('Memory file path')
-      .setDesc('Vault-relative path to the memory markdown file')
-      .addText(text =>
+      .setDesc('Vault-relative path to the memory markdown file. Press Enter or click away to apply; an existing file is moved, not recreated.')
+      .addText(text => {
         text
           .setPlaceholder('Intelligence/Memory.md')
-          .setValue(this.plugin.settings.memoryPath)
-          .onChange(async value => {
-            this.plugin.settings.memoryPath = value.trim();
-            await this.save();
-          })
-      )
+          .setValue(this.plugin.settings.memoryPath);
+        // Applied only on blur/Enter, never per keystroke
+        commitOnBlurOrEnter(text.inputEl, async value => {
+          this.debouncedSave.flush();
+          await changeMemoryPath(
+            {
+              app: this.app,
+              settings: this.plugin.settings,
+              dataStore: this.plugin.dataStore,
+              confirm: opts => showConfirmDialog(this.app, { ...opts, danger: false }),
+              saveSettings: () => this.plugin.saveSettings(),
+            },
+            value
+          );
+          // Show what is actually in effect (reverts invalid or cancelled input)
+          text.setValue(this.plugin.settings.memoryPath);
+        });
+      })
       .addButton(btn =>
         btn.setButtonText('Open').setTooltip('Open memory file in Obsidian').onClick(() => {
           (this.plugin as any).openMemoryFile();
@@ -437,7 +475,7 @@ export class EngramSettingTab extends PluginSettingTab {
 
     const memoryAutoExtractSetting = new Setting(containerEl)
       .setName('Auto-extract memories')
-      .setDesc('Automatically extract and save memorable facts at the end of each conversation')
+      .setDesc('After each reply, automatically save new facts (one extra model call per reply). Off by default; /memory lets you review facts before saving.')
       .addToggle(toggle =>
         toggle
           .setValue(this.plugin.settings.autoExtractMemory)
@@ -449,7 +487,7 @@ export class EngramSettingTab extends PluginSettingTab {
 
     const memoryMaxTokensSetting = new Setting(containerEl)
       .setName('Max memory tokens')
-      .setDesc('Maximum token budget reserved for injecting memory context')
+      .setDesc('Maximum memory sent to the model per message. The memory file itself is never trimmed.')
       .addText(text =>
         text
           .setPlaceholder('4000')
@@ -458,29 +496,24 @@ export class EngramSettingTab extends PluginSettingTab {
             const parsed = Number.parseInt(value.trim(), 10);
             if (!Number.isNaN(parsed)) {
               this.plugin.settings.maxMemoryTokens = Math.max(100, parsed);
-              await this.save();
+              this.saveDebounced();
             }
           })
       );
 
     const memoryClearSetting = new Setting(containerEl)
       .setName('Clear all memory')
-      .setDesc('Permanently erase all stored memories — this cannot be undone')
+      .setDesc('Remove every memory entry. Your own text in the file stays, and a backup is saved first.')
+      .addButton(btn =>
+        btn
+          .setButtonText('Restore from backup')
+          .onClick(() => { void this.plugin.restoreMemoryFromBackup(); })
+      )
       .addButton(btn =>
         btn
           .setButtonText('Clear all memory')
           .setWarning()
-          .onClick(async () => {
-            if (!confirm('Clear ALL memories? This cannot be undone.')) return;
-            try {
-              const vault = this.app.vault;
-              const file  = vault.getAbstractFileByPath(this.plugin.settings.memoryPath);
-              if (file) await vault.modify(file as any, '');
-              new Notice('Memory cleared.');
-            } catch {
-              new Notice('Could not clear memory file.');
-            }
-          })
+          .onClick(() => { void this.plugin.clearAllMemory(); })
       );
 
     // ── 4. Vault Access ─────────────────────────────────────────────────────
@@ -654,8 +687,8 @@ export class EngramSettingTab extends PluginSettingTab {
       .addDropdown(drop =>
         drop
           .addOption('read_only',   '🔍 Read only — search & read notes')
-          .addOption('read_append', '✏️ Read + Append — add content to notes')
-          .addOption('full_edit',   '⚠️ Full edit — create, modify, overwrite')
+          .addOption('read_append', '✏️ Read + Append — only add text to the end of notes')
+          .addOption('full_edit',   '⚠️ Full edit — create, edit, move, rename, delete')
           .setValue(this.plugin.settings.editPermission)
           .onChange(async value => {
             this.plugin.settings.editPermission = value as EngramSettings['editPermission'];
@@ -676,7 +709,7 @@ export class EngramSettingTab extends PluginSettingTab {
               .split(',')
               .map(p => p.trim())
               .filter(Boolean);
-            await this.save();
+            this.saveDebounced();
           })
       );
 
@@ -706,7 +739,7 @@ export class EngramSettingTab extends PluginSettingTab {
             const parsed = Number.parseInt(value.trim(), 10);
             if (!Number.isNaN(parsed)) {
               this.plugin.settings.diffPreviewThreshold = Math.max(0, parsed);
-              await this.save();
+              this.saveDebounced();
             }
           })
       );
@@ -725,7 +758,7 @@ export class EngramSettingTab extends PluginSettingTab {
             const parsed = Number.parseInt(value.trim(), 10);
             if (!Number.isNaN(parsed)) {
               this.plugin.settings.contextWindowTokens = Math.max(512, parsed);
-              await this.save();
+              this.saveDebounced();
             }
           })
       );
@@ -741,7 +774,7 @@ export class EngramSettingTab extends PluginSettingTab {
             const parsed = Number.parseInt(value.trim(), 10);
             if (!Number.isNaN(parsed)) {
               this.plugin.settings.maxRecentMessages = Math.max(1, parsed);
-              await this.save();
+              this.saveDebounced();
             }
           })
       );
@@ -757,7 +790,7 @@ export class EngramSettingTab extends PluginSettingTab {
             const parsed = Number.parseInt(value.trim(), 10);
             if (Number.isNaN(parsed)) return;
             this.plugin.settings.autoInjectNotes = Math.max(0, parsed);
-            await this.save();
+            this.saveDebounced();
           })
       );
 
@@ -790,7 +823,23 @@ export class EngramSettingTab extends PluginSettingTab {
             const parsed = Number.parseInt(value.trim(), 10);
             if (!Number.isNaN(parsed)) {
               this.plugin.settings.maxToolCallDepth = Math.max(1, parsed);
-              await this.save();
+              this.saveDebounced();
+            }
+          })
+      );
+
+    const maxOutputSetting = new Setting(containerEl)
+      .setName('Max reply length (tokens)')
+      .setDesc('Upper limit for one model reply. Separate from the context window, which is the input size. Claude requires a limit.')
+      .addText(text =>
+        text
+          .setPlaceholder('4096')
+          .setValue(String(this.plugin.settings.maxOutputTokens))
+          .onChange(async value => {
+            const parsed = Number.parseInt(value.trim(), 10);
+            if (!Number.isNaN(parsed)) {
+              this.plugin.settings.maxOutputTokens = Math.max(256, parsed);
+              this.saveDebounced();
             }
           })
       );
@@ -837,7 +886,7 @@ export class EngramSettingTab extends PluginSettingTab {
             if (this.plugin.embeddingIndex?.updateSettings) {
               this.plugin.embeddingIndex.updateSettings(this.plugin.settings);
             }
-            await this.save();
+            this.saveDebounced();
           })
       );
 
@@ -853,13 +902,13 @@ export class EngramSettingTab extends PluginSettingTab {
             if (this.plugin.embeddingIndex?.updateSettings) {
               this.plugin.embeddingIndex.updateSettings(this.plugin.settings);
             }
-            await this.save();
+            this.saveDebounced();
           })
       );
 
     const openaiApiKeySetting = new Setting(containerEl)
       .setName('OpenAI embeddings API Key')
-      .setDesc('Optional. Reuses your main provider API key if left blank')
+      .setDesc('Optional. If left blank, the OpenAI provider key is used, but only when OpenAI is your active provider')
       .addText(text => {
         text
           .setPlaceholder('sk-...')
@@ -869,7 +918,7 @@ export class EngramSettingTab extends PluginSettingTab {
             if (this.plugin.embeddingIndex?.updateSettings) {
               this.plugin.embeddingIndex.updateSettings(this.plugin.settings);
             }
-            await this.save();
+            this.saveDebounced();
           });
         text.inputEl.type = 'password';
       });
@@ -886,7 +935,7 @@ export class EngramSettingTab extends PluginSettingTab {
             if (this.plugin.embeddingIndex?.updateSettings) {
               this.plugin.embeddingIndex.updateSettings(this.plugin.settings);
             }
-            await this.save();
+            this.saveDebounced();
           })
       );
 
@@ -902,7 +951,7 @@ export class EngramSettingTab extends PluginSettingTab {
             if (this.plugin.embeddingIndex?.updateSettings) {
               this.plugin.embeddingIndex.updateSettings(this.plugin.settings);
             }
-            await this.save();
+            this.saveDebounced();
           })
       );
 
@@ -918,7 +967,7 @@ export class EngramSettingTab extends PluginSettingTab {
             if (this.plugin.embeddingIndex?.updateSettings) {
               this.plugin.embeddingIndex.updateSettings(this.plugin.settings);
             }
-            await this.save();
+            this.saveDebounced();
           })
       );
 
@@ -934,7 +983,7 @@ export class EngramSettingTab extends PluginSettingTab {
             if (this.plugin.embeddingIndex?.updateSettings) {
               this.plugin.embeddingIndex.updateSettings(this.plugin.settings);
             }
-            await this.save();
+            this.saveDebounced();
           });
         text.inputEl.type = 'password';
       });
@@ -988,16 +1037,30 @@ export class EngramSettingTab extends PluginSettingTab {
         'Vault-relative path where chat sessions are stored as JSON files. ' +
         'This folder lives inside your vault so it syncs automatically with iCloud, ' +
         'Obsidian Sync, Dropbox, Git, or any other tool you use. ' +
+        'Press Enter or click away to apply; existing chats are moved to the new folder. ' +
         'Default: Intelligence/Chats'
       )
-      .addText(text => text
-        .setPlaceholder('Intelligence/Chats')
-        .setValue(this.plugin.settings.chatHistoryPath ?? 'Intelligence/Chats')
-        .onChange(async (value) => {
-          this.plugin.settings.chatHistoryPath = value.trim() || 'Intelligence/Chats';
-          await this.save();
-        })
-      );
+      .addText(text => {
+        text
+          .setPlaceholder('Intelligence/Chats')
+          .setValue(this.plugin.settings.chatHistoryPath ?? 'Intelligence/Chats');
+        // Applied only on blur/Enter, so half-typed paths never create folders
+        commitOnBlurOrEnter(text.inputEl, async value => {
+          this.debouncedSave.flush();
+          await changeChatHistoryPath(
+            {
+              app: this.app,
+              settings: this.plugin.settings,
+              store: this.plugin.chatHistoryStore,
+              service: this.plugin.chatService,
+              confirm: opts => showConfirmDialog(this.app, { ...opts, danger: false }),
+              saveSettings: () => this.plugin.saveSettings(),
+            },
+            value || 'Intelligence/Chats'
+          );
+          text.setValue(this.plugin.settings.chatHistoryPath);
+        });
+      });
 
     const chatSyncSetting = new Setting(containerEl)
       .setName('Sync chat history from vault')
@@ -1055,6 +1118,7 @@ export class EngramSettingTab extends PluginSettingTab {
       autoInjectNotesSetting.settingEl.style.display = advanced ? '' : 'none';
       toolCallingSetting.settingEl.style.display = advanced ? '' : 'none';
       toolCallDepthSetting.settingEl.style.display = advanced ? '' : 'none';
+      maxOutputSetting.settingEl.style.display = advanced ? '' : 'none';
 
       // 6. Semantic Search
       const showEmbed = advanced && (this.plugin.settings.embedProvider !== undefined && this.plugin.settings.embedProvider !== 'none');

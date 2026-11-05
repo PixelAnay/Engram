@@ -76,7 +76,10 @@ export interface EngramSettings {
   activeProviderId: string;
   providerType: ProviderType;
   providerBaseUrl: string;
+  /** @deprecated Legacy single key. Migrated into providerApiKeys; kept empty. */
   providerApiKey: string;
+  /** API keys per provider preset id. A key is only ever sent to its own provider. */
+  providerApiKeys?: Record<string, string>;
   model: string;
   temperature: number;
 
@@ -102,6 +105,8 @@ export interface EngramSettings {
   autoInjectNotes: number;
   toolCallingMode: ToolCallingMode;
   maxToolCallDepth: number;
+  /** Upper limit for the length of one model reply (tokens). Required by Anthropic. */
+  maxOutputTokens: number;
 
   // Embeddings
   ollamaEmbedEndpoint: string;
@@ -119,6 +124,9 @@ export interface EngramSettings {
   showDiffPreview: boolean;
   diffPreviewThreshold: number;
   showAdvancedSettings?: boolean;
+
+  /** Version of the settings schema; used for one-time migrations. */
+  settingsVersion?: number;
 
   // Chat history persistence
   /** Vault-relative path where chat sessions are stored as individual JSON files.

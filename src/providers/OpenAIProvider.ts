@@ -13,6 +13,7 @@
 import type { AIProvider, StreamOptions, ToolDefinition, ProviderStatus } from './types';
 import type { ChatMessage, StreamChunk, ToolCall } from '../types';
 import { requestUrl } from 'obsidian';
+import { sanitizeForApi } from './sanitize';
 
 // ─── Raw SSE types ────────────────────────────────────────────────────────────
 
@@ -57,31 +58,7 @@ export class OpenAIProvider implements AIProvider {
   async healthCheck(model?: string): Promise<ProviderStatus> {
     const start = Date.now();
     try {
-      if (model) {
-        // If a specific model is requested, test it via a minimal chat completion
-        const res = await requestUrl({
-          url: `${this.baseUrl}/chat/completions`,
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...this.headers(),
-          },
-          body: JSON.stringify({
-            model: model,
-            messages: [{ role: 'user', content: 'ping' }],
-            max_tokens: 1,
-          }),
-          throw: false,
-        });
-
-        if (res.status === 200) {
-          return { ok: true, model, latencyMs: Date.now() - start };
-        }
-
-        const errMsg = (res.json as any)?.error?.message || `HTTP ${res.status}`;
-        throw new Error(errMsg);
-      }
-
+      // Always a free GET /models — never a billable chat completion.
       const res = await requestUrl({
         url: `${this.baseUrl}/models`,
         method: 'GET',
@@ -90,12 +67,18 @@ export class OpenAIProvider implements AIProvider {
       });
 
       if (res.status !== 200) {
-        throw new Error(`HTTP ${res.status}`);
+        const errMsg = (res.json as any)?.error?.message || `HTTP ${res.status}`;
+        throw new Error(errMsg);
       }
 
       const data = res.json as { data?: Array<{ id: string }> };
-      const returnedModel = data?.data?.[0]?.id ?? 'unknown';
-      return { ok: true, model: returnedModel, latencyMs: Date.now() - start };
+      const ids = (data?.data ?? []).map(m => m.id);
+      if (model) {
+        const bare = (id: string) => id.replace(/^models\//, '');
+        const found = ids.length === 0 || ids.some(id => id === model || bare(id) === bare(model));
+        return { ok: true, model, latencyMs: Date.now() - start, modelFound: found };
+      }
+      return { ok: true, model: ids[0] ?? 'unknown', latencyMs: Date.now() - start };
     } catch (e) {
       throw new Error(`Connection failed: ${(e as Error).message}`);
     }
@@ -126,14 +109,9 @@ export class OpenAIProvider implements AIProvider {
     options: StreamOptions,
     onChunk: (chunk: StreamChunk) => void
   ): Promise<{ toolCalls: ToolCall[]; text: string; finishReason: string | null }> {
-    // Sanitize messages: some strict OpenAI-compat providers (DeepSeek, Qwen,
-    // etc.) reject assistant messages with content: null — they require at
-    // least one of content / reasoning_content / tool_calls to be present.
-    const sanitizedMessages = messages.map(m =>
-      m.role === 'assistant' && m.content === null
-        ? { ...m, content: '' }
-        : m
-    );
+    // Strict OpenAI-compat providers (DeepSeek, Mistral, Qwen, ...) reject empty
+    // assistant messages, unknown fields and unanswered tool calls. Clean the history.
+    const sanitizedMessages = sanitizeForApi(messages, options.toolCallingMode);
 
     const body: Record<string, unknown> = {
       model: options.model,
@@ -148,7 +126,10 @@ export class OpenAIProvider implements AIProvider {
     }
 
     if (options.maxTokens) {
-      body.max_tokens = options.maxTokens;
+      // OpenAI's own API renamed the parameter (newer models reject max_tokens);
+      // compatible servers still expect max_tokens.
+      if (/(^|\/\/)api\.openai\.com/.test(this.baseUrl)) body.max_completion_tokens = options.maxTokens;
+      else body.max_tokens = options.maxTokens;
     }
 
     let response: Response;

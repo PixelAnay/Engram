@@ -1,10 +1,11 @@
 {
   "name": "engram-chat",
-  "version": "5.0.55",
+  "version": "5.0.56",
   "description": "Sidebar chat powered by your local LLM with full vault context",
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",
+    "test": "vitest run",
     "build": "tsc --noEmit --skipLibCheck && node esbuild.config.mjs production",
     "sync": "powershell -ExecutionPolicy Bypass -File ./scripts/sync-plugin.ps1",
     "deploy": "npm run build && npm run sync"
@@ -23,7 +24,8 @@
     "esbuild": "0.17.3",
     "obsidian": "latest",
     "tslib": "2.4.0",
-    "typescript": "4.7.4"
+    "typescript": "4.7.4",
+    "vitest": "^3.2.7"
   },
   "dependencies": {
     "pdf-parse": "^2.4.5",

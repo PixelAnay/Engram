@@ -15,6 +15,8 @@ export interface StreamOptions {
   toolChoice?: 'auto' | 'none';
   maxTokens?: number;
   signal?: AbortSignal;
+  /** Used to decide how tool messages in the history are sent (see sanitizeForApi). */
+  toolCallingMode?: import('../types').ToolCallingMode;
 }
 
 export interface ToolDefinition {
@@ -30,6 +32,8 @@ export interface ProviderStatus {
   ok: boolean;
   model: string;
   latencyMs: number;
+  /** False when the server's model list was returned and does not include `model`. */
+  modelFound?: boolean;
 }
 
 /**

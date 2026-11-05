@@ -3,7 +3,7 @@ import type { VaultIndexer } from './indexer';
 import type { EngramSettings } from './types';
 import type { EmbeddingIndex } from './embeddings';
 import type { MemoryManager } from './memory/MemoryManager';
-import { validateVaultPath, isPathAllowed } from './utils/pathUtils';
+import { validateVaultPath, isPathAllowed, isProtectedPath } from './utils/pathUtils';
 import { showConfirmDialog } from './ui/ConfirmDialog';
 
 
@@ -267,6 +267,28 @@ export const TOOL_DEFINITIONS = [
   {
     type: 'function',
     function: {
+      name: 'update_memory',
+      description:
+        'Change the text of ONE existing memory entry in place, identified by its ID. Use this when a remembered fact is outdated or wrong, instead of adding a contradicting memory. Only that entry changes.',
+      parameters: {
+        type: 'object',
+        properties: {
+          id: {
+            type: 'string',
+            description: 'The memory entry ID to update, e.g. "mem_1234567890_abcd"',
+          },
+          fact: {
+            type: 'string',
+            description: 'The new standalone sentence for this entry, e.g. "The user lives in Berlin."',
+          },
+        },
+        required: ['id', 'fact'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'delete_memory',
       description:
         'Delete a specific memory entry by its ID. Use this when the user explicitly asks you to forget something. You can find the memory ID by reading the memory file.',
@@ -303,6 +325,7 @@ Available tools:
 - delete_note(path, confirm): Delete a note permanently (confirm must be true)
 - create_folder(path): Create a new folder
 - save_memory(fact): Save a new fact to long-term memory
+- update_memory(id, fact): Change the text of one existing memory entry
 - delete_memory(id): Delete a memory entry by its ID
 
 Format:
@@ -310,7 +333,7 @@ Format:
 {"name": "tool_name", "arguments": {"arg": "value"}}
 </tool_call>
 
-⚠️ MEMORY FILE PROTECTION: Never use edit_note, create_note, append_to_note, or delete_note on the memory file path. Use save_memory() and delete_memory() ONLY for memory operations.
+⚠️ MEMORY FILE PROTECTION: Never use edit_note, create_note, append_to_note, or delete_note on the memory file path. Use save_memory(), update_memory() and delete_memory() ONLY for memory operations.
 `.trim();
 
 // ─── Undo History ────────────────────────────────────────────────────────────
@@ -361,9 +384,24 @@ export class ToolExecutor {
    * note tools; they must go through save_memory / delete_memory.
    */
   private isMemoryPath(path: string): boolean {
-    if (!this.settings.memoryEnabled) return false;
+    // Independent of memoryEnabled: the file stays protected even with memory switched off.
     const memPath = (this.settings.memoryPath ?? '').trim();
     return memPath.length > 0 && path.trim().toLowerCase() === memPath.trim().toLowerCase();
+  }
+
+  /**
+   * Error text if `path` is protected from modification (the memory file, the
+   * chat history folder, or any folder containing them), otherwise null.
+   */
+  private protectedError(path: string): string | null {
+    if (this.isMemoryPath(path)) {
+      return 'Error: The memory file is write-protected. Use save_memory(), update_memory() or delete_memory() instead.';
+    }
+    if (isProtectedPath(path, this.settings)) {
+      return `Error: "${path}" is protected because it is, or contains, the memory file or the chat history. ` +
+        'It cannot be changed, moved, copied or deleted with tools.';
+    }
+    return null;
   }
 
   /** Execute a tool call and return the result as a string */
@@ -390,6 +428,7 @@ export class ToolExecutor {
         case 'delete_note':    return await this.toolDeleteNote(args);
         case 'create_folder':  return await this.toolCreateFolder(args);
         case 'save_memory':    return await this.toolSaveMemory(args);
+        case 'update_memory':  return await this.toolUpdateMemory(args);
         case 'delete_memory':  return await this.toolDeleteMemory(args);
         default:               return `Error: Unknown tool "${name}"`;
       }
@@ -420,7 +459,8 @@ export class ToolExecutor {
     if (entry.destinationPath && !isPathAllowed(entry.destinationPath, this.settings)) {
       return null;
     }
-    if (this.isMemoryPath(entry.path) || (entry.destinationPath && this.isMemoryPath(entry.destinationPath))) {
+    if (isProtectedPath(entry.path, this.settings) ||
+        (entry.destinationPath && isProtectedPath(entry.destinationPath, this.settings))) {
       return null;
     }
 
@@ -590,6 +630,8 @@ export class ToolExecutor {
     if (this.isMemoryPath(path)) {
       return 'Error: The memory file is write-protected. Use the save_memory() tool to add new memories instead.';
     }
+    const protectedMsg = this.protectedError(path);
+    if (protectedMsg) return protectedMsg;
     const content = String(args.content ?? '');
     if (!content.trim()) return 'Error: Content to append is empty';
 
@@ -607,8 +649,9 @@ export class ToolExecutor {
   }
 
   private async toolEditNote(args: Record<string, unknown>): Promise<string> {
-    if (this.settings.editPermission === 'read_only') {
-      return 'Error: Edit permission is set to read-only. Change it in plugin settings.';
+    if (this.settings.editPermission !== 'full_edit') {
+      return 'Error: Editing existing text requires "full_edit" permission in plugin settings. ' +
+        'With the current permission level only append_to_note is allowed.';
     }
 
     const path = validateVaultPath(args.path);
@@ -621,6 +664,8 @@ export class ToolExecutor {
       return 'Error: The memory file is write-protected and cannot be edited directly. ' +
         'Use save_memory() to add new memories or delete_memory(id) to remove specific entries.';
     }
+    const protectedMsg = this.protectedError(path);
+    if (protectedMsg) return protectedMsg;
     const mode = String(args.mode ?? '');
 
     const file = this.app.vault.getAbstractFileByPath(path);
@@ -718,6 +763,8 @@ export class ToolExecutor {
       return 'Error: The memory file is write-protected and cannot be overwritten. ' +
         'Use save_memory() to add new memories instead.';
     }
+    const protectedMsg = this.protectedError(path);
+    if (protectedMsg) return protectedMsg;
     const content = String(args.content ?? '');
     const overwrite = Boolean(args.overwrite ?? false);
 
@@ -792,9 +839,14 @@ export class ToolExecutor {
     const destination = validateVaultPath(args.destination);
     if (!source || !isPathAllowed(source, this.settings)) return `Error: Access denied or invalid source path: ${source}`;
     if (!destination || !isPathAllowed(destination, this.settings)) return `Error: Access denied or invalid destination path: ${destination}`;
+    const protectedMsg = this.protectedError(source) ?? this.protectedError(destination);
+    if (protectedMsg) return protectedMsg;
 
     const file = this.app.vault.getAbstractFileByPath(source);
     if (!file) return `Error: File not found: ${source}`;
+    if (this.app.vault.getAbstractFileByPath(destination)) {
+      return `Error: Destination already exists: ${destination}. Choose a different path.`;
+    }
 
     // ── Confirm move ─────────────────────────────────────────────────────────
     const confirmed = await showConfirmDialog(this.app, {
@@ -833,16 +885,31 @@ export class ToolExecutor {
     const newName = String(args.new_name ?? '').trim();
     if (!path || !isPathAllowed(path, this.settings)) return `Error: Access denied or invalid path: ${path}`;
     if (!newName) return 'Error: Invalid or missing new_name';
+    // new_name is a file NAME only: no separators, no traversal. Use move_note to change folders.
+    if (/[\\/]/.test(newName) || newName === '.' || newName === '..' || newName.includes('\0')) {
+      return 'Error: new_name must be a file name only (no "/" or "\\"). Use move_note to change folders.';
+    }
 
     const file = this.app.vault.getAbstractFileByPath(path);
     if (!file) return `Error: File not found: ${path}`;
+
+    // Keep the .md extension when renaming a Markdown note
+    const finalName = path.toLowerCase().endsWith('.md') && !newName.toLowerCase().endsWith('.md')
+      ? `${newName}.md`
+      : newName;
 
     // Build the new path keeping the same parent folder
     const parentFolder = path.includes('/')
       ? path.substring(0, path.lastIndexOf('/') + 1)
       : '';
-    const newPath = parentFolder + newName;
+    const newPath = validateVaultPath(parentFolder + finalName);
+    if (!newPath) return `Error: Invalid new_name: ${newName}`;
     if (!isPathAllowed(newPath, this.settings)) return `Error: Access denied. Renamed path is not within allowed knowledge scope: ${newPath}`;
+    const protectedMsg = this.protectedError(path) ?? this.protectedError(newPath);
+    if (protectedMsg) return protectedMsg;
+    if (this.app.vault.getAbstractFileByPath(newPath)) {
+      return `Error: A file already exists at "${newPath}". Choose a different name.`;
+    }
 
     // Save undo snapshot (C-13)
     if (file instanceof TFile) {
@@ -867,9 +934,9 @@ export class ToolExecutor {
     const destination = validateVaultPath(args.destination);
     if (!source || !isPathAllowed(source, this.settings)) return `Error: Access denied or invalid source path: ${source}`;
     if (!destination || !isPathAllowed(destination, this.settings)) return `Error: Access denied or invalid destination path: ${destination}`;
-    if (this.isMemoryPath(destination)) {
-      return 'Error: Cannot overwrite the memory file. Use save_memory / delete_memory to modify memories.';
-    }
+    // Neither the memory file / chat history (as source) nor a protected path (as destination)
+    const protectedMsg = this.protectedError(source) ?? this.protectedError(destination);
+    if (protectedMsg) return protectedMsg;
 
     const file = this.app.vault.getAbstractFileByPath(source);
     if (!(file instanceof TFile)) return `Error: Note not found: ${source}`;
@@ -904,6 +971,8 @@ export class ToolExecutor {
       return 'Error: The memory file cannot be deleted through this tool. ' +
         'To clear all memories, ask the user to use the plugin\'s "Clear Memory" button in settings.';
     }
+    const protectedMsg = this.protectedError(path);
+    if (protectedMsg) return protectedMsg;
 
     const file = this.app.vault.getAbstractFileByPath(path);
     if (!file) return `Error: File not found: ${path}`;
@@ -931,11 +1000,13 @@ export class ToolExecutor {
   }
 
   private async toolCreateFolder(args: Record<string, unknown>): Promise<string> {
-    if (this.settings.editPermission === 'read_only') {
-      return 'Error: Edit permission is set to read-only. Change it in plugin settings.';
+    if (this.settings.editPermission !== 'full_edit') {
+      return 'Error: Creating folders requires "full_edit" permission in plugin settings.';
     }
     const path = validateVaultPath(args.path);
     if (!path || !isPathAllowed(path, this.settings)) return `Error: Access denied or invalid path: ${path}`;
+    const protectedMsg = this.protectedError(path);
+    if (protectedMsg) return protectedMsg;
 
     const existing = this.app.vault.getAbstractFileByPath(path);
     if (existing instanceof TFolder) return `Error: Folder already exists: ${path}`;
@@ -960,8 +1031,58 @@ export class ToolExecutor {
       return 'Error: fact is too long (max 500 characters). Please summarise it into a single sentence.';
     }
 
-    await this.memoryManager.append([{ fact }]);
-    return `✅ Saved to memory: "${fact}"`;
+    const result = await this.memoryManager.add([fact]);
+    switch (result.status) {
+      case 'saved':
+        return `✅ Saved to memory (id: ${result.ids[0] ?? 'unknown'}): "${fact}"`;
+      case 'queued':
+        return '⚠️ The memory file is currently missing, so nothing was overwritten. ' +
+          'The fact was queued and will be added automatically when the file is back. ' +
+          'Tell the user the memory file needs to be restored.';
+      case 'noop':
+        return 'Error: fact must be a non-empty string.';
+      default:
+        return `Error: could not save the memory: ${result.message}`;
+    }
+  }
+
+  private async toolUpdateMemory(args: Record<string, unknown>): Promise<string> {
+    if (!this.settings.memoryEnabled) {
+      return 'Error: Memory is disabled. Enable it in plugin settings first.';
+    }
+    if (!this.memoryManager) {
+      return 'Error: Memory manager is not available.';
+    }
+    const id = String(args.id ?? '').trim();
+    const fact = String(args.fact ?? '').trim();
+    if (!id) return 'Error: id must be a non-empty string.';
+    if (!fact) return 'Error: fact must be a non-empty string.';
+    if (fact.length > 500) {
+      return 'Error: fact is too long (max 500 characters). Please summarise it into a single sentence.';
+    }
+
+    const result = await this.memoryManager.update(id, fact);
+    if (result.ok) return `✅ Updated memory entry ${id}: "${fact}"`;
+    return this.memoryFailureMessage(result, id);
+  }
+
+  private memoryFailureMessage(
+    result: { ok: false; reason: string; message?: string },
+    id: string
+  ): string {
+    switch (result.reason) {
+      case 'missing_file':
+        return 'Error: the memory file is currently missing. Nothing was changed. The user needs to restore it.';
+      case 'not_found':
+        return `Error: No memory entry found with id "${id}". ` +
+          `Memory IDs are shown in your system context under "What You Know About This User". ` +
+          `Each line has the format: "- [DATE|ID] fact" — the ID is the part between | and ]. ` +
+          `For example: "- [2025-06-14|mem_1719000000_abc1] fact text" → id is "mem_1719000000_abc1".`;
+      case 'invariant':
+        return 'Error: the change was blocked because it would have affected other content. Nothing was changed.';
+      default:
+        return `Error: ${result.message ?? 'the memory could not be changed'}`;
+    }
   }
 
   private async toolDeleteMemory(args: Record<string, unknown>): Promise<string> {
@@ -974,17 +1095,9 @@ export class ToolExecutor {
     const id = String(args.id ?? '').trim();
     if (!id) return 'Error: id must be a non-empty string.';
 
-    const deleted = await this.memoryManager.forget(id);
-    if (deleted) {
-      return `✅ Deleted memory entry: ${id}`;
-    }
-    return (
-      `Error: No memory entry found with id "${id}". ` +
-      `Memory IDs are shown in your system context under "What You Know About This User". ` +
-      `Each line has the format: "- [DATE|ID] fact" — the ID is the part between | and ]. ` +
-      `For example: "- [2025-06-14|mem_1719000000_abc1] fact text" → id is "mem_1719000000_abc1". ` +
-      `If you need to see the current live memory content, call read_note("${this.settings.memoryPath}").`
-    );
+    const result = await this.memoryManager.remove(id);
+    if (result.ok) return `✅ Deleted memory entry: ${id}`;
+    return this.memoryFailureMessage(result, id);
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────

@@ -20,6 +20,8 @@ export interface DisplayMessage {
   autoAttachedNotes?: string[];
   toolEvents?: ToolEvent[];
   streaming?: boolean;
+  /** Index of the ChatMessage this bubble shows in the conversation history (undefined for transient bubbles such as errors). */
+  sourceIndex?: number;
 }
 
 export interface ToolEvent {
@@ -63,6 +65,7 @@ const TOOL_ICONS: Record<string, string> = {
   append_to_note: '✏️', edit_note: '✏️', create_note: '📄',
   open_note: '🔗', move_note: '📦', rename_note: '✏️',
   copy_note: '📋', delete_note: '🗑️', create_folder: '📁',
+  save_memory: '🧠', update_memory: '🧠', delete_memory: '🧠',
 };
 
 export class MessageRenderer {
@@ -83,8 +86,8 @@ export class MessageRenderer {
     private container: HTMLElement,
     private component: Component,
     private onCopyMessage: (content: string) => void,
-    private onEditMessage: (idx: number) => void,
-    private onRegenerateMessage: (idx: number) => void,
+    private onEditMessage: (msg: DisplayMessage) => void,
+    private onRegenerateMessage: (msg: DisplayMessage) => void,
     private onNoteClick: (path: string) => void,
     private indexer?: VaultIndexer
   ) {}
@@ -289,13 +292,8 @@ export class MessageRenderer {
         editBtn.className = 'engram-msg-action-btn';
         editBtn.title = 'Edit & Resend';
         setIcon(editBtn, 'pencil');
-        editBtn.addEventListener('click', () => {
-          const bubbles = Array.from(this.container.querySelectorAll('.engram-msg-wrapper'));
-          const idx = bubbles.indexOf(wrapper);
-          if (idx !== -1) {
-            this.onEditMessage(idx);
-          }
-        });
+        // The bubble carries its own message (and sourceIndex): no DOM-position guessing
+        editBtn.addEventListener('click', () => this.onEditMessage(msg));
       }
 
       if (msg.role === 'assistant') {
@@ -303,13 +301,7 @@ export class MessageRenderer {
         regenBtn.className = 'engram-msg-action-btn';
         regenBtn.title = 'Regenerate response';
         setIcon(regenBtn, 'refresh-cw');
-        regenBtn.addEventListener('click', () => {
-          const bubbles = Array.from(this.container.querySelectorAll('.engram-msg-wrapper'));
-          const idx = bubbles.indexOf(wrapper);
-          if (idx !== -1) {
-            this.onRegenerateMessage(idx);
-          }
-        });
+        regenBtn.addEventListener('click', () => this.onRegenerateMessage(msg));
       }
     }
 
@@ -542,7 +534,7 @@ export class MessageRenderer {
         continue;
       }
 
-      result.push({ role: msg.role, content, attachments: msg.attachments, autoAttachedNotes: msg.autoAttachedNotes, toolEvents });
+      result.push({ role: msg.role, content, attachments: msg.attachments, autoAttachedNotes: msg.autoAttachedNotes, toolEvents, sourceIndex: i });
     }
 
     return result;

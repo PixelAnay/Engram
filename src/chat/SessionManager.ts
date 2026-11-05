@@ -36,6 +36,7 @@ export class SessionManager {
 
   /** Create a brand-new session and make it active. */
   createAndActivate(title = 'New chat'): ChatSession {
+    this.flushCurrent();
     this.cleanEmptySessions();
     const session = this.buildNewSession(title);
     this.plugin.upsertChatSession(session);
@@ -45,6 +46,7 @@ export class SessionManager {
 
   /** Switch the active session to `id`. Returns the session if found. */
   switchTo(id: string): ChatSession | null {
+    this.flushCurrent();
     this.cleanEmptySessions();
     const session = this.plugin.chatSessions.find(s => s.id === id);
     if (!session) return null;
@@ -52,15 +54,26 @@ export class SessionManager {
     return session;
   }
 
-  /** Delete the given session. Returns the next session to display. */
-  delete(id: string): ChatSession {
+  /**
+   * Delete the given session. The active chat only changes if the deleted chat
+   * WAS the active one; then the session to display next is returned.
+   * Returns null when the active chat is unaffected.
+   */
+  delete(id: string): ChatSession | null {
+    const wasActive = id === this.currentChatId;
     this.plugin.deleteChatSession(id);
+    if (!wasActive) return null;
     if (this.plugin.chatSessions.length === 0) {
       return this.createAndActivate();
     }
     const next = this.plugin.chatSessions[0];
     this.currentChatId = next.id;
     return next;
+  }
+
+  /** Write the active chat's pending changes before leaving it. */
+  private flushCurrent(): void {
+    if (this.currentChatId) void this.plugin.flushChat(this.currentChatId);
   }
 
   cleanEmptySessions(): void {

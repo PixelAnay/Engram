@@ -9,11 +9,19 @@ import { MemoryExtractor } from './memory/MemoryExtractor';
 import { ProviderFactory } from './providers/ProviderFactory';
 import { EngramSettingTab, DEFAULT_SETTINGS } from './settings';
 import { ChatHistoryStore } from './chat/ChatHistoryStore';
+import { ChatSessionService } from './chat/ChatSessionService';
+import { OwnOpTracker } from './chat/OwnOpTracker';
+import { PluginDataStore } from './storage/PluginDataStore';
+import { scopeSignature, providerSignature } from './utils/settingsSignature';
+import { migrateSettings } from './utils/settingsMigration';
+import { showBackupPicker } from './ui/BackupPickerModal';
+import { showConfirmDialog } from './ui/ConfirmDialog';
 import type { ChatSession, EngramSettings } from './types';
 import type { EmbeddingIndexData } from './embeddings';
 
 export default class EngramPlugin extends Plugin {
   settings!: EngramSettings;
+  dataStore: PluginDataStore = new PluginDataStore(this);
   indexer!: VaultIndexer;
   embeddingIndex!: EmbeddingIndex;
   providerFactory!: ProviderFactory;
@@ -22,26 +30,52 @@ export default class EngramPlugin extends Plugin {
   memoryManager!: MemoryManager;
   memoryExtractor!: MemoryExtractor;
   chatHistoryStore!: ChatHistoryStore;
-  chatSessions: ChatSession[] = [];
+  chatService!: ChatSessionService;
+  /** Resolves once chat sessions are loaded (after the workspace layout is ready). */
+  chatsReady: Promise<void> = new Promise<void>(resolve => { this.resolveChatsReady = resolve; });
+
+  /** Current sessions, newest first. Owned by ChatSessionService. */
+  get chatSessions(): ChatSession[] {
+    return this.chatService ? this.chatService.sessions : [];
+  }
+
+  private resolveChatsReady!: () => void;
+  private chatOwnOps = new OwnOpTracker();
 
   private indexRebuildTimer: ReturnType<typeof setTimeout> | null = null;
-  private chatPersistTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
-  private chatDeletions: Set<string> = new Set();
-
+  private scopeRebuildTimer: ReturnType<typeof setTimeout> | null = null;
+  private pendingMigrationMessages: string[] = [];
+  private lastScopeSig = '';
+  private lastProviderSig = '';
   // ── Lifecycle ───────────────────────────────────────────────────────────────
 
   async onload(): Promise<void> {
     await this.loadSettings();
 
-    // Initialise vault-backed chat store (creates folder if needed)
+    // Vault-backed chat store. Nothing touches the vault until the layout is ready.
     this.chatHistoryStore = new ChatHistoryStore(
       this.app,
-      this.settings.chatHistoryPath
+      this.settings.chatHistoryPath,
+      this.chatOwnOps
     );
-    await this.chatHistoryStore.initialize();
-    await this.loadChatSessions();
+    this.chatService = new ChatSessionService(this.chatHistoryStore, this.chatOwnOps, {
+      getActiveSessionIds: () => this.getOpenChatSessionIds(),
+      onChanged: () => this.notifyChatViewsSessionsChanged(),
+    });
 
     this.initServices();
+
+    // Memory writes, chat loading, vault events and indexing wait until Obsidian
+    // has finished loading the vault (sync may still be delivering files before that).
+    this.app.workspace.onLayoutReady(() => { void this.onLayoutReadyInit(); });
+
+    // Make sure unsaved chat messages reach disk when Obsidian quits
+    this.registerEvent(
+      (this.app.workspace as any).on('quit', (tasks?: { add?: (fn: () => Promise<unknown>) => void }) => {
+        if (tasks?.add) tasks.add(() => this.flushAllChats());
+        else void this.flushAllChats();
+      })
+    );
 
     // Register sidebar view
     this.registerView(ENGRAM_VIEW_TYPE, leaf => new ChatView(leaf, this));
@@ -69,6 +103,12 @@ export default class EngramPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: 'engram-restore-memory',
+      name: 'Restore memory from backup',
+      callback: () => this.restoreMemoryFromBackup(),
+    });
+
+    this.addCommand({
       id: 'engram-sync-chats',
       name: 'Sync chat history from vault',
       callback: () => this.syncChatsFromVault(),
@@ -77,85 +117,95 @@ export default class EngramPlugin extends Plugin {
     // Settings tab
     this.addSettingTab(new EngramSettingTab(this.app, this));
 
-    // Build vault index (non-blocking)
-    this.buildIndexInBackground();
+  }
+
+  /** Runs once, after the workspace layout (and with it the vault) is ready. */
+  private async onLayoutReadyInit(): Promise<void> {
+    this.memoryManager.markReady();
+    for (const message of this.pendingMigrationMessages) new Notice(message, 15000);
+    this.pendingMigrationMessages = [];
+
+    try {
+      await this.chatHistoryStore.initialize();
+      await this.loadChatSessions();
+    } catch (e) {
+      console.error('[Engram] Failed to load chat sessions:', e);
+    } finally {
+      this.resolveChatsReady();
+    }
 
     // Watch vault for changes (index + chat sync)
     this.registerVaultEvents();
+
+    // Build vault index (non-blocking)
+    void this.buildIndexInBackground();
   }
 
   onunload(): void {
-    // this.app.workspace.detachLeavesOfType(ENGRAM_VIEW_TYPE);
     if (this.indexRebuildTimer) window.clearTimeout(this.indexRebuildTimer);
-    for (const timer of this.chatPersistTimers.values()) {
-      window.clearTimeout(timer);
-    }
-    this.chatPersistTimers.clear();
+    if (this.scopeRebuildTimer) window.clearTimeout(this.scopeRebuildTimer);
+    // Write any unsaved chat messages instead of discarding them
+    void this.flushAllChats();
   }
 
   // ── Settings ────────────────────────────────────────────────────────────────
 
   async loadSettings(): Promise<void> {
-    const data = await this.loadData();
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, data?.settings ?? {});
+    await this.dataStore.load();
+    const data = this.dataStore.get();
+    const migration = migrateSettings(data?.settings, DEFAULT_SETTINGS);
+    this.settings = migration.settings;
+    this.pendingMigrationMessages = migration.messages;
 
-    // Migrate old LlamaPluginSettings format if present
-    if ((this.settings as any).endpoint && !(this.settings as any).providerBaseUrl) {
-      (this.settings as any).providerBaseUrl = (this.settings as any).endpoint;
-    }
-    if (!(this.settings as any).personas || !(this.settings as any).personas.length) {
-      this.settings.personas = DEFAULT_SETTINGS.personas;
-    }
-    if (!(this.settings as any).activePersonaId) {
-      this.settings.activePersonaId = 'default';
+    // Persist the migration result so one-time steps never run twice
+    if (migration.changed || !data?.settings) {
+      await this.dataStore.update(d => { d.settings = this.settings; });
     }
 
-    // Migrate old scopeMode values
-    if ((this.settings.scopeMode as string) === 'allow') {
-      this.settings.scopeMode = 'allowlist';
-    } else if ((this.settings.scopeMode as string) === 'block') {
-      this.settings.scopeMode = 'denylist';
-    }
-
-    // Migrate old embedding model/endpoint settings to new provider structure
-    if (!this.settings.embedProvider) {
-      if (this.settings.embeddingModel) {
-        this.settings.embedProvider = 'ollama';
-        this.settings.ollamaEmbedModel = this.settings.embeddingModel;
-      } else {
-        this.settings.embedProvider = 'none';
-      }
-    }
-    if (this.settings.ollamaEmbedEndpoint && !this.settings.ollamaEmbedUrl) {
-      this.settings.ollamaEmbedUrl = this.settings.ollamaEmbedEndpoint;
-    }
+    this.lastScopeSig = scopeSignature(this.settings);
+    this.lastProviderSig = providerSignature(this.settings);
   }
-
   async saveSettings(): Promise<void> {
-    const existing = (await this.loadData()) ?? {};
-    await this.saveData({ ...existing, settings: this.settings });
+    await this.dataStore.update(d => { d.settings = this.settings; });
 
     // Propagate to all services
     this.providerFactory?.updateSettings(this.settings);
     this.toolExecutor?.updateSettings(this.settings);
     this.contextBuilder?.updateSettings(this.settings);
     this.indexer?.updateSettings(this.settings);
-    this.memoryManager?.updateConfig(this.settings.memoryPath, this.settings.maxMemoryTokens);
+    this.memoryManager?.updateConfig(this.settings.memoryPath);
 
-    // Update chat history store path (creates new folder if needed)
-    this.chatHistoryStore?.setFolderPath(this.settings.chatHistoryPath);
-    this.chatHistoryStore?.initialize().catch(console.error);
+    // The chat history folder is changed only through changeChatHistoryPath
+    // (commit on blur, confirm, move existing chats). Nothing here touches it.
 
-    // Run silent background build to immediately enforce rules on index
-    this.buildIndexInBackground();
+    // Rebuild the index only when scope/exclusion rules changed (debounced)
+    const scopeSig = scopeSignature(this.settings);
+    if (scopeSig !== this.lastScopeSig) {
+      this.lastScopeSig = scopeSig;
+      this.scheduleIndexRebuild();
+    }
+
+    // Only re-check the connection when provider-related settings changed
+    const providerSig = providerSignature(this.settings);
+    const providerChanged = providerSig !== this.lastProviderSig;
+    this.lastProviderSig = providerSig;
 
     // Propagate to active views
     const leaves = this.app.workspace.getLeavesOfType(ENGRAM_VIEW_TYPE);
     for (const leaf of leaves) {
       if (leaf.view instanceof ChatView) {
-        leaf.view.onSettingsUpdate();
+        leaf.view.onSettingsUpdate(providerChanged);
       }
     }
+  }
+
+  /** Debounced (2 s) background index build used after scope settings change. */
+  private scheduleIndexRebuild(): void {
+    if (this.scopeRebuildTimer) window.clearTimeout(this.scopeRebuildTimer);
+    this.scopeRebuildTimer = window.setTimeout(() => {
+      this.scopeRebuildTimer = null;
+      void this.buildIndexInBackground();
+    }, 2000) as any;
   }
 
   // ── Connection test (called from settings UI) ────────────────────────────────
@@ -174,6 +224,53 @@ export default class EngramPlugin extends Plugin {
 
   async openMemoryFile(): Promise<void> {
     await this.memoryManager.openInEditor();
+  }
+
+  /** Pick a local backup and put it back as the memory file (current content is backed up first). */
+  async restoreMemoryFromBackup(): Promise<void> {
+    const backups = await this.memoryManager.describeBackups();
+    if (backups.length === 0) {
+      new Notice('🧠 Engram: no memory backups exist yet.');
+      return;
+    }
+    const picked = await showBackupPicker(
+      this.app,
+      backups.map(b => ({
+        path: b.path,
+        label: `${b.timestamp ? new Date(b.timestamp).toLocaleString() : b.name} · ${b.entryCount} memories`,
+      }))
+    );
+    if (!picked) return;
+
+    const ok = await showConfirmDialog(this.app, {
+      title: 'Restore memory?',
+      message: 'Replace the current memory file with this backup? The current content is backed up first.',
+      confirmLabel: 'Restore',
+      cancelLabel: 'Cancel',
+      danger: true,
+    });
+    if (!ok) return;
+
+    const result = await this.memoryManager.restoreBackup(picked);
+    new Notice(result.ok
+      ? '🧠 Engram: memory restored from backup.'
+      : `🧠 Engram: restore failed: ${result.message ?? result.reason}`);
+  }
+
+  /** Remove every memory entry (free text in the file stays). Asks first; a backup is taken. */
+  async clearAllMemory(): Promise<void> {
+    const ok = await showConfirmDialog(this.app, {
+      title: 'Clear all memory?',
+      message: 'This removes every memory entry from the memory file. Your own notes in that file stay, and a backup is saved so you can restore it.',
+      confirmLabel: 'Clear all',
+      cancelLabel: 'Cancel',
+      danger: true,
+    });
+    if (!ok) return;
+    const result = await this.memoryManager.clearAll();
+    if (result.ok) new Notice('🧠 Engram: memory cleared (backup saved).');
+    else if (result.reason === 'missing_file') new Notice('🧠 Engram: the memory file is missing, nothing to clear.');
+    else new Notice(`🧠 Engram: could not clear memory: ${result.message ?? result.reason}`);
   }
 
   // ── Chat Sessions ────────────────────────────────────────────────────────────
@@ -205,7 +302,7 @@ export default class EngramPlugin extends Plugin {
     const vaultIds = new Set(vaultSessions.map(s => s.id));
 
     // 2. Load legacy sessions from data.json (backward compat / migration)
-    const data = await this.loadData();
+    const data = this.dataStore.get();
     const legacySessions: ChatSession[] = Array.isArray(data?.chatSessions)
       ? (data.chatSessions as any[])
           .filter((s: any) => s && typeof s.id === 'string' && Array.isArray(s.messages))
@@ -228,90 +325,59 @@ export default class EngramPlugin extends Plugin {
       }
 
       // Remove the now-migrated chatSessions key from data.json
-      const existing = (await this.loadData()) ?? {};
-      const { chatSessions: _removed, ...rest } = existing as any;
-      await this.saveData(rest);
+      await this.dataStore.update(d => { delete d.chatSessions; });
       console.log('[Engram] Migration complete — chat sessions removed from data.json');
     }
 
     // 4. Merge and sort all sessions
     const merged = [...vaultSessions, ...toMigrate];
-    this.chatSessions = merged.sort((a, b) => b.updatedAt - a.updatedAt);
+    this.chatService.sessions = merged.sort((a, b) => b.updatedAt - a.updatedAt);
   }
 
   /**
    * Upsert a session in memory and schedule a debounced write to its vault file.
-   * Each session has its own independent debounce timer (800 ms).
-   *
-   * Empty sessions (no messages) are kept in memory for the UI but are NOT
-   * written to disk — the folder only contains real conversations.
+   * Empty sessions (no messages) are kept in memory for the UI but have no file.
    */
   upsertChatSession(session: ChatSession): void {
-    const withTouch = { ...session, updatedAt: session.updatedAt || Date.now() };
-    const idx = this.chatSessions.findIndex(s => s.id === session.id);
-    if (idx >= 0) this.chatSessions[idx] = withTouch;
-    else this.chatSessions.push(withTouch);
-    this.chatSessions.sort((a, b) => b.updatedAt - a.updatedAt);
-
-    // Only persist sessions that have at least one message (H-20)
-    if (!withTouch.messages || withTouch.messages.length === 0) {
-      const pendingTimer = this.chatPersistTimers.get(session.id);
-      if (pendingTimer) {
-        window.clearTimeout(pendingTimer);
-        this.chatPersistTimers.delete(session.id);
-      }
-      this.chatHistoryStore.delete(session.id, true).catch(() => {});
-      return;
-    }
-
-    // Debounce per-session write
-    const existing = this.chatPersistTimers.get(session.id);
-    if (existing) window.clearTimeout(existing);
-    const timer = window.setTimeout(async () => {
-      try {
-        await this.chatHistoryStore.save(withTouch);
-      } catch (e) {
-        console.error(`[Engram] Failed to save session "${session.id}":`, e);
-      } finally {
-        this.chatPersistTimers.delete(session.id);
-      }
-    }, 800) as any;
-    this.chatPersistTimers.set(session.id, timer);
+    this.chatService.upsert(session);
   }
 
   /** Delete a session from memory and permanently remove its vault file. */
   deleteChatSession(id: string): void {
-    // Cancel any pending write for this session first
-    const timer = this.chatPersistTimers.get(id);
-    if (timer) {
-      window.clearTimeout(timer);
-      this.chatPersistTimers.delete(id);
-    }
-    this.chatDeletions.add(id);
-    this.chatSessions = this.chatSessions.filter(s => s.id !== id);
-    // force:true permanently removes the file (no OS trash) so the folder
-    // stays in sync with what the UI shows.
-    this.chatHistoryStore.delete(id, true)
-      .catch(e => console.error(`[Engram] Failed to delete session "${id}":`, e))
-      .finally(() => {
-        window.setTimeout(() => this.chatDeletions.delete(id), 2000);
-      });
-    this.notifyChatViewsSessionsChanged();
+    this.chatService.remove(id);
+  }
+
+  /** Write one chat's unsaved changes to disk now (e.g. when switching chats). */
+  flushChat(id: string): Promise<void> {
+    return this.chatService.flush(id);
+  }
+
+  /** Write all unsaved chat changes to disk now (view close, quit, unload). */
+  flushAllChats(): Promise<void> {
+    return this.chatService.flushAll();
   }
 
   /**
-   * Re-import sessions from vault files (folder is single source of truth).
-   * Discards in-memory-only sessions (empty chats with no file) and rebuilds
-   * from disk. The current active session is preserved if it exists on disk.
+   * Re-import sessions from vault files. Sessions with unsaved local changes and
+   * empty chats that are open in a view are kept.
    */
   async syncChatsFromVault(): Promise<void> {
-    const vaultSessions = await this.chatHistoryStore.loadAll();
-    this.chatSessions = vaultSessions.sort((a, b) => b.updatedAt - a.updatedAt);
-    this.notifyChatViewsSessionsChanged();
-    new Notice(`🧠 Engram: ${vaultSessions.length} chat session(s) loaded from vault`);
-    console.log(`[Engram] syncChatsFromVault: loaded ${vaultSessions.length} session(s)`);
+    const count = await this.chatService.syncFromVault();
+    new Notice(`🧠 Engram: ${count} chat session(s) loaded from vault`);
+    console.log(`[Engram] syncChatsFromVault: loaded ${count} session(s)`);
   }
 
+  /** Ids of the chat sessions currently displayed in open Engram views. */
+  private getOpenChatSessionIds(): Set<string> {
+    const ids = new Set<string>();
+    for (const leaf of this.app.workspace.getLeavesOfType(ENGRAM_VIEW_TYPE)) {
+      if (leaf.view instanceof ChatView) {
+        const id = leaf.view.getActiveSessionId();
+        if (id) ids.add(id);
+      }
+    }
+    return ids;
+  }
   // ── Services ─────────────────────────────────────────────────────────────────
 
   private initServices(): void {
@@ -319,10 +385,12 @@ export default class EngramPlugin extends Plugin {
     this.embeddingIndex = new EmbeddingIndex(this.app, this.settings);
     this.providerFactory = new ProviderFactory(this.settings);
     this.toolExecutor = new ToolExecutor(this.app, this.indexer, this.settings, this.embeddingIndex);
+    const pluginDir = this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`;
     this.memoryManager = new MemoryManager(
       this.app,
       this.settings.memoryPath,
-      this.settings.maxMemoryTokens
+      this.dataStore,
+      `${pluginDir}/memory-backups`
     );
     // Wire MemoryManager into ToolExecutor so memory path-guards and
     // save_memory / delete_memory tools are operational.
@@ -340,7 +408,7 @@ export default class EngramPlugin extends Plugin {
   // ── Vault Indexing ────────────────────────────────────────────────────────────
 
   private async buildIndexInBackground(): Promise<void> {
-    const data = await this.loadData();
+    const data = this.dataStore.get();
     const savedIndex = data?.index ?? null;
     const savedEmbeds: EmbeddingIndexData | null = data?.embeddings ?? null;
 
@@ -358,15 +426,12 @@ export default class EngramPlugin extends Plugin {
   }
 
   private async persistIndex(): Promise<void> {
-    const existing = (await this.loadData()) ?? {};
-    const update: Record<string, unknown> = {
-      ...existing,
-      index: this.indexer.getSerializable(),
-    };
-    if (this.embeddingIndex.isReady) {
-      update.embeddings = this.embeddingIndex.toJSON();
-    }
-    await this.saveData(update);
+    const index = this.indexer.getSerializable();
+    const embeddings = this.embeddingIndex.isReady ? this.embeddingIndex.toJSON() : undefined;
+    await this.dataStore.update(d => {
+      d.index = index;
+      if (embeddings) d.embeddings = embeddings;
+    });
   }
 
   private async rebuildIndex(): Promise<void> {
@@ -383,11 +448,12 @@ export default class EngramPlugin extends Plugin {
       this.app.vault.on('create', async file => {
         if (!(file instanceof TFile)) return;
 
-        // Chat sync: a new chat file arrived (e.g. from external vault sync)
-        if (this.chatHistoryStore.isOwnedPath(file.path)) {
-          await this.onChatFileChanged(file);
-          return;
-        }
+        // The memory file (re)appeared, e.g. delivered by sync: flush queued facts
+        this.memoryManager.onVaultCreate(file.path);
+
+        // Chat sync: a new chat file arrived (e.g. from external vault sync).
+        // Events caused by our own writes are ignored inside the service.
+        if (await this.chatService.onFileChanged(file)) return;
 
         if (file.extension === 'md') {
           await this.indexer.updateFile(file);
@@ -401,10 +467,7 @@ export default class EngramPlugin extends Plugin {
         if (!(file instanceof TFile)) return;
 
         // Chat sync: a chat file was modified externally
-        if (this.chatHistoryStore.isOwnedPath(file.path)) {
-          await this.onChatFileChanged(file);
-          return;
-        }
+        if (await this.chatService.onFileChanged(file)) return;
 
         if (file.extension === 'md') {
           await this.indexer.updateFile(file);
@@ -417,18 +480,8 @@ export default class EngramPlugin extends Plugin {
       this.app.vault.on('delete', file => {
         if (!(file instanceof TFile)) return;
 
-        // Chat sync: a chat file was deleted externally
-        if (this.chatHistoryStore.isOwnedPath(file.path)) {
-          const id = this.chatHistoryStore.idFromPath(file.path);
-          if (id) {
-            if (this.chatDeletions.has(id)) {
-              return; // Ignore deletion events initiated by our own UI (M-07)
-            }
-            this.chatSessions = this.chatSessions.filter(s => s.id !== id);
-            this.notifyChatViewsSessionsChanged();
-          }
-          return;
-        }
+        // Chat sync: a chat file was deleted externally (our own deletes are ignored)
+        if (this.chatService.onFileDeleted(file.path)) return;
 
         if (file.extension === 'md') {
           this.indexer.removeFile(file.path);
@@ -447,36 +500,6 @@ export default class EngramPlugin extends Plugin {
         }
       })
     );
-  }
-
-  /**
-   * Called when a chat JSON file is created or modified by the vault file system
-   * (i.e., synced from another device). Merges the session into memory and
-   * refreshes any open chat views.
-   */
-  private async onChatFileChanged(file: TFile): Promise<void> {
-    const id = this.chatHistoryStore.idFromPath(file.path);
-    if (!id) return;
-
-    // Skip if this write was initiated by us (the pending timer is a reliable signal)
-    if (this.chatPersistTimers.has(id)) return;
-
-    const session = await this.chatHistoryStore.loadOne(id);
-    if (!session) return;
-
-    const idx = this.chatSessions.findIndex(s => s.id === id);
-    if (idx >= 0) {
-      // Only overwrite in-memory copy if the file is newer
-      if (session.updatedAt >= this.chatSessions[idx].updatedAt) {
-        this.chatSessions[idx] = session;
-      }
-    } else {
-      this.chatSessions.push(session);
-    }
-    this.chatSessions.sort((a, b) => b.updatedAt - a.updatedAt);
-
-    this.notifyChatViewsSessionsChanged();
-    console.log(`[Engram] Chat session synced from vault: "${session.title}" (${id})`);
   }
 
   private schedulePersist(): void {

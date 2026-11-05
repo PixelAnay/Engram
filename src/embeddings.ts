@@ -1,6 +1,7 @@
 import { App, TFile } from 'obsidian';
 import type { EngramSettings } from './types';
 import { isPathAllowed } from './utils/pathUtils';
+import { resolveOpenAIEmbedKey } from './utils/apiKeys';
 
 // ── Cosine similarity ──────────────────────────────────────────────────────────
 
@@ -266,9 +267,10 @@ export class EmbeddingIndex {
         body = { model, prompt: text };
       } else if (provider === 'openai') {
         url = 'https://api.openai.com/v1/embeddings';
-        const apiKey = this.settings.openaiEmbedApiKey?.trim() || this.settings.providerApiKey?.trim();
+        // Reuses the main key only when OpenAI is the active provider
+        const apiKey = resolveOpenAIEmbedKey(this.settings);
         if (!apiKey) {
-          throw new Error('API key is missing. Please configure your OpenAI API Key.');
+          throw new Error('API key is missing. Enter an OpenAI embeddings API key in settings.');
         }
         headers['Authorization'] = `Bearer ${apiKey}`;
         body = { model, input: text };

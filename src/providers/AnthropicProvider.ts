@@ -17,6 +17,7 @@
 import type { AIProvider, StreamOptions, ProviderStatus } from './types';
 import type { ChatMessage, StreamChunk, ToolCall } from '../types';
 import { requestUrl } from 'obsidian';
+import { sanitizeForApi } from './sanitize';
 
 const ANTHROPIC_VERSION = '2023-06-01';
 const DEFAULT_MAX_TOKENS = 4096;
@@ -24,8 +25,11 @@ const DEFAULT_MAX_TOKENS = 4096;
 // ─── Anthropic-specific types ─────────────────────────────────────────────────
 
 interface AnthropicContentBlock {
-  type: 'text' | 'tool_use' | 'tool_result';
+  type: 'text' | 'tool_use' | 'tool_result' | 'image';
   text?: string;
+  source?:
+    | { type: 'base64'; media_type: string; data: string }
+    | { type: 'url'; url: string };
   id?: string;
   name?: string;
   input?: Record<string, unknown>;
@@ -53,6 +57,50 @@ interface AnthropicStreamEvent {
   };
 }
 
+// ─── Content conversion ───────────────────────────────────────────────────────
+
+const SUPPORTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+
+/** OpenAI-style content parts become Anthropic content blocks. */
+export function convertContentParts(
+  parts: Array<{ type: string; text?: string; image_url?: { url: string } }>
+): AnthropicContentBlock[] {
+  const blocks: AnthropicContentBlock[] = [];
+  for (const part of parts) {
+    if (part.type === 'text') {
+      if (part.text) blocks.push({ type: 'text', text: part.text });
+    } else if (part.type === 'image_url' && part.image_url?.url) {
+      const url = part.image_url.url;
+      const m = /^data:([^;,]+);base64,([\s\S]*)$/.exec(url);
+      if (m) {
+        const mediaType = m[1].toLowerCase();
+        if (SUPPORTED_IMAGE_TYPES.includes(mediaType)) {
+          blocks.push({ type: 'image', source: { type: 'base64', media_type: mediaType, data: m[2] } });
+        } else {
+          blocks.push({ type: 'text', text: `[Attachment omitted: ${mediaType} is not a supported image type]` });
+        }
+      } else if (/^https?:\/\//i.test(url)) {
+        blocks.push({ type: 'image', source: { type: 'url', url } });
+      }
+    }
+  }
+  if (blocks.length === 0) blocks.push({ type: 'text', text: '' });
+  return blocks;
+}
+
+function toBlocks(c: string | AnthropicContentBlock[]): AnthropicContentBlock[] {
+  return typeof c === 'string' ? [{ type: 'text', text: c }] : c;
+}
+
+/** Merge two same-role contents into one. Plain strings stay plain. */
+function mergeContent(
+  a: string | AnthropicContentBlock[],
+  b: string | AnthropicContentBlock[]
+): string | AnthropicContentBlock[] {
+  if (typeof a === 'string' && typeof b === 'string') return a + '\n\n' + b;
+  return [...toBlocks(a), ...toBlocks(b)];
+}
+
 // ─── Provider ─────────────────────────────────────────────────────────────────
 
 export class AnthropicProvider implements AIProvider {
@@ -71,22 +119,20 @@ export class AnthropicProvider implements AIProvider {
 
   async healthCheck(model?: string): Promise<ProviderStatus> {
     const start = Date.now();
-    const testModel = model || 'claude-3-5-haiku-20241022';
     try {
+      // Free GET /v1/models — never a billable message request.
       const res = await requestUrl({
-        url: `${this.baseUrl}/v1/messages`,
-        method: 'POST',
+        url: `${this.baseUrl}/v1/models?limit=100`,
+        method: 'GET',
         headers: this.headers(),
-        body: JSON.stringify({
-          model: testModel,
-          max_tokens: 1,
-          messages: [{ role: 'user', content: 'hi' }],
-        }),
         throw: false,
       });
 
       if (res.status === 200) {
-        return { ok: true, model: testModel, latencyMs: Date.now() - start };
+        const ids = ((res.json as any)?.data ?? []).map((m: { id: string }) => m.id) as string[];
+        const reported = model || ids[0] || 'unknown';
+        const found = !model || ids.length === 0 || ids.includes(model);
+        return { ok: true, model: reported, latencyMs: Date.now() - start, modelFound: found };
       }
 
       const errMsg = (res.json as any)?.error?.message || `HTTP ${res.status}`;
@@ -118,6 +164,9 @@ export class AnthropicProvider implements AIProvider {
     options: StreamOptions,
     onChunk: (chunk: StreamChunk) => void
   ): Promise<{ toolCalls: ToolCall[]; text: string; finishReason: string | null }> {
+    // Drop empty assistant turns, unanswered tool calls and UI-only fields first
+    messages = sanitizeForApi(messages, options.toolCallingMode);
+
     // Extract system message
     const systemMsg = messages.find(m => m.role === 'system');
     const system = systemMsg ? (typeof systemMsg.content === 'string' ? systemMsg.content : '') : '';
@@ -136,7 +185,8 @@ export class AnthropicProvider implements AIProvider {
       model: options.model || 'claude-sonnet-4-5',
       max_tokens: options.maxTokens ?? DEFAULT_MAX_TOKENS,
       stream: true,
-      temperature: options.temperature,
+      // Anthropic accepts 0..1 only (other providers allow up to 2)
+      temperature: Math.max(0, Math.min(1, options.temperature)),
       messages: anthropicMessages,
     };
 
@@ -334,17 +384,15 @@ export class AnthropicProvider implements AIProvider {
       }
 
       const role = (msg.role === 'user' || msg.role === 'assistant') ? msg.role : 'user';
-      // Coerce null → '' so Anthropic never sees an assistant turn without content
-      const content = typeof msg.content === 'string' ? msg.content : (msg.content ?? '') as string;
+      // Strings stay strings; content-part arrays (text + images) become Anthropic blocks.
+      // null becomes '' so Anthropic never sees an assistant turn without content.
+      const content: string | AnthropicContentBlock[] =
+        Array.isArray(msg.content) ? convertContentParts(msg.content) : (msg.content ?? '');
 
       // Merge consecutive same-role (Anthropic requires strict alternation)
       const last = result[result.length - 1];
       if (last && last.role === role) {
-        if (typeof last.content === 'string') {
-          last.content += '\n\n' + content;
-        } else if (Array.isArray(last.content)) {
-          last.content.push({ type: 'text', text: content });
-        }
+        last.content = mergeContent(last.content, content);
       } else {
         result.push({ role, content });
       }
@@ -365,6 +413,8 @@ export class AnthropicProvider implements AIProvider {
       'Content-Type': 'application/json',
       'x-api-key': this.apiKey,
       'anthropic-version': ANTHROPIC_VERSION,
+      // Required for direct requests from the Obsidian renderer (browser-like origin)
+      'anthropic-dangerous-direct-browser-access': 'true',
     };
   }
 }

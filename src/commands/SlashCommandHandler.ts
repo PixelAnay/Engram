@@ -20,7 +20,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   {
     name: 'memory',
     label: '/memory',
-    desc: 'Save important facts from this conversation to memory',
+    desc: 'Pick facts from this conversation to save to memory (you review them first)',
     icon: '🧠',
   },
   {

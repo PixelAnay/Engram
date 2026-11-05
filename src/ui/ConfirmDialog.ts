@@ -88,7 +88,9 @@ class ConfirmModal extends Modal {
       this.close();
     });
 
-    setTimeout(() => confirmBtn.focus(), 50);
+    // Destructive dialogs focus Cancel, so a stray Enter never confirms
+    const focusTarget = this.danger ? cancelBtn : confirmBtn;
+    setTimeout(() => focusTarget.focus(), 50);
   }
 
   onClose() {

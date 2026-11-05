@@ -172,3 +172,28 @@ export function isPathAllowed(path: string, settings: EngramSettings): boolean {
   return true;
 }
 
+/**
+ * Paths that AI tools must never modify, move, rename, copy or delete:
+ * the memory file, the chat history folder and everything inside it, and
+ * every folder ABOVE either of them (moving or deleting a parent folder would
+ * carry the protected content along). Case-insensitive, independent of
+ * `memoryEnabled`.
+ *
+ * `mode` 'read' never protects anything (reads are governed by isPathAllowed
+ * and the scope settings); 'write' (default) applies the protection.
+ */
+export function isProtectedPath(
+  path: string,
+  settings: EngramSettings,
+  mode: 'read' | 'write' = 'write'
+): boolean {
+  if (mode === 'read') return false;
+  const p = normalisePath(path).toLowerCase();
+  if (!p) return true; // the vault root contains everything
+
+  const targets = [settings.memoryPath, settings.chatHistoryPath]
+    .map(t => (t ? normalisePath(t).toLowerCase() : ''))
+    .filter(Boolean);
+
+  return targets.some(t => p === t || p.startsWith(t + '/') || t.startsWith(p + '/'));
+}

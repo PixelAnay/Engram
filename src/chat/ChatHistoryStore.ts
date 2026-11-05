@@ -13,6 +13,7 @@
 
 import { App, TFile, TFolder, normalizePath } from 'obsidian';
 import type { ChatSession, ChatMessage } from '../types';
+import type { OwnOpTracker } from './OwnOpTracker';
 
 /** Current on-disk schema version. Increment when the shape of ChatSession changes. */
 const SCHEMA_VERSION = 1;
@@ -20,10 +21,17 @@ const SCHEMA_VERSION = 1;
 export class ChatHistoryStore {
   private app: App;
   private folderPath: string;
+  private tracker?: OwnOpTracker;
 
-  constructor(app: App, folderPath: string) {
+  constructor(app: App, folderPath: string, tracker?: OwnOpTracker) {
     this.app = app;
     this.folderPath = normalizePath(folderPath);
+    this.tracker = tracker;
+  }
+
+  /** Current storage folder (vault-relative, normalized). */
+  get path(): string {
+    return this.folderPath;
   }
 
   // ── Public API ─────────────────────────────────────────────────────────────
@@ -68,6 +76,7 @@ export class ChatHistoryStore {
             if (session) {
               sessions.push(session);
               // Restore backup to primary location
+              this.tracker?.mark(child.path);
               await this.app.vault.modify(child, raw);
               console.info(`[Engram] Successfully recovered session from backup for "${child.path}"`);
               continue;
@@ -86,6 +95,8 @@ export class ChatHistoryStore {
   async save(session: ChatSession): Promise<void> {
     await this.ensureFolder(this.folderPath);
     const filePath = this.sessionPath(session.id);
+    // Events caused by this write are ours, not an outside change
+    this.tracker?.mark(filePath);
 
     const existing = this.app.vault.getAbstractFileByPath(filePath);
     if (existing instanceof TFile) {
@@ -142,6 +153,7 @@ export class ChatHistoryStore {
     const filePath = this.sessionPath(id);
     const file = this.app.vault.getAbstractFileByPath(filePath);
     if (file instanceof TFile) {
+      this.tracker?.mark(filePath);
       await this.app.vault.delete(file, force);
     }
   }
@@ -200,7 +212,21 @@ export class ChatHistoryStore {
     let count = 0;
 
     for (const child of [...oldFolder.children]) {
-      if (!(child instanceof TFile) || child.extension !== 'json') continue;
+      if (!(child instanceof TFile)) continue;
+
+      // Safety copies travel with their chats (not counted, never overwrite)
+      if (child.name.endsWith('.json.bak')) {
+        const bakNew = normalizePath(`${this.folderPath}/${child.name}`);
+        try {
+          if (this.app.vault.getAbstractFileByPath(bakNew)) await this.app.vault.delete(child, true);
+          else await this.app.vault.rename(child, bakNew);
+        } catch (e) {
+          console.warn(`[Engram] migrateFrom: could not move "${child.path}":`, e);
+        }
+        continue;
+      }
+
+      if (child.extension !== 'json') continue;
       try {
         const content = await this.app.vault.read(child);
         const newPath = normalizePath(`${this.folderPath}/${child.name}`);
@@ -209,6 +235,7 @@ export class ChatHistoryStore {
           // Already exists in new location — skip to avoid overwriting newer data
           await this.app.vault.delete(child, true);
         } else {
+          this.tracker?.mark(newPath);
           await this.app.vault.rename(child, newPath);
           count++; // Only increment if actually migrated, not deleted as duplicate (M-11)
         }
@@ -234,12 +261,19 @@ export class ChatHistoryStore {
     return normalizePath(`${this.folderPath}/${id}.json`);
   }
 
+  /** Create the folder and every missing parent (e.g. "AI/Chats" needs "AI" first). */
   private async ensureFolder(path: string): Promise<void> {
     if (this.app.vault.getAbstractFileByPath(path) instanceof TFolder) return;
-    try {
-      await this.app.vault.createFolder(path);
-    } catch {
-      // Folder may have been created concurrently — that's fine.
+    let current = '';
+    for (const segment of path.split('/')) {
+      if (!segment) continue;
+      current = current ? `${current}/${segment}` : segment;
+      if (this.app.vault.getAbstractFileByPath(current)) continue;
+      try {
+        await this.app.vault.createFolder(current);
+      } catch {
+        // Folder may have been created concurrently — that's fine.
+      }
     }
   }
 
