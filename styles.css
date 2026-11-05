@@ -10,11 +10,15 @@
    Brand accent: electric purple #7c6af7  ·  Memory accent: amber #f59e0b
 ───────────────────────────────────────────────────────────────────────────── */
 
-/* ── Design Tokens ────────────────────────────────────────────────────────── */
-:root {
-  --engram-bg:            #000000;
-  --engram-surface:       #000000;
-  --engram-border:        #1a1a1a;
+/* ── Design Tokens (adapt to the active Obsidian theme) ──────────────────── */
+/* Defined on body, not :root: Obsidian's theme variables (--background-primary,
+   --text-normal, ...) live on body, so var() references on :root resolve to
+   nothing and leave modals (appended to document.body) transparent. */
+body {
+  --engram-bg:            var(--background-primary);
+  --engram-surface:       var(--background-secondary);
+  --engram-border:        var(--background-modifier-border);
+  --engram-input-bg:      var(--background-primary);
   --engram-accent:        #7c6af7;
   --engram-accent-glow:   rgba(124, 106, 247, 0.15);
   --engram-accent-dim:    rgba(124, 106, 247, 0.08);
@@ -726,7 +730,7 @@
   resize: none;
   border: 1px solid var(--engram-border);
   border-radius: var(--engram-radius);
-  background: #000000 !important;
+  background: var(--engram-input-bg, var(--engram-bg)) !important;
   color: var(--engram-text);
   font-family: var(--font-interface);
   font-size: 13px;
@@ -741,7 +745,7 @@
 .engram-input:hover,
 .engram-input:focus,
 .engram-input:active {
-  background: #000000 !important;
+  background: var(--engram-input-bg, var(--engram-bg)) !important;
 }
 
 .engram-input:focus {
@@ -1050,8 +1054,9 @@
 }
 
 .engram-modal {
-  background: var(--engram-bg);
-  border: 1px solid var(--engram-border);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  border: 1px solid var(--background-modifier-border);
   border-radius: var(--engram-radius-lg);
   padding: 20px 24px;
   width: 340px;
@@ -1185,7 +1190,7 @@
   left: 0;
   right: 0;
   margin-bottom: 4px;
-  background: #0a0a0a;
+  background: var(--engram-surface);
   border: 1px solid var(--engram-border);
   border-radius: var(--engram-radius);
   overflow: hidden;
@@ -1212,7 +1217,7 @@
 
 .engram-mention-item:hover,
 .engram-mention-item.active {
-  background: color-mix(in srgb, var(--engram-accent) 10%, #0a0a0a);
+  background: color-mix(in srgb, var(--engram-accent) 10%, var(--engram-surface));
 }
 
 .engram-mention-name {
@@ -1237,7 +1242,7 @@
   left: 0;
   right: 0;
   margin-bottom: 4px;
-  background: #0a0a0a;
+  background: var(--engram-surface);
   border: 1px solid var(--engram-border);
   border-radius: var(--engram-radius);
   overflow: hidden;
@@ -1264,7 +1269,7 @@
 
 .engram-slash-item:hover,
 .engram-slash-item.active {
-  background: color-mix(in srgb, var(--engram-accent) 10%, #0a0a0a);
+  background: color-mix(in srgb, var(--engram-accent) 10%, var(--engram-surface));
 }
 
 .engram-slash-item-name {
@@ -1615,7 +1620,7 @@
 .engram-auto-attached-chip {
   font-size: 10.5px;
   padding: 2px 6px;
-  background-color: #0a0a0a;
+  background-color: var(--engram-surface);
   color: var(--text-normal);
   border-radius: 4px;
   border: 1px solid var(--background-modifier-border);
@@ -1645,7 +1650,7 @@
   left: 0;
   right: 0;
   bottom: 0;
-  background: color-mix(in srgb, #000000 92%, var(--engram-accent));
+  background: color-mix(in srgb, var(--engram-bg) 92%, var(--engram-accent));
   display: flex;
   align-items: center;
   justify-content: center;
