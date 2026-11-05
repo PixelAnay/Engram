@@ -12,9 +12,9 @@
 
 /* ── Design Tokens ────────────────────────────────────────────────────────── */
 :root {
-  --engram-bg:            var(--background-primary);
-  --engram-surface:       var(--background-secondary);
-  --engram-border:        var(--background-modifier-border);
+  --engram-bg:            #000000;
+  --engram-surface:       #0a0a0a;
+  --engram-border:        #1a1a1a;
   --engram-accent:        #7c6af7;
   --engram-accent-glow:   rgba(124, 106, 247, 0.15);
   --engram-accent-dim:    rgba(124, 106, 247, 0.08);
@@ -1179,7 +1179,7 @@
   left: 0;
   right: 0;
   margin-bottom: 4px;
-  background: var(--background-primary-alt);
+  background: #0a0a0a;
   border: 1px solid var(--engram-border);
   border-radius: var(--engram-radius);
   overflow: hidden;
@@ -1206,7 +1206,7 @@
 
 .engram-mention-item:hover,
 .engram-mention-item.active {
-  background: color-mix(in srgb, var(--engram-accent) 10%, var(--background-primary-alt));
+  background: color-mix(in srgb, var(--engram-accent) 10%, #0a0a0a);
 }
 
 .engram-mention-name {
@@ -1231,7 +1231,7 @@
   left: 0;
   right: 0;
   margin-bottom: 4px;
-  background: var(--background-primary-alt);
+  background: #0a0a0a;
   border: 1px solid var(--engram-border);
   border-radius: var(--engram-radius);
   overflow: hidden;
@@ -1258,7 +1258,7 @@
 
 .engram-slash-item:hover,
 .engram-slash-item.active {
-  background: color-mix(in srgb, var(--engram-accent) 10%, var(--background-primary-alt));
+  background: color-mix(in srgb, var(--engram-accent) 10%, #0a0a0a);
 }
 
 .engram-slash-item-name {
@@ -1609,7 +1609,7 @@
 .engram-auto-attached-chip {
   font-size: 10.5px;
   padding: 2px 6px;
-  background-color: var(--background-secondary-alt);
+  background-color: #0a0a0a;
   color: var(--text-normal);
   border-radius: 4px;
   border: 1px solid var(--background-modifier-border);
@@ -1639,7 +1639,7 @@
   left: 0;
   right: 0;
   bottom: 0;
-  background: color-mix(in srgb, var(--background-primary) 92%, var(--engram-accent));
+  background: color-mix(in srgb, #000000 92%, var(--engram-accent));
   display: flex;
   align-items: center;
   justify-content: center;
