@@ -13,7 +13,7 @@
 /* ── Design Tokens ────────────────────────────────────────────────────────── */
 :root {
   --engram-bg:            #000000;
-  --engram-surface:       #0a0a0a;
+  --engram-surface:       #000000;
   --engram-border:        #1a1a1a;
   --engram-accent:        #7c6af7;
   --engram-accent-glow:   rgba(124, 106, 247, 0.15);
@@ -726,7 +726,7 @@
   resize: none;
   border: 1px solid var(--engram-border);
   border-radius: var(--engram-radius);
-  background: var(--engram-bg);
+  background: #000000 !important;
   color: var(--engram-text);
   font-family: var(--font-interface);
   font-size: 13px;
@@ -736,6 +736,12 @@
   transition: border-color var(--engram-transition), box-shadow var(--engram-transition);
   box-sizing: border-box;
   overflow-y: auto;
+}
+
+.engram-input:hover,
+.engram-input:focus,
+.engram-input:active {
+  background: #000000 !important;
 }
 
 .engram-input:focus {

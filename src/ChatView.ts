@@ -942,34 +942,8 @@ export class ChatView extends ItemView {
 
   private renderWelcome(): void {
     const welcome = this.messagesContainer.createDiv('engram-welcome');
-    welcome.createEl('div', { cls: 'engram-welcome-emoji', text: '🧠' });
     welcome.createEl('div', { cls: 'engram-welcome-title', text: 'Engram' });
     welcome.createEl('div', { cls: 'engram-welcome-subtitle', text: 'The AI that remembers you' });
-
-    const chips = welcome.createDiv('engram-welcome-chips');
-    const dynamicChips: string[] = [];
-
-    if (this.plugin.indexer.isReady) {
-      const topTags = this.plugin.indexer.getTopTags(3);
-      for (const tag of topTags) dynamicChips.push(`🔍 Search notes tagged ${tag}`);
-      const recent = this.plugin.indexer.getRecentNotes(2);
-      for (const note of recent) dynamicChips.push(`📖 Summarise ${note.title}`);
-    }
-
-    const examples = dynamicChips.length >= 3 ? dynamicChips : [
-      '💭 What are my main goals right now?',
-      '📔 Help me reflect on last week',
-      '🧩 What patterns do you see in my notes?',
-      '✏️ Help me write something',
-    ];
-
-    for (const ex of examples) {
-      const chip = chips.createEl('button', { cls: 'engram-example-chip', text: ex });
-      chip.addEventListener('click', () => {
-        this.inputArea.value = ex.replace(/^[^\s]+\s/, '').trim();
-        this.inputArea.focus();
-      });
-    }
   }
 
   private editMessage(idx: number): void {
