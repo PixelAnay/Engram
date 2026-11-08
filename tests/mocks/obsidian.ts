@@ -277,6 +277,9 @@ export class App {
     renameFile: async (file: TAbstractFile, newPath: string): Promise<void> => {
       await this.vault.rename(file, newPath);
     },
+    trashFile: async (file: TAbstractFile): Promise<void> => {
+      await this.vault.trash(file, false);
+    },
   };
   metadataCache = {
     getFileCache: (_f: TFile): null => null,

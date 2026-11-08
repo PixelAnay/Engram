@@ -11,7 +11,7 @@ export interface MigrationResult {
   changed: boolean;
 }
 
-const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v));
+const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
 
 /**
  * Turn whatever is stored in data.json into current settings.
@@ -20,8 +20,8 @@ const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v));
  */
 export function migrateSettings(stored: unknown, defaults: EngramSettings): MigrationResult {
   const messages: string[] = [];
-  const raw: Record<string, any> | null =
-    stored && typeof stored === 'object' ? { ...(stored as Record<string, any>) } : null;
+  const raw: Record<string, unknown> | null =
+    stored && typeof stored === 'object' ? { ...(stored as Record<string, unknown>) } : null;
 
   if (raw) {
     // Old LlamaPluginSettings format
@@ -43,7 +43,7 @@ export function migrateSettings(stored: unknown, defaults: EngramSettings): Migr
     if (raw.ollamaEmbedEndpoint && !raw.ollamaEmbedUrl) raw.ollamaEmbedUrl = raw.ollamaEmbedEndpoint;
   }
 
-  const settings = { ...clone(defaults), ...(raw ?? {}) } as EngramSettings;
+  const settings: EngramSettings = { ...clone(defaults), ...(raw ?? {}) };
 
   if (!Array.isArray(settings.personas) || settings.personas.length === 0) {
     settings.personas = clone(defaults.personas);

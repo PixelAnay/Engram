@@ -5,8 +5,6 @@
  * Intercepts keystrokes, shows a dropdown, and executes commands.
  */
 
-import type { MemoryManager } from '../memory/MemoryManager';
-
 export interface SlashCommand {
   name: string;       // e.g. "memory"
   label: string;      // e.g. "/memory"
@@ -201,10 +199,10 @@ export class SlashCommandHandler {
 
   private execute(cmd: SlashCommand): void {
     switch (cmd.name) {
-      case 'memory':  this.callbacks.onMemory();  break;
-      case 'forget':  this.callbacks.onForget();  break;
+      case 'memory':  void this.callbacks.onMemory();  break;
+      case 'forget':  void this.callbacks.onForget();  break;
       case 'persona': this.callbacks.onPersona(''); break;
-      case 'export':  this.callbacks.onExport();  break;
+      case 'export':  void this.callbacks.onExport();  break;
       case 'clear':   this.callbacks.onClear();   break;
       case 'scope':   this.callbacks.onScope();   break;
     }

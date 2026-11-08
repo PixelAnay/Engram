@@ -76,9 +76,9 @@ export class MentionAutocomplete {
     if (this.dropdownEl.style.display === 'none') return false;
 
     const items = Array.from(
-      this.dropdownEl.querySelectorAll('.engram-mention-item')
-    ) as HTMLElement[];
-    const active = this.dropdownEl.querySelector('.engram-mention-item.active') as HTMLElement | null;
+      this.dropdownEl.querySelectorAll<HTMLElement>('.engram-mention-item')
+    );
+    const active = this.dropdownEl.querySelector<HTMLElement>('.engram-mention-item.active');
     const idx = active ? items.indexOf(active) : -1;
 
     if (e.key === 'ArrowDown') {

@@ -9,23 +9,23 @@ export interface Debouncer {
 }
 
 export function createDebouncer(fn: () => void | Promise<void>, ms: number): Debouncer {
-  let timer: ReturnType<typeof setTimeout> | null = null;
+  let timer: number | null = null;
   const run = () => {
     timer = null;
     void fn();
   };
   return {
     call() {
-      if (timer !== null) clearTimeout(timer);
-      timer = setTimeout(run, ms);
+      if (timer !== null) window.clearTimeout(timer);
+      timer = window.setTimeout(run, ms);
     },
     flush() {
       if (timer === null) return;
-      clearTimeout(timer);
+      window.clearTimeout(timer);
       run();
     },
     cancel() {
-      if (timer !== null) clearTimeout(timer);
+      if (timer !== null) window.clearTimeout(timer);
       timer = null;
     },
   };

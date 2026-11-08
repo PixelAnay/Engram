@@ -60,7 +60,7 @@ export async function changeMemoryPath(
     if (!ok) return { status: 'cancelled' };
 
     await ensureParentFolders(app, newPath);
-    await app.fileManager.renameFile(oldFile as TFile, newPath);
+    await app.fileManager.renameFile(oldFile, newPath);
     settings.memoryPath = newPath;
     await dataStore.update(d => {
       const prev = d.memoryState as { lastEntryCount?: number } | undefined;

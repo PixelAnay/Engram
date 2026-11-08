@@ -1,4 +1,4 @@
-import { App, TFile } from 'obsidian';
+import { App, TFile, requestUrl, type RequestUrlResponse } from 'obsidian';
 import type { EngramSettings } from './types';
 import { isPathAllowed } from './utils/pathUtils';
 import { resolveOpenAIEmbedKey } from './utils/apiKeys';
@@ -31,6 +31,21 @@ export interface EmbeddingIndexData {
 }
 
 const EMBED_INDEX_VERSION = 1;
+const EMBED_TIMEOUT_MS = 15_000;
+const EMBED_TIMEOUT = 'EMBED_TIMEOUT';
+
+/** Shape of the JSON bodies returned by the Ollama / OpenAI-style embedding endpoints. */
+interface EmbedResponseBody {
+  embedding?: unknown;
+  data?: Array<{ embedding?: unknown }>;
+  error?: { message?: string } | string;
+}
+
+/** What toJSON() persists: the entries plus the settings they were built with. */
+export interface EmbeddingIndexSnapshot extends EmbeddingIndexData {
+  provider: string;
+  url: string;
+}
 
 // ── EmbeddingIndex ────────────────────────────────────────────────────────────
 
@@ -76,7 +91,7 @@ export class EmbeddingIndex {
   }
 
   /** Load saved index data on startup without calling any API */
-  load(savedData: EmbeddingIndexData | null): void {
+  load(savedData: Partial<EmbeddingIndexSnapshot> | null): void {
     const model = this.getEmbedModel();
     const provider = this.settings.embedProvider || 'none';
     const url = this.getEmbedUrl();
@@ -89,15 +104,16 @@ export class EmbeddingIndex {
       return;
     }
 
-    const saved = savedData as any;
+    const saved = savedData;
     if (
       saved &&
+      Array.isArray(saved.entries) &&
       saved.version === EMBED_INDEX_VERSION &&
       saved.model === model &&
       saved.provider === provider &&
       saved.url === url
     ) {
-      this.entries = saved.entries.filter((e: any) => isPathAllowed(e.path, this.settings));
+      this.entries = saved.entries.filter(e => isPathAllowed(e.path, this.settings));
       this.ready = true;
       this.activeModel = model;
       this.activeProvider = provider;
@@ -236,7 +252,7 @@ export class EmbeddingIndex {
   }
 
   /** Serialise for persistence */
-  toJSON(): any {
+  toJSON(): EmbeddingIndexSnapshot {
     return {
       version: EMBED_INDEX_VERSION,
       model: this.getEmbedModel(),
@@ -253,13 +269,12 @@ export class EmbeddingIndex {
     const model = this.getEmbedModel();
     if (provider === 'none' || !model) return null;
 
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 15_000);
+    let timer: number | undefined;
 
     try {
       let url = '';
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      let body: any = {};
+      let body: Record<string, unknown> = {};
 
       if (provider === 'ollama') {
         const base = (this.settings.ollamaEmbedUrl || 'http://localhost:11434').replace(/\/$/, '');
@@ -285,32 +300,34 @@ export class EmbeddingIndex {
         }
         body = { model, input: text };
       } else {
-        clearTimeout(timer);
         return null;
       }
 
-      let resp: Response;
+      // requestUrl has no abort signal, so the 15s limit is enforced by racing a timer.
+      const timeout = new Promise<never>((_, reject) => {
+        timer = window.setTimeout(() => reject(new Error(EMBED_TIMEOUT)), EMBED_TIMEOUT_MS);
+      });
+      let resp: RequestUrlResponse;
       try {
-        resp = await fetch(url, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify(body),
-          signal: ctrl.signal,
-        });
-      } catch (e: any) {
-        if (e.name === 'AbortError') {
+        resp = await Promise.race([
+          requestUrl({ url, method: 'POST', headers, body: JSON.stringify(body), throw: false }),
+          timeout,
+        ]);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (msg === EMBED_TIMEOUT) {
           throw new Error(`Connection timed out (15s) at ${url}. Check if the server is running.`);
         }
-        throw new Error(`Failed to connect to ${url}. Verify URL is correct and server is running. (${e.message || e})`);
+        throw new Error(`Failed to connect to ${url}. Verify URL is correct and server is running. (${msg})`);
       } finally {
-        clearTimeout(timer);
+        window.clearTimeout(timer);
       }
 
-      if (!resp.ok) {
+      if (resp.status < 200 || resp.status >= 300) {
         let errorMsg = `Server returned status ${resp.status}`;
         try {
-          const errData = await resp.json();
-          if (errData?.error?.message) {
+          const errData = resp.json as EmbedResponseBody | null;
+          if (errData && typeof errData.error === 'object' && errData.error.message) {
             errorMsg += `: ${errData.error.message}`;
           } else if (errData?.error) {
             errorMsg += `: ${JSON.stringify(errData.error)}`;
@@ -321,22 +338,23 @@ export class EmbeddingIndex {
         throw new Error(`API error: ${errorMsg}`);
       }
 
-      const data = await resp.json();
+      const data = resp.json as EmbedResponseBody | null;
 
       if (provider === 'ollama') {
-        if (!Array.isArray(data?.embedding)) {
+        const embedding = data?.embedding;
+        if (!Array.isArray(embedding)) {
           throw new Error("Invalid response format: 'embedding' field is missing or not an array.");
         }
-        return data.embedding;
+        return embedding as number[];
       } else {
         const embed = data?.data?.[0]?.embedding;
         if (!Array.isArray(embed)) {
           throw new Error("Invalid response format: 'data[0].embedding' field is missing or not an array.");
         }
-        return embed;
+        return embed as number[];
       }
     } catch (err) {
-      clearTimeout(timer);
+      window.clearTimeout(timer);
       console.error('[Engram] Error fetching embedding:', err);
       throw err;
     }

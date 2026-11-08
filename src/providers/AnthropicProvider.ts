@@ -49,6 +49,7 @@ interface AnthropicStreamEvent {
     type: string;
     text?: string;
     partial_json?: string;
+    stop_reason?: string;
   };
   content_block?: {
     type: string;
@@ -129,13 +130,13 @@ export class AnthropicProvider implements AIProvider {
       });
 
       if (res.status === 200) {
-        const ids = ((res.json as any)?.data ?? []).map((m: { id: string }) => m.id) as string[];
+        const ids = ((res.json as { data?: Array<{ id: string }> } | null)?.data ?? []).map(m => m.id);
         const reported = model || ids[0] || 'unknown';
         const found = !model || ids.length === 0 || ids.includes(model);
         return { ok: true, model: reported, latencyMs: Date.now() - start, modelFound: found };
       }
 
-      const errMsg = (res.json as any)?.error?.message || `HTTP ${res.status}`;
+      const errMsg = (res.json as { error?: { message?: string } } | null)?.error?.message || `HTTP ${res.status}`;
       throw new Error(errMsg);
     } catch (e) {
       throw new Error(`Anthropic connection failed: ${(e as Error).message}`);
@@ -258,7 +259,7 @@ export class AnthropicProvider implements AIProvider {
           if (payload === '[DONE]') break;
 
           try {
-            const event = JSON.parse(payload);
+            const event = JSON.parse(payload) as AnthropicStreamEvent;
             
             switch (event.type) {
               case 'content_block_start':
@@ -289,8 +290,8 @@ export class AnthropicProvider implements AIProvider {
                 break;
 
               case 'message_delta':
-                if ((event as any).delta?.stop_reason) {
-                  finishReason = (event as any).delta.stop_reason;
+                if (event.delta?.stop_reason) {
+                  finishReason = event.delta.stop_reason;
                 }
                 break;
 
@@ -312,7 +313,7 @@ export class AnthropicProvider implements AIProvider {
     } finally {
       if (reader) {
         try {
-          reader.cancel();
+          reader.cancel().catch(() => { /* ignored */ });
         } catch {
           // Ignored
         }
@@ -360,7 +361,7 @@ export class AnthropicProvider implements AIProvider {
           if (typeof last.content === 'string') {
             last.content = [{ type: 'text', text: last.content }, toolResult];
           } else {
-            (last.content as AnthropicContentBlock[]).push(toolResult);
+            last.content.push(toolResult);
           }
         } else {
           result.push({ role: 'user', content: [toolResult] });

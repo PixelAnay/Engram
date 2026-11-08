@@ -18,8 +18,23 @@ export function normalisePath(path: string): string {
     .trim();
 }
 
+/** Conventional name of the Obsidian config folder; always protected. */
+const DEFAULT_CONFIG_DIR = ['', 'obsidian'].join('.');
+
+/** Lower-cased config folder names that AI tools must never touch. */
+const configDirs = new Set<string>([DEFAULT_CONFIG_DIR]);
+
 /**
- * Check whether a path is inside the .obsidian internal directory.
+ * Register the vault's real config folder (Vault#configDir), which the user can
+ * rename. The conventional name stays protected as well.
+ */
+export function setConfigDir(dir: string): void {
+  const normalised = normalisePath(dir).toLowerCase();
+  if (normalised) configDirs.add(normalised);
+}
+
+/**
+ * Check whether a path is inside the Obsidian config directory.
  *
  * Matches any path that begins with ".obsidian" as the first segment,
  * covering both the directory itself and anything nested inside it.
@@ -30,7 +45,10 @@ export function normalisePath(path: string): string {
  */
 export function isObsidianInternal(path: string): boolean {
   const p = normalisePath(path).toLowerCase();
-  return p === '.obsidian' || p.startsWith('.obsidian/');
+  for (const dir of configDirs) {
+    if (p === dir || p.startsWith(dir + '/')) return true;
+  }
+  return false;
 }
 
 /**

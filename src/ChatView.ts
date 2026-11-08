@@ -3,7 +3,7 @@
  * Slim orchestrator wiring all sub-components.
  */
 
-import { ItemView, WorkspaceLeaf, Notice, setIcon } from 'obsidian';
+import { ItemView, WorkspaceLeaf, Notice, setIcon, TFile } from 'obsidian';
 import type EngramPlugin from './main';
 import type { ChatMessage, StreamChunk, MessageContentPart } from './types';
 import { SessionManager } from './chat/SessionManager';
@@ -77,14 +77,14 @@ export class ChatView extends ItemView {
       this.app,
       this.messagesContainer,
       this,
-      (content) => navigator.clipboard.writeText(content),
+      (content) => { void navigator.clipboard.writeText(content); },
       (idx) => this.editMessage(idx),
-      (idx) => this.regenerateMessage(idx),
-      (path) => this.openNotes([path]),
+      (idx) => { void this.regenerateMessage(idx); },
+      (path) => { void this.openNotes([path]); },
       this.plugin.indexer
     );
 
-    this.plugin.toolExecutor.onOpenNotes = (paths: string[]) => this.openNotes(paths);
+    this.plugin.toolExecutor.onOpenNotes = (paths: string[]) => { void this.openNotes(paths); };
 
     // Slash commands
     this.slashCommandHandler = new SlashCommandHandler(
@@ -189,11 +189,11 @@ export class ChatView extends ItemView {
 
     const refreshBtn = headerActions.createEl('button', { cls: 'engram-icon-btn', title: 'Check connection' });
     setIcon(refreshBtn, 'refresh-cw');
-    refreshBtn.addEventListener('click', () => this.checkConnection());
+    refreshBtn.addEventListener('click', () => { void this.checkConnection(); });
 
     const memoryBtn = headerActions.createEl('button', { cls: 'engram-icon-btn', title: 'Open memory file' });
     setIcon(memoryBtn, 'book-open');
-    memoryBtn.addEventListener('click', () => this.plugin.openMemoryFile());
+    memoryBtn.addEventListener('click', () => { void this.plugin.openMemoryFile(); });
 
     const undoBtn = headerActions.createEl('button', { cls: 'engram-icon-btn', title: 'Undo last AI edit' });
     setIcon(undoBtn, 'rotate-ccw');
@@ -202,8 +202,12 @@ export class ChatView extends ItemView {
     const settingsBtn = headerActions.createEl('button', { cls: 'engram-icon-btn', title: 'Settings' });
     setIcon(settingsBtn, 'settings');
     settingsBtn.addEventListener('click', () => {
-      (this.app as any).setting?.open();
-      (this.app as any).setting?.openTabById('engram-chat');
+      // app.setting is not part of the public typings
+      const setting = (this.app as unknown as {
+        setting?: { open(): void; openTabById(id: string): void };
+      }).setting;
+      setting?.open();
+      setting?.openTabById('engram-chat');
     });
 
     // Context status + memory toast
@@ -239,12 +243,12 @@ export class ChatView extends ItemView {
       if (this.mentionAutocomplete?.handleKeydown(e)) return;
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
-        if (!this.isStreaming) this.sendMessage();
+        if (!this.isStreaming) void this.sendMessage();
       }
     });
 
     this.inputArea.addEventListener('blur', () => {
-      setTimeout(() => {
+      window.setTimeout(() => {
         this.mentionAutocomplete?.hide();
         this.slashCommandHandler?.hide();
       }, 200);
@@ -269,20 +273,23 @@ export class ChatView extends ItemView {
       attr: { type: 'file', multiple: 'true', style: 'display:none' },
     });
     attachBtn.addEventListener('click', () => this.attachInput.click());
-    this.attachInput.addEventListener('change', async (e: Event) => {
-      const files = (e.target as HTMLInputElement).files;
+    this.attachInput.addEventListener('change', (e: Event) => {
+      const input = e.target as HTMLInputElement;
+      const files = input.files;
       if (!files) return;
-      const newAtts = await this.attachmentHandler.processFiles(files);
-      this.pendingAttachments.push(...newAtts);
-      this.renderAttachmentPreviews();
-      (e.target as HTMLInputElement).value = '';
+      void (async () => {
+        const newAtts = await this.attachmentHandler.processFiles(files);
+        this.pendingAttachments.push(...newAtts);
+        this.renderAttachmentPreviews();
+        input.value = '';
+      })();
     });
 
     btnGroup.createDiv('engram-btn-spacer');
 
     this.sendBtn = btnGroup.createEl('button', { cls: 'engram-send-btn', text: 'Send' });
     setIcon(this.sendBtn, 'send');
-    this.sendBtn.addEventListener('click', () => this.sendMessage());
+    this.sendBtn.addEventListener('click', () => { void this.sendMessage(); });
 
     this.stopBtn = btnGroup.createEl('button', { cls: 'engram-stop-btn', text: 'Stop' });
     setIcon(this.stopBtn, 'square');
@@ -299,7 +306,7 @@ export class ChatView extends ItemView {
 
     this.permBadge = footer.createSpan('engram-perm-badge');
     this.updatePermBadge();
-    this.permBadge.addEventListener('click', async () => {
+    this.permBadge.addEventListener('click', () => { void (async () => {
       const current = this.plugin.settings.editPermission;
       let next: 'read_only' | 'read_append' | 'full_edit';
       if (current === 'read_only') {
@@ -319,7 +326,7 @@ export class ChatView extends ItemView {
       };
       new Notice(`Permission set to: ${names[next]}`);
       this.updatePermBadge();
-    });
+    })(); });
 
     this.tokenBudgetBar = new TokenBudgetBar(footer, this.plugin.settings.contextWindowTokens);
 
@@ -345,17 +352,19 @@ export class ChatView extends ItemView {
       }
     });
 
-    root.addEventListener('drop', async (e: DragEvent) => {
+    root.addEventListener('drop', (e: DragEvent) => {
       e.preventDefault();
       dragCounter = 0;
       root.removeClass('drag-over');
       const files = e.dataTransfer?.files;
       if (files && files.length > 0) {
-        const newAtts = await this.attachmentHandler.processFiles(files);
-        if (newAtts.length > 0) {
-          this.pendingAttachments.push(...newAtts);
-          this.renderAttachmentPreviews();
-        }
+        void (async () => {
+          const newAtts = await this.attachmentHandler.processFiles(files);
+          if (newAtts.length > 0) {
+            this.pendingAttachments.push(...newAtts);
+            this.renderAttachmentPreviews();
+          }
+        })();
       }
     });
   }
@@ -492,7 +501,7 @@ export class ChatView extends ItemView {
     const session = this.sessionManager.currentSession;
     const title = session?.title ?? 'Select chat…';
     
-    const textSpan = this.chatSelectBtn.createSpan({ text: title, cls: 'engram-chat-select-btn-text' });
+    this.chatSelectBtn.createSpan({ text: title, cls: 'engram-chat-select-btn-text' });
     const iconSpan = this.chatSelectBtn.createSpan({ cls: 'engram-chat-select-btn-icon' });
     setIcon(iconSpan, 'chevron-down');
 
@@ -520,8 +529,8 @@ export class ChatView extends ItemView {
     let historyContent: string | MessageContentPart[] = text;
 
     if (attachmentsForSend.length > 0) {
-      apiContent = AttachmentHandler.buildContentParts(text, attachmentsForSend, false) as MessageContentPart[];
-      historyContent = AttachmentHandler.buildContentParts(text, attachmentsForSend, true) as MessageContentPart[];
+      apiContent = AttachmentHandler.buildContentParts(text, attachmentsForSend, false);
+      historyContent = AttachmentHandler.buildContentParts(text, attachmentsForSend, true);
     }
 
     const userDisplayMsg: DisplayMessage = { role: 'user', content: text, attachments: attachmentsForSend };
@@ -593,7 +602,7 @@ export class ChatView extends ItemView {
           this.messageRenderer.patchStreamingContent(assistantDisplay);
         } else if (chunk.type === 'error' && chunk.error) {
           assistantDisplay.content = chunk.error;
-          (assistantDisplay as any).role = 'error';
+          assistantDisplay.role = 'error';
           assistantDisplay.streaming = false;
           this.messageRenderer.finalizeStreamingBubble(assistantDisplay);
         } else if (chunk.type === 'done') {
@@ -612,7 +621,7 @@ export class ChatView extends ItemView {
       } catch (e) {
         turnFailed = true;
         assistantDisplay.content = `Error: ${(e as Error).message}`;
-        (assistantDisplay as any).role = 'error';
+        assistantDisplay.role = 'error';
         assistantDisplay.streaming = false;
         this.messageRenderer.finalizeStreamingBubble(assistantDisplay);
       }
@@ -643,7 +652,7 @@ export class ChatView extends ItemView {
 
     // Auto memory extraction (silent, non-blocking)
     if (this.plugin.settings.memoryEnabled && this.plugin.settings.autoExtractMemory) {
-      this.plugin.memoryExtractor.extractAndSave(
+      void this.plugin.memoryExtractor.extractAndSave(
         this.messages.slice(-6),
         (count) => {
           if (count > 0) this.showMemoryToast(count);
@@ -686,7 +695,7 @@ export class ChatView extends ItemView {
   private showMemoryToast(count: number): void {
     this.memoryToast.textContent = `🧠 Saved ${count} fact${count > 1 ? 's' : ''} to memory`;
     this.memoryToast.setCssStyles({ display: 'block' });
-    setTimeout(() => { this.memoryToast.setCssStyles({ display: 'none' }); }, 3000);
+    window.setTimeout(() => { this.memoryToast.setCssStyles({ display: 'none' }); }, 3000);
   }
 
 
@@ -696,33 +705,26 @@ export class ChatView extends ItemView {
     const document = activeDocument;
     document.querySelectorAll('.engram-chat-overlay').forEach(el => el.remove());
 
-    const overlay = document.createElement('div');
-    overlay.className = 'engram-modal-overlay engram-chat-overlay';
+    const overlay = createDiv({ cls: 'engram-modal-overlay engram-chat-overlay' });
 
-    const panel = overlay.appendChild(document.createElement('div'));
-    panel.className = 'engram-modal';
+    const panel = overlay.createDiv({ cls: 'engram-modal' });
 
-    const title = panel.appendChild(document.createElement('div'));
-    title.className = 'engram-modal-title';
+    const title = panel.createDiv({ cls: 'engram-modal-title' });
     title.textContent = '💬 Switch Chat';
 
-    const sub = panel.appendChild(document.createElement('div'));
-    sub.className = 'engram-modal-subtitle';
+    const sub = panel.createDiv({ cls: 'engram-modal-subtitle' });
     sub.textContent = 'Select, rename, or delete conversation history.';
 
-    const list = panel.appendChild(document.createElement('div'));
-    list.className = 'engram-chat-list';
+    const list = panel.createDiv({ cls: 'engram-chat-list' });
 
     for (const session of this.sessionManager.allSessions) {
-      const item = list.appendChild(document.createElement('div'));
-      item.className = 'engram-chat-item';
+      const item = list.createDiv({ cls: 'engram-chat-item' });
       if (session.id === this.sessionManager.currentId) {
         item.addClass('is-active');
         item.setCssStyles({ borderColor: 'var(--color-accent)' });
       }
 
-      const name = item.appendChild(document.createElement('span'));
-      name.className = 'engram-chat-desc';
+      const name = item.createSpan({ cls: 'engram-chat-desc' });
       name.textContent = session.title;
       
       name.addEventListener('click', (e) => {
@@ -731,11 +733,9 @@ export class ChatView extends ItemView {
         overlay.remove();
       });
 
-      const actions = item.appendChild(document.createElement('div'));
-      actions.className = 'engram-chat-item-actions';
+      const actions = item.createDiv({ cls: 'engram-chat-item-actions' });
 
-      const renameBtn = actions.appendChild(document.createElement('button'));
-      renameBtn.className = 'engram-chat-item-btn';
+      const renameBtn = actions.createEl('button', { cls: 'engram-chat-item-btn' });
       renameBtn.title = 'Rename chat';
       setIcon(renameBtn, 'pencil');
       
@@ -755,7 +755,7 @@ export class ChatView extends ItemView {
         input.select();
         
         let saved = false;
-        const saveRename = async () => {
+        const saveRename = () => {
           if (saved) return;
           saved = true;
           const newTitle = input.value.trim();
@@ -782,38 +782,38 @@ export class ChatView extends ItemView {
         input.addEventListener('blur', saveRename);
       });
 
-      const deleteBtn = actions.appendChild(document.createElement('button'));
-      deleteBtn.className = 'engram-chat-item-btn is-danger';
+      const deleteBtn = actions.createEl('button', { cls: 'engram-chat-item-btn is-danger' });
       deleteBtn.title = 'Delete chat';
       setIcon(deleteBtn, 'trash-2');
-      deleteBtn.addEventListener('click', async (e) => {
+      deleteBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        const confirmed = await showConfirmDialog(this.app, {
-          title: 'Delete Chat',
-          message: `Are you sure you want to delete chat "${session.title}"?`,
-          confirmLabel: 'Delete',
-          cancelLabel: 'Cancel',
-          danger: true,
-        });
-        if (confirmed) {
-          const next = this.sessionManager.delete(session.id);
-          // Only reload the conversation if the ACTIVE chat was the one deleted
-          if (next) {
-            this.messages = [...next.messages];
-            this.displayMessages = MessageRenderer.buildDisplayMessages(this.messages);
-            this.pendingAttachments = [];
-            this.renderMessages();
-            this.updateTokenBar();
-          }
-          this.refreshSessionControls();
+        void (async () => {
+          const confirmed = await showConfirmDialog(this.app, {
+            title: 'Delete Chat',
+            message: `Are you sure you want to delete chat "${session.title}"?`,
+            confirmLabel: 'Delete',
+            cancelLabel: 'Cancel',
+            danger: true,
+          });
+          if (confirmed) {
+            const next = this.sessionManager.delete(session.id);
+            // Only reload the conversation if the ACTIVE chat was the one deleted
+            if (next) {
+              this.messages = [...next.messages];
+              this.displayMessages = MessageRenderer.buildDisplayMessages(this.messages);
+              this.pendingAttachments = [];
+              this.renderMessages();
+              this.updateTokenBar();
+            }
+            this.refreshSessionControls();
 
-          this.showChatSwitcher();
-        }
+            this.showChatSwitcher();
+          }
+        })();
       });
     }
 
-    const closeBtn = panel.appendChild(document.createElement('button'));
-    closeBtn.className = 'engram-modal-cancel';
+    const closeBtn = panel.createEl('button', { cls: 'engram-modal-cancel' });
     closeBtn.textContent = 'Close';
     closeBtn.setCssStyles({ marginTop: '8px' });
     closeBtn.addEventListener('click', () => overlay.remove());
@@ -828,49 +828,42 @@ export class ChatView extends ItemView {
     const document = activeDocument;
     document.querySelectorAll('.engram-persona-overlay').forEach(el => el.remove());
 
-    const overlay = document.createElement('div');
-    overlay.className = 'engram-modal-overlay engram-persona-overlay';
+    const overlay = createDiv({ cls: 'engram-modal-overlay engram-persona-overlay' });
 
-    const panel = overlay.appendChild(document.createElement('div'));
-    panel.className = 'engram-modal';
+    const panel = overlay.createDiv({ cls: 'engram-modal' });
 
-    const title = panel.appendChild(document.createElement('div'));
-    title.className = 'engram-modal-title';
+    const title = panel.createDiv({ cls: 'engram-modal-title' });
     title.textContent = '🎭 Switch Persona';
 
-    const sub = panel.appendChild(document.createElement('div'));
-    sub.className = 'engram-modal-subtitle';
+    const sub = panel.createDiv({ cls: 'engram-modal-subtitle' });
     sub.textContent = 'Takes effect from the next message.';
 
-    const list = panel.appendChild(document.createElement('div'));
-    list.className = 'engram-undo-list';
+    const list = panel.createDiv({ cls: 'engram-undo-list' });
 
     for (const persona of this.plugin.settings.personas) {
-      const item = list.appendChild(document.createElement('div'));
-      item.className = 'engram-undo-item';
+      const item = list.createDiv({ cls: 'engram-undo-item' });
       if (persona.id === this.plugin.settings.activePersonaId) item.setCssStyles({ borderColor: 'var(--color-accent)' });
 
-      const name = item.appendChild(document.createElement('span'));
-      name.className = 'engram-undo-desc';
+      const name = item.createSpan({ cls: 'engram-undo-desc' });
       name.textContent = persona.name;
 
       if (persona.id === this.plugin.settings.activePersonaId) {
-        const active = item.appendChild(document.createElement('span'));
-        active.className = 'engram-undo-time';
+        const active = item.createSpan({ cls: 'engram-undo-time' });
         active.textContent = 'active';
       }
 
-      item.addEventListener('click', async () => {
-        this.plugin.settings.activePersonaId = persona.id;
-        await this.plugin.saveSettings();
-        this.updatePersonaBadge();
-        overlay.remove();
-        new Notice(`🎭 Persona: ${persona.name}`);
+      item.addEventListener('click', () => {
+        void (async () => {
+          this.plugin.settings.activePersonaId = persona.id;
+          await this.plugin.saveSettings();
+          this.updatePersonaBadge();
+          overlay.remove();
+          new Notice(`🎭 Persona: ${persona.name}`);
+        })();
       });
     }
 
-    const closeBtn = panel.appendChild(document.createElement('button'));
-    closeBtn.className = 'engram-modal-cancel';
+    const closeBtn = panel.createEl('button', { cls: 'engram-modal-cancel' });
     closeBtn.textContent = 'Close';
     closeBtn.setCssStyles({ marginTop: '8px' });
     closeBtn.addEventListener('click', () => overlay.remove());
@@ -926,46 +919,39 @@ export class ChatView extends ItemView {
     if (history.length === 0) { new Notice('Nothing to undo'); return; }
 
     document.querySelectorAll('.engram-undo-panel-overlay').forEach(el => el.remove());
-    const overlay = document.createElement('div');
-    overlay.className = 'engram-modal-overlay engram-undo-panel-overlay';
+    const overlay = createDiv({ cls: 'engram-modal-overlay engram-undo-panel-overlay' });
 
-    const panel = overlay.appendChild(document.createElement('div'));
-    panel.className = 'engram-modal engram-undo-panel';
+    const panel = overlay.createDiv({ cls: 'engram-modal engram-undo-panel' });
 
-    const title = panel.appendChild(document.createElement('div'));
-    title.className = 'engram-modal-title';
+    const title = panel.createDiv({ cls: 'engram-modal-title' });
     title.textContent = '↩️ Undo History';
 
-    const sub = panel.appendChild(document.createElement('div'));
-    sub.className = 'engram-modal-subtitle';
+    const sub = panel.createDiv({ cls: 'engram-modal-subtitle' });
     sub.textContent = 'Click an entry to undo that operation.';
 
-    const list = panel.appendChild(document.createElement('div'));
-    list.className = 'engram-undo-list';
+    const list = panel.createDiv({ cls: 'engram-undo-list' });
 
     [...history].reverse().forEach((entry, ri) => {
       const actualIdx = history.length - 1 - ri;
-      const item = list.appendChild(document.createElement('div'));
-      item.className = 'engram-undo-item';
+      const item = list.createDiv({ cls: 'engram-undo-item' });
 
-      const desc = item.appendChild(document.createElement('span'));
-      desc.className = 'engram-undo-desc';
+      const desc = item.createSpan({ cls: 'engram-undo-desc' });
       desc.textContent = entry.description;
 
-      const time = item.appendChild(document.createElement('span'));
-      time.className = 'engram-undo-time';
+      const time = item.createSpan({ cls: 'engram-undo-time' });
       const ago = Math.round((Date.now() - entry.timestamp) / 1000);
       time.textContent = ago < 60 ? `${ago}s ago` : `${Math.round(ago / 60)}m ago`;
 
-      item.addEventListener('click', async () => {
+      item.addEventListener('click', () => {
         overlay.remove();
-        const path = await this.plugin.toolExecutor.undoAt(actualIdx);
-        new Notice(path ? `↩️ Undid: "${entry.description}"` : 'Could not undo');
+        void (async () => {
+          const path = await this.plugin.toolExecutor.undoAt(actualIdx);
+          new Notice(path ? `↩️ Undid: "${entry.description}"` : 'Could not undo');
+        })();
       });
     });
 
-    const closeBtn = panel.appendChild(document.createElement('button'));
-    closeBtn.className = 'engram-modal-cancel';
+    const closeBtn = panel.createEl('button', { cls: 'engram-modal-cancel' });
     closeBtn.textContent = 'Close';
     closeBtn.setCssStyles({ marginTop: '8px' });
     closeBtn.addEventListener('click', () => overlay.remove());
@@ -988,8 +974,8 @@ export class ChatView extends ItemView {
 
   private renderWelcome(): void {
     const welcome = this.messagesContainer.createDiv('engram-welcome');
-    welcome.createEl('div', { cls: 'engram-welcome-title', text: 'Engram' });
-    welcome.createEl('div', { cls: 'engram-welcome-subtitle', text: 'The AI that remembers you' });
+    welcome.createDiv({ cls: 'engram-welcome-title', text: 'Engram' });
+    welcome.createDiv({ cls: 'engram-welcome-subtitle', text: 'The AI that remembers you' });
   }
 
   private editMessage(msg: DisplayMessage): void {
@@ -1052,7 +1038,7 @@ export class ChatView extends ItemView {
   private async openNotes(paths: string[]): Promise<void> {
     for (let i = 0; i < paths.length; i++) {
       const file = this.app.vault.getAbstractFileByPath(paths[i]);
-      if (file) await this.app.workspace.getLeaf('tab').openFile(file as any, { active: i === 0 });
+      if (file instanceof TFile) await this.app.workspace.getLeaf('tab').openFile(file, { active: i === 0 });
     }
   }
 
@@ -1109,7 +1095,7 @@ export class ChatView extends ItemView {
   }
 
   private scrollToBottom(): void {
-    requestAnimationFrame(() => {
+    window.requestAnimationFrame(() => {
       this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
     });
   }

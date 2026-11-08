@@ -120,7 +120,7 @@ export class MemoryManager {
     };
     const nextOp = this.writeQueue.then(run, run);
     this.writeQueue = nextOp.catch(() => {});
-    return nextOp as Promise<T>;
+    return nextOp;
   }
 
   // ── Read ──────────────────────────────────────────────────────────────────
@@ -196,12 +196,12 @@ export class MemoryManager {
   /** Facts waiting for the memory file to reappear. */
   get pendingFacts(): string[] {
     const p = this.dataStore.get().pendingMemoryFacts;
-    return Array.isArray(p) ? [...p] : [];
+    return Array.isArray(p) ? [...(p as string[])] : [];
   }
 
   private async queuePending(facts: string[]): Promise<void> {
     await this.dataStore.update(d => {
-      const cur: string[] = Array.isArray(d.pendingMemoryFacts) ? d.pendingMemoryFacts : [];
+      const cur: string[] = Array.isArray(d.pendingMemoryFacts) ? (d.pendingMemoryFacts as string[]) : [];
       d.pendingMemoryFacts = [...cur, ...facts];
     });
   }
@@ -216,10 +216,10 @@ export class MemoryManager {
     return this.enqueue(async () => {
       try {
         const normalized = facts.map(normalizeFact).filter(Boolean);
-        if (normalized.length === 0) return { status: 'noop' } as AddResult;
+        if (normalized.length === 0) return { status: 'noop' };
         return await this.addInternal(normalized);
       } catch (e) {
-        return { status: 'failed', message: (e as Error).message } as AddResult;
+        return { status: 'failed', message: (e as Error).message };
       }
     });
   }
@@ -253,7 +253,7 @@ export class MemoryManager {
   update(id: string, fact: string): Promise<MemoryOpResult> {
     return this.enqueue(async () => {
       const normalized = normalizeFact(fact);
-      if (!id || !normalized) return { ok: false, reason: 'invalid' } as MemoryOpResult;
+      if (!id || !normalized) return { ok: false, reason: 'invalid' };
       return this.editExisting({ type: 'update', id }, text => {
         const out = updateEntry(text, id, normalized);
         return out === null ? null : { text: out };
@@ -264,7 +264,7 @@ export class MemoryManager {
   /** Remove exactly one entry. */
   remove(id: string): Promise<MemoryOpResult> {
     return this.enqueue(async () => {
-      if (!id) return { ok: false, reason: 'invalid' } as MemoryOpResult;
+      if (!id) return { ok: false, reason: 'invalid' };
       return this.editExisting({ type: 'remove', id }, text => {
         const out = removeEntry(text, id);
         return out === null ? null : { text: out };
@@ -516,7 +516,7 @@ export class MemoryManager {
    * backed up first. Creates the file if it is missing.
    */
   restoreBackup(backupPath: string): Promise<MemoryOpResult> {
-    return this.enqueue(async () => {
+    return this.enqueue<MemoryOpResult>(async () => {
       try {
         const content = await this.app.vault.adapter.read(backupPath);
         const file = this.getFile();
@@ -528,9 +528,9 @@ export class MemoryManager {
           await this.app.vault.create(this.memoryPath, content);
         }
         await this.saveState({ everExisted: true, lastEntryCount: parseEntries(content).length });
-        return { ok: true } as MemoryOpResult;
+        return { ok: true };
       } catch (e) {
-        return { ok: false, reason: 'error', message: (e as Error).message } as MemoryOpResult;
+        return { ok: false, reason: 'error', message: (e as Error).message };
       }
     }).then(async res => {
       if (res.ok) await this.flushPending();

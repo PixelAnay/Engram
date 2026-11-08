@@ -7,11 +7,11 @@
  */
 
 export interface DataPersistence {
-  loadData(): Promise<any>;
-  saveData(data: any): Promise<void>;
+  loadData(): Promise<unknown>;
+  saveData(data: unknown): Promise<void>;
 }
 
-export type PluginData = Record<string, any>;
+export type PluginData = Record<string, unknown>;
 
 export class PluginDataStore {
   private data: PluginData = {};
@@ -22,7 +22,7 @@ export class PluginDataStore {
   /** Read data.json from disk into memory. Call once at startup. */
   async load(): Promise<void> {
     const loaded = await this.persistence.loadData();
-    this.data = loaded && typeof loaded === 'object' ? loaded : {};
+    this.data = loaded && typeof loaded === 'object' ? (loaded as PluginData) : {};
   }
 
   /** Current in-memory data. Treat as read-only; change it through update(). */

@@ -59,7 +59,7 @@ export class ChatHistoryStore {
         let raw = '';
         try {
           raw = await this.app.vault.read(child);
-          const parsed = JSON.parse(raw);
+          const parsed: unknown = JSON.parse(raw);
           const session = this.deserialize(parsed);
           if (session) {
             sessions.push(session);
@@ -71,14 +71,13 @@ export class ChatHistoryStore {
           const bakFile = this.app.vault.getAbstractFileByPath(bakPath);
           if (bakFile instanceof TFile) {
             raw = await this.app.vault.read(bakFile);
-            const parsed = JSON.parse(raw);
+            const parsed: unknown = JSON.parse(raw);
             const session = this.deserialize(parsed);
             if (session) {
               sessions.push(session);
               // Restore backup to primary location
               this.tracker?.mark(child.path);
               await this.app.vault.modify(child, raw);
-              console.info(`[Engram] Successfully recovered session from backup for "${child.path}"`);
               continue;
             }
           }
@@ -114,7 +113,7 @@ export class ChatHistoryStore {
 
           // Preserve original session createdAt timestamp if available (H-27)
           try {
-            const parsed = JSON.parse(current);
+            const parsed = JSON.parse(current) as { createdAt?: unknown } | null;
             if (parsed && typeof parsed.createdAt === 'number') {
               session.createdAt = Math.min(session.createdAt, parsed.createdAt);
             }
@@ -144,17 +143,15 @@ export class ChatHistoryStore {
   }
 
   /**
-   * Delete the vault file for a session.
-   * @param force  When true (default for UI-triggered deletes), permanently removes
-   *               the file instead of moving it to OS trash. This keeps the folder
-   *               contents in sync with what the plugin's UI shows.
+   * Delete the vault file for a session, following the user's file deletion
+   * preference (system trash, Obsidian trash or permanent delete).
    */
-  async delete(id: string, force = false): Promise<void> {
+  async delete(id: string): Promise<void> {
     const filePath = this.sessionPath(id);
     const file = this.app.vault.getAbstractFileByPath(filePath);
     if (file instanceof TFile) {
       this.tracker?.mark(filePath);
-      await this.app.vault.delete(file, force);
+      await this.app.fileManager.trashFile(file);
     }
   }
 
@@ -218,7 +215,7 @@ export class ChatHistoryStore {
       if (child.name.endsWith('.json.bak')) {
         const bakNew = normalizePath(`${this.folderPath}/${child.name}`);
         try {
-          if (this.app.vault.getAbstractFileByPath(bakNew)) await this.app.vault.delete(child, true);
+          if (this.app.vault.getAbstractFileByPath(bakNew)) await this.app.fileManager.trashFile(child);
           else await this.app.vault.rename(child, bakNew);
         } catch (e) {
           console.warn(`[Engram] migrateFrom: could not move "${child.path}":`, e);
@@ -228,12 +225,11 @@ export class ChatHistoryStore {
 
       if (child.extension !== 'json') continue;
       try {
-        const content = await this.app.vault.read(child);
         const newPath = normalizePath(`${this.folderPath}/${child.name}`);
         const existing = this.app.vault.getAbstractFileByPath(newPath);
         if (existing instanceof TFile) {
           // Already exists in new location — skip to avoid overwriting newer data
-          await this.app.vault.delete(child, true);
+          await this.app.fileManager.trashFile(child);
         } else {
           this.tracker?.mark(newPath);
           await this.app.vault.rename(child, newPath);
@@ -248,7 +244,7 @@ export class ChatHistoryStore {
     try {
       const refreshed = this.app.vault.getAbstractFileByPath(normOld);
       if (refreshed instanceof TFolder && refreshed.children.length === 0) {
-        await this.app.vault.delete(refreshed, true);
+        await this.app.fileManager.trashFile(refreshed);
       }
     } catch { /* best-effort */ }
 
@@ -293,12 +289,14 @@ export class ChatHistoryStore {
    * Deserialize and validate a raw parsed object into a `ChatSession`.
    * Returns null if the shape is invalid.
    */
-  private deserialize(raw: any): ChatSession | null {
+  private deserialize(input: unknown): ChatSession | null {
+    const raw = input as Record<string, unknown> | null;
     if (!raw || typeof raw.id !== 'string' || !Array.isArray(raw.messages)) return null;
 
     // Validate and sanitize the messages structure to filter out nulls/malformed shapes (M-10)
     const sanitizedMessages: ChatMessage[] = [];
-    for (const msg of raw.messages) {
+    for (const entry of raw.messages as unknown[]) {
+      const msg = entry as Partial<ChatMessage> | null;
       if (
         msg &&
         typeof msg === 'object' &&

@@ -1,6 +1,6 @@
-import { App, PluginSettingTab, Setting, Notice, TFolder } from 'obsidian';
-import type { EngramSettings } from './types';
-import { normalisePath } from './utils/pathUtils';
+import { App, PluginSettingTab, Setting, Notice, TFolder, type DropdownComponent } from 'obsidian';
+import type { EngramSettings, ProviderType } from './types';
+import type EngramPlugin from './main';
 import { showPromptDialog, showConfirmDialog } from './ui/ConfirmDialog';
 import { createDebouncer } from './utils/debounce';
 import { commitOnBlurOrEnter } from './utils/commitField';
@@ -10,7 +10,14 @@ import { getProviderApiKey, setProviderApiKey } from './utils/apiKeys';
 
 // ── Provider Presets ────────────────────────────────────────────────────────
 
-export const PROVIDER_PRESETS = [
+export const PROVIDER_PRESETS: Array<{
+  id: string;
+  label: string;
+  type: ProviderType;
+  baseUrl: string;
+  isLocal: boolean;
+  defaultModel: string;
+}> = [
   { id: 'local_llamacpp',  label: 'Local — llama.cpp',       type: 'openai_compat', baseUrl: 'http://localhost:8080',                                       isLocal: true,  defaultModel: '' },
   { id: 'local_ollama',    label: 'Local — Ollama',           type: 'openai_compat', baseUrl: 'http://localhost:11434/v1',                                   isLocal: true,  defaultModel: 'llama3' },
   { id: 'local_lmstudio',  label: 'Local — LM Studio',        type: 'openai_compat', baseUrl: 'http://localhost:1234/v1',                                    isLocal: true,  defaultModel: '' },
@@ -126,10 +133,9 @@ export const DEFAULT_SETTINGS: EngramSettings = {
 // ── Settings Tab ────────────────────────────────────────────────────────────
 
 export class EngramSettingTab extends PluginSettingTab {
-  // Using `any` to avoid circular import with main.ts
-  plugin: any;
+  plugin: EngramPlugin;
 
-  constructor(app: App, plugin: any) {
+  constructor(app: App, plugin: EngramPlugin) {
     super(app, plugin);
     this.plugin = plugin;
   }
@@ -160,7 +166,7 @@ export class EngramSettingTab extends PluginSettingTab {
 
     new Setting(containerEl).setName('🧠 Engram').setHeading();
 
-    const advancedSetting = new Setting(containerEl)
+    new Setting(containerEl)
       .setName('Advanced settings')
       .setDesc('Reveal configuration for context size, token limits, semantic search, and diff previews')
       .addToggle(toggle =>
@@ -196,7 +202,7 @@ export class EngramSettingTab extends PluginSettingTab {
       .setName('API Key')
       .setDesc('⚠️ Stored in data.json — do not sync to public git repos');
 
-    let customTypeDropdown: any = null;
+    let customTypeDropdown: DropdownComponent | null = null;
     customTypeSetting.addDropdown(drop => {
       customTypeDropdown = drop;
       drop.addOption('openai_compat', 'OpenAI-compatible');
@@ -304,14 +310,14 @@ export class EngramSettingTab extends PluginSettingTab {
         btn.setButtonText('Testing…').setDisabled(true);
         if (testResultEl) testResultEl.remove();
         try {
-          const result = await (this.plugin as any).testConnection();
+          const result = await this.plugin.testConnection();
           testResultEl = testSetting.settingEl.createEl('p', {
             text: result ?? '✅ Connection successful',
             cls: 'engram-test-result engram-test-ok',
           });
-        } catch (err: any) {
+        } catch (err) {
           testResultEl = testSetting.settingEl.createEl('p', {
-            text: `❌ ${err?.message ?? 'Connection failed'}`,
+            text: `❌ ${err instanceof Error ? err.message : 'Connection failed'}`,
             cls: 'engram-test-result engram-test-err',
           });
         } finally {
@@ -325,7 +331,7 @@ export class EngramSettingTab extends PluginSettingTab {
 
     const getActivePersona = () =>
       this.plugin.settings.personas.find(
-        (p: any) => p.id === this.plugin.settings.activePersonaId
+        p => p.id === this.plugin.settings.activePersonaId
       ) ?? this.plugin.settings.personas[0];
 
     // Active persona dropdown
@@ -345,8 +351,8 @@ export class EngramSettingTab extends PluginSettingTab {
       if (promptTextArea) promptTextArea.value = persona.systemPrompt;
     };
 
-    const buildPersonaDropdown = (drop: any) => {
-      drop.selectEl.innerHTML = '';
+    const buildPersonaDropdown = (drop: DropdownComponent) => {
+      drop.selectEl.empty();
       for (const p of this.plugin.settings.personas) {
         drop.addOption(p.id, p.name);
       }
@@ -359,7 +365,7 @@ export class EngramSettingTab extends PluginSettingTab {
         });
     };
 
-    let personaDrop: any = null;
+    let personaDrop: DropdownComponent | null = null;
     personaDropSetting.addDropdown(drop => {
       personaDrop = drop;
       buildPersonaDropdown(drop);
@@ -396,7 +402,7 @@ export class EngramSettingTab extends PluginSettingTab {
         this.plugin.settings.activePersonaId = id;
         await this.save();
         // Rebuild dropdown with new option selected
-        buildPersonaDropdown(personaDrop);
+        if (personaDrop) buildPersonaDropdown(personaDrop);
         new Notice(`Persona "${name.trim()}" saved.`);
       })
     );
@@ -419,19 +425,19 @@ export class EngramSettingTab extends PluginSettingTab {
         if (!confirmed) return;
 
         this.plugin.settings.personas = this.plugin.settings.personas.filter(
-          (p: any) => p.id !== persona.id
+          p => p.id !== persona.id
         );
         this.plugin.settings.activePersonaId = 'default';
         await this.save();
-        buildPersonaDropdown(personaDrop);
+        if (personaDrop) buildPersonaDropdown(personaDrop);
         refreshPromptArea();
       })
     );
 
     // ── 3. Memory ───────────────────────────────────────────────────────────
-    const memoryHeaderSetting = new Setting(containerEl).setName('💾 Memory').setHeading();
+    new Setting(containerEl).setName('💾 Memory').setHeading();
 
-    const memoryEnabledSetting = new Setting(containerEl)
+    new Setting(containerEl)
       .setName('Enable memory system')
       .setDesc('Engram maintains a persistent memory file summarising important facts about you')
       .addToggle(toggle =>
@@ -443,7 +449,7 @@ export class EngramSettingTab extends PluginSettingTab {
           })
       );
 
-    const memoryPathSetting = new Setting(containerEl)
+    new Setting(containerEl)
       .setName('Memory file path')
       .setDesc('Vault-relative path to the memory markdown file. Press Enter or click away to apply; an existing file is moved, not recreated.')
       .addText(text => {
@@ -469,7 +475,7 @@ export class EngramSettingTab extends PluginSettingTab {
       })
       .addButton(btn =>
         btn.setButtonText('Open').setTooltip('Open memory file in Obsidian').onClick(() => {
-          (this.plugin as any).openMemoryFile();
+          void this.plugin.openMemoryFile();
         })
       );
 
@@ -550,7 +556,7 @@ export class EngramSettingTab extends PluginSettingTab {
       folderSelectorContainer.empty();
 
       // Description label
-      folderSelectorContainer.createEl('div', {
+      folderSelectorContainer.createDiv({
         text: this.plugin.settings.scopeMode === 'allowlist'
           ? 'Select folders to ALLOW access to (and their subfolders):'
           : 'Select folders to BLOCK access to (and their subfolders):',
@@ -628,13 +634,13 @@ export class EngramSettingTab extends PluginSettingTab {
           }
 
           // Icon and label
-          itemEl.createEl('span', { text: '📁 ', cls: 'engram-folder-icon' });
-          const nameEl = itemEl.createEl('span', { text: name, cls: 'engram-folder-name' });
+          itemEl.createSpan({ text: '📁 ', cls: 'engram-folder-icon' });
+          const nameEl = itemEl.createSpan({ text: name, cls: 'engram-folder-name' });
           nameEl.title = path;
 
           // Inherited badge
           if (isInherited) {
-            itemEl.createEl('span', { text: 'Inherited', cls: 'engram-folder-badge' });
+            itemEl.createSpan({ text: 'Inherited', cls: 'engram-folder-badge' });
           }
 
           // Toggle event
@@ -654,16 +660,16 @@ export class EngramSettingTab extends PluginSettingTab {
               renderFolderSelector(); // Re-render to cascade states
             };
 
-            checkbox.addEventListener('change', async (e) => {
+            checkbox.addEventListener('change', (e) => {
               e.stopPropagation();
-              await toggleFolder();
+              void toggleFolder();
             });
 
             itemEl.setCssStyles({ cursor: 'pointer' });
-            itemEl.addEventListener('click', async (e) => {
+            itemEl.addEventListener('click', (e) => {
               if (e.target !== checkbox) {
                 checkbox.checked = !checkbox.checked;
-                await toggleFolder();
+                void toggleFolder();
               }
             });
           }
@@ -865,7 +871,7 @@ export class EngramSettingTab extends PluginSettingTab {
           .addOption('custom', 'Custom OpenAI-compatible')
           .setValue(this.plugin.settings.embedProvider || 'none')
           .onChange(async value => {
-            this.plugin.settings.embedProvider = value as any;
+            this.plugin.settings.embedProvider = value as EngramSettings['embedProvider'];
             if (this.plugin.embeddingIndex?.updateSettings) {
               this.plugin.embeddingIndex.updateSettings(this.plugin.settings);
             }
@@ -1007,14 +1013,14 @@ export class EngramSettingTab extends PluginSettingTab {
             );
             await this.plugin.persistIndex();
             new Notice(`🧠 Engram: Indexing complete! ${this.plugin.embeddingIndex.entryCount} notes indexed.`);
-            indexStatusEl = indexEmbeddingsSetting.settingEl.createEl('span', {
+            indexStatusEl = indexEmbeddingsSetting.settingEl.createSpan({
               text: `✅ ${this.plugin.embeddingIndex.entryCount} notes indexed`,
               cls: 'engram-test-result engram-test-ok'
             });
             indexStatusEl.setCssStyles({ marginLeft: '12px' });
-          } catch (err: any) {
-            new Notice(`❌ Indexing failed: ${err?.message || err}`);
-            indexStatusEl = indexEmbeddingsSetting.settingEl.createEl('span', {
+          } catch (err) {
+            new Notice(`❌ Indexing failed: ${err instanceof Error ? err.message : String(err)}`);
+            indexStatusEl = indexEmbeddingsSetting.settingEl.createSpan({
               text: `❌ Indexing failed`,
               cls: 'engram-test-result engram-test-err'
             });

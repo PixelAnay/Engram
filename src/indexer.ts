@@ -104,7 +104,7 @@ export class VaultIndexer {
   }
 
   /** Build the index on plugin startup */
-  async build(savedData?: unknown | null): Promise<void> {
+  async build(savedData?: unknown): Promise<void> {
     // Cast the unknown saved data so we can safely access its fields
     const saved = savedData as VaultIndex | null | undefined;
     this.rebuildExcludeRegexes();
@@ -126,7 +126,7 @@ export class VaultIndexer {
           break;
         }
         if (files.length > 2000) {
-          await new Promise(resolve => setTimeout(resolve, 0));
+          await new Promise(resolve => window.setTimeout(resolve, 0));
         }
       }
     }
@@ -173,7 +173,7 @@ export class VaultIndexer {
         }
       }
       // Yield to the event loop between chunks
-      await new Promise(r => setTimeout(r, 0));
+      await new Promise(r => window.setTimeout(r, 0));
     }
     this.ready = true;
     this.invalidateCaches();
@@ -356,7 +356,7 @@ export class VaultIndexer {
         });
       }
       // Yield between batches to keep UI responsive
-      await new Promise(r => setTimeout(r, 0));
+      await new Promise(r => window.setTimeout(r, 0));
     }
 
     return results.sort((a, b) => b.score - a.score).slice(0, limit);

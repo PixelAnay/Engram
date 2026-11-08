@@ -31,32 +31,39 @@ export interface AttachmentRef {
  * We disable the worker (fakeworker / main-thread mode) which is fine for
  * rendering a handful of pages in an Obsidian plugin context.
  */
-async function getPdfJs(): Promise<any> {
+/** The slice of the pdfjs API this plugin uses. */
+interface PdfPage {
+  getViewport(params: { scale: number }): { width: number; height: number };
+  render(params: { canvasContext: CanvasRenderingContext2D; viewport: unknown }): { promise: Promise<void> };
+}
+
+interface PdfDocument {
+  numPages: number;
+  getPage(pageNumber: number): Promise<PdfPage>;
+}
+
+interface PdfJsLib {
+  getDocument(src: { data: Uint8Array }): { promise: Promise<PdfDocument> };
+}
+
+async function getPdfJs(): Promise<PdfJsLib> {
   // Dynamic import — esbuild will bundle these at build time
-  const pdfjs = await import('pdfjs-dist/build/pdf.mjs' as any);
-  const pdfjsWorker = await import('pdfjs-dist/build/pdf.worker.mjs' as any);
-  if (typeof globalThis !== 'undefined') {
-    (globalThis as any).pdfjsWorker = pdfjsWorker;
-  }
+  const pdfjs = (await import('pdfjs-dist/build/pdf.mjs')) as PdfJsLib;
+  const pdfjsWorker: unknown = await import('pdfjs-dist/build/pdf.worker.mjs');
+  (window as unknown as { pdfjsWorker?: unknown }).pdfjsWorker = pdfjsWorker;
   return pdfjs;
 }
 
-function renderPdfPageToDataUrl(pdfDoc: any, pageNum: number): Promise<string> {
-  return new Promise(async (resolve, reject) => {
-    try {
-      const page = await pdfDoc.getPage(pageNum);
-      const viewport = page.getViewport({ scale: 2.0 });
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return reject(new Error('No canvas context'));
-      canvas.width = viewport.width;
-      canvas.height = viewport.height;
-      await page.render({ canvasContext: ctx, viewport }).promise;
-      resolve(canvas.toDataURL('image/jpeg', 0.85));
-    } catch (e) {
-      reject(e);
-    }
-  });
+async function renderPdfPageToDataUrl(pdfDoc: PdfDocument, pageNum: number): Promise<string> {
+  const page = await pdfDoc.getPage(pageNum);
+  const viewport = page.getViewport({ scale: 2.0 });
+  const canvas = createEl('canvas');
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('No canvas context');
+  canvas.width = viewport.width;
+  canvas.height = viewport.height;
+  await page.render({ canvasContext: ctx, viewport }).promise;
+  return canvas.toDataURL('image/jpeg', 0.85);
 }
 
 // ── Page-range modal ──────────────────────────────────────────────────────────
@@ -67,56 +74,45 @@ function showPdfPageRangeModal(
   onConfirm: (from: number, to: number) => void,
   onCancel: () => void
 ): void {
-  const overlay = document.createElement('div');
-  overlay.className = 'engram-modal-overlay';
+  const overlay = createDiv({ cls: 'engram-modal-overlay' });
 
-  const modal = overlay.appendChild(document.createElement('div'));
-  modal.className = 'engram-modal';
+  const modal = overlay.createDiv({ cls: 'engram-modal' });
 
-  const title = modal.appendChild(document.createElement('div'));
-  title.className = 'engram-modal-title';
+  const title = modal.createDiv({ cls: 'engram-modal-title' });
   title.textContent = `📄 PDF: ${fileName}`;
 
-  const subtitle = modal.appendChild(document.createElement('div'));
-  subtitle.className = 'engram-modal-subtitle';
+  const subtitle = modal.createDiv({ cls: 'engram-modal-subtitle' });
   subtitle.textContent = `${totalPages} pages — select which pages to send`;
 
-  const row = modal.appendChild(document.createElement('div'));
-  row.className = 'engram-modal-row';
+  const row = modal.createDiv({ cls: 'engram-modal-row' });
 
-  const fromLabel = row.appendChild(document.createElement('label'));
+  const fromLabel = row.createEl('label');
   fromLabel.textContent = 'From page';
-  const fromInput = row.appendChild(document.createElement('input'));
+  const fromInput = row.createEl('input', { cls: 'engram-modal-input' });
   fromInput.type = 'number';
   fromInput.min = '1';
   fromInput.max = String(totalPages);
   fromInput.value = '1';
-  fromInput.className = 'engram-modal-input';
 
-  const toLabel = row.appendChild(document.createElement('label'));
+  const toLabel = row.createEl('label');
   toLabel.textContent = 'To page';
-  const toInput = row.appendChild(document.createElement('input'));
+  const toInput = row.createEl('input', { cls: 'engram-modal-input' });
   toInput.type = 'number';
   toInput.min = '1';
   toInput.max = String(totalPages);
   toInput.value = String(Math.min(totalPages, 14));
-  toInput.className = 'engram-modal-input';
 
-  const warning = modal.appendChild(document.createElement('div'));
-  warning.className = 'engram-modal-warning';
+  const warning = modal.createDiv({ cls: 'engram-modal-warning' });
   warning.textContent = '⚠️ Each page is sent as an image. More pages = larger context. Recommend ≤ 14.';
 
-  const btns = modal.appendChild(document.createElement('div'));
-  btns.className = 'engram-modal-btns';
+  const btns = modal.createDiv({ cls: 'engram-modal-btns' });
 
-  const cancelBtn = btns.appendChild(document.createElement('button'));
+  const cancelBtn = btns.createEl('button', { cls: 'engram-modal-cancel' });
   cancelBtn.textContent = 'Cancel';
-  cancelBtn.className = 'engram-modal-cancel';
   cancelBtn.addEventListener('click', () => { overlay.remove(); onCancel(); });
 
-  const confirmBtn = btns.appendChild(document.createElement('button'));
+  const confirmBtn = btns.createEl('button', { cls: 'engram-modal-confirm' });
   confirmBtn.textContent = 'Attach pages';
-  confirmBtn.className = 'engram-modal-confirm';
   confirmBtn.addEventListener('click', () => {
     const from = Math.max(1, Math.min(totalPages, parseInt(fromInput.value) || 1));
     const to = Math.max(from, Math.min(totalPages, parseInt(toInput.value) || totalPages));
@@ -128,7 +124,7 @@ function showPdfPageRangeModal(
     if (e.target === overlay) { overlay.remove(); onCancel(); }
   });
 
-  document.body.appendChild(overlay);
+  activeDocument.body.appendChild(overlay);
   fromInput.focus();
 }
 
@@ -174,26 +170,27 @@ export class AttachmentHandler {
       const totalPages = pdfDoc.numPages;
 
       await new Promise<void>((resolve) => {
+        const renderPages = async (from: number, to: number): Promise<void> => {
+          new Notice(`Processing pages ${from}–${to} of ${file.name}…`);
+          for (let p = from; p <= to; p++) {
+            try {
+              const dataUrl = await renderPdfPageToDataUrl(pdfDoc, p);
+              result.push({
+                name: `${file.name} (Page ${p})`,
+                type: 'image/jpeg',
+                dataUrl,
+              });
+            } catch (e) {
+              console.error(`[Engram] Failed to render PDF page ${p}:`, e);
+            }
+          }
+          new Notice(`✅ Loaded ${to - from + 1} pages from ${file.name}`);
+          resolve();
+        };
         showPdfPageRangeModal(
           file.name,
           totalPages,
-          async (from, to) => {
-            new Notice(`Processing pages ${from}–${to} of ${file.name}…`);
-            for (let p = from; p <= to; p++) {
-              try {
-                const dataUrl = await renderPdfPageToDataUrl(pdfDoc, p);
-                result.push({
-                  name: `${file.name} (Page ${p})`,
-                  type: 'image/jpeg',
-                  dataUrl,
-                });
-              } catch (e) {
-                console.error(`[Engram] Failed to render PDF page ${p}:`, e);
-              }
-            }
-            new Notice(`✅ Loaded ${to - from + 1} pages from ${file.name}`);
-            resolve();
-          },
+          (from, to) => { void renderPages(from, to); },
           () => resolve()
         );
       });

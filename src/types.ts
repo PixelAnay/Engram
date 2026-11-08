@@ -76,7 +76,7 @@ export interface EngramSettings {
   activeProviderId: string;
   providerType: ProviderType;
   providerBaseUrl: string;
-  /** @deprecated Legacy single key. Migrated into providerApiKeys; kept empty. */
+  /** Legacy single key. Migrated into providerApiKeys; kept empty. */
   providerApiKey: string;
   /** API keys per provider preset id. A key is only ever sent to its own provider. */
   providerApiKeys?: Record<string, string>;

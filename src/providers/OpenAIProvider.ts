@@ -10,7 +10,7 @@
  * Streaming: SSE  data: {...}  \u2026  data: [DONE]
  */
 
-import type { AIProvider, StreamOptions, ToolDefinition, ProviderStatus } from './types';
+import type { AIProvider, StreamOptions, ProviderStatus } from './types';
 import type { ChatMessage, StreamChunk, ToolCall } from '../types';
 import { requestUrl } from 'obsidian';
 import { sanitizeForApi } from './sanitize';
@@ -67,7 +67,7 @@ export class OpenAIProvider implements AIProvider {
       });
 
       if (res.status !== 200) {
-        const errMsg = (res.json as any)?.error?.message || `HTTP ${res.status}`;
+        const errMsg = (res.json as { error?: { message?: string } } | null)?.error?.message || `HTTP ${res.status}`;
         throw new Error(errMsg);
       }
 
@@ -228,7 +228,7 @@ export class OpenAIProvider implements AIProvider {
     } finally {
       if (reader) {
         try {
-          reader.cancel();
+          reader.cancel().catch(() => { /* ignored */ });
         } catch {
           // Ignored
         }

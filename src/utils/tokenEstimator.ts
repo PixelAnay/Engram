@@ -1,6 +1,6 @@
 // ─── Token Estimation Utilities ──────────────────────────────────────────────
 
-import type { ChatMessage, MessageContentPart } from '../types';
+import type { ChatMessage } from '../types';
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
 
@@ -119,7 +119,7 @@ export function estimateMessagesTokens(messages: ChatMessage[]): number {
     if (typeof msg.content === 'string') {
       total += estimateTokens(msg.content);
     } else if (Array.isArray(msg.content)) {
-      for (const part of msg.content as MessageContentPart[]) {
+      for (const part of msg.content) {
         if (part.type === 'text' && typeof part.text === 'string') {
           total += estimateTokens(part.text);
         } else if (part.type === 'image_url') {

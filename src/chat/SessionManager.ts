@@ -79,10 +79,9 @@ export class SessionManager {
   cleanEmptySessions(): void {
     const activeIds = new Set<string>();
     this.plugin.app.workspace.getLeavesOfType('engram-view').forEach(leaf => {
-      const view = leaf.view as any;
-      if (view && view.sessionManager && view.sessionManager.currentChatId) {
-        activeIds.add(view.sessionManager.currentChatId);
-      }
+      const view = leaf.view as unknown as { sessionManager?: { currentChatId?: string } };
+      const id = view?.sessionManager?.currentChatId;
+      if (id) activeIds.add(id);
     });
     if (this.currentChatId) activeIds.add(this.currentChatId);
 

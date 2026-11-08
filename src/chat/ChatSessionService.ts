@@ -25,7 +25,7 @@ export interface ChatSessionServiceOptions {
 export class ChatSessionService {
   sessions: ChatSession[] = [];
 
-  private timers = new Map<string, ReturnType<typeof setTimeout>>();
+  private timers = new Map<string, number>();
   private pending = new Map<string, ChatSession>();
   private debounceMs: number;
 
@@ -57,35 +57,35 @@ export class ChatSessionService {
     if (!withTouch.messages || withTouch.messages.length === 0) {
       this.cancelPending(session.id);
       // Our own delete: tracked, so the delete event cannot remove the session from the UI
-      this.store.delete(session.id, true).catch(() => {});
+      this.store.delete(session.id).catch(() => {});
       return;
     }
 
     this.pending.set(session.id, withTouch);
     const existing = this.timers.get(session.id);
-    if (existing) clearTimeout(existing);
-    this.timers.set(session.id, setTimeout(() => { void this.persist(session.id); }, this.debounceMs));
+    if (existing) window.clearTimeout(existing);
+    this.timers.set(session.id, window.setTimeout(() => { void this.persist(session.id); }, this.debounceMs));
   }
 
   /** Remove a session from memory and permanently delete its file. */
   remove(id: string): void {
     this.cancelPending(id);
     this.sessions = this.sessions.filter(s => s.id !== id);
-    this.store.delete(id, true)
+    this.store.delete(id)
       .catch(e => console.error(`[Engram] Failed to delete session "${id}":`, e));
     this.opts.onChanged();
   }
 
   private cancelPending(id: string): void {
     const timer = this.timers.get(id);
-    if (timer) clearTimeout(timer);
+    if (timer) window.clearTimeout(timer);
     this.timers.delete(id);
     this.pending.delete(id);
   }
 
   private async persist(id: string): Promise<void> {
     const timer = this.timers.get(id);
-    if (timer) clearTimeout(timer);
+    if (timer) window.clearTimeout(timer);
     this.timers.delete(id);
     const session = this.pending.get(id);
     if (!session) return;

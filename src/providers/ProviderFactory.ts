@@ -130,7 +130,7 @@ export class ProviderFactory {
           temperature: this.settings.temperature,
           signal: controller.signal,
           toolCallingMode: this.settings.toolCallingMode,
-          ...(useNative ? { tools: TOOL_DEFINITIONS as any, toolChoice: 'auto' } : {}),
+          ...(useNative ? { tools: TOOL_DEFINITIONS, toolChoice: 'auto' } : {}),
         };
 
         // One explicit reply limit for every provider (required by Anthropic).

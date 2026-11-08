@@ -3,9 +3,14 @@
  * never per keystroke. Used for path settings, where a half-typed value
  * ("Intelli") must never be acted on.
  */
+export interface CommitEvent {
+  key?: string;
+  preventDefault?: () => void;
+}
+
 export interface CommitInput {
   value: string;
-  addEventListener(type: string, listener: (e: any) => void): void;
+  addEventListener(type: string, listener: (e: CommitEvent) => void): void;
 }
 
 export function commitOnBlurOrEnter(
@@ -30,7 +35,7 @@ export function commitOnBlurOrEnter(
   };
 
   input.addEventListener('blur', () => { void run(); });
-  input.addEventListener('keydown', (e: { key?: string; preventDefault?: () => void }) => {
+  input.addEventListener('keydown', (e: CommitEvent) => {
     if (e.key === 'Enter') {
       e.preventDefault?.();
       void run();

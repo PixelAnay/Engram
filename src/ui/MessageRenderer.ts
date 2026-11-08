@@ -54,9 +54,13 @@ function renderMarkdownCompat(
 ): void {
   const sanitized = sanitizeMarkdownSource(source);
   try {
-    MarkdownRenderer.render(app, sanitized, el, '', component);
+    void MarkdownRenderer.render(app, sanitized, el, '', component);
   } catch {
-    (MarkdownRenderer as any).renderMarkdown(sanitized, el, '', component);
+    // Older Obsidian versions only provide renderMarkdown
+    const legacy = MarkdownRenderer as unknown as {
+      renderMarkdown(markdown: string, el: HTMLElement, sourcePath: string, component: Component): Promise<void> | void;
+    };
+    void legacy.renderMarkdown(sanitized, el, '', component);
   }
 }
 
@@ -73,7 +77,7 @@ export class MessageRenderer {
   private renderedBubbles = new Map<DisplayMessage, HTMLElement>();
 
   /** Timer for debounced Markdown re-renders during streaming */
-  private mdDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private mdDebounceTimer: number | null = null;
 
   /** Ref to the streaming bubble's raw text node (for fast token patching) */
   private streamingTextNode: Text | null = null;
@@ -98,7 +102,7 @@ export class MessageRenderer {
    */
   renderAll(messages: DisplayMessage[]): void {
     if (this.mdDebounceTimer !== null) {
-      clearTimeout(this.mdDebounceTimer);
+      window.clearTimeout(this.mdDebounceTimer);
       this.mdDebounceTimer = null;
     }
     this.container.empty();
@@ -133,14 +137,14 @@ export class MessageRenderer {
     if (!wrapper) return;
 
     // Update or create the raw text node inside the content div
-    const contentEl = wrapper.querySelector('.engram-bubble-content') as HTMLElement | null;
+    const contentEl = wrapper.querySelector<HTMLElement>('.engram-bubble-content');
     if (!contentEl) return;
 
     if (this.streamingTextNode && contentEl.contains(this.streamingTextNode)) {
       this.streamingTextNode.textContent = msg.content;
     } else {
       contentEl.empty();
-      this.streamingTextNode = document.createTextNode(msg.content);
+      this.streamingTextNode = activeDocument.createTextNode(msg.content);
       contentEl.appendChild(this.streamingTextNode);
     }
 
@@ -160,7 +164,7 @@ export class MessageRenderer {
    */
   finalizeStreamingBubble(msg: DisplayMessage): void {
     if (this.mdDebounceTimer !== null) {
-      clearTimeout(this.mdDebounceTimer);
+      window.clearTimeout(this.mdDebounceTimer);
       this.mdDebounceTimer = null;
     }
     this.streamingTextNode = null;
@@ -177,48 +181,40 @@ export class MessageRenderer {
   // ── Private rendering ─────────────────────────────────────────────────────
 
   private renderBubble(msg: DisplayMessage): HTMLElement {
-    const wrapper = document.createElement('div');
-    wrapper.className = `engram-msg-wrapper engram-msg-${msg.role}`;
+    const wrapper = createDiv({ cls: `engram-msg-wrapper engram-msg-${msg.role}` });
 
-    const bubble = wrapper.appendChild(document.createElement('div'));
-    bubble.className = 'engram-bubble';
+    const bubble = wrapper.createDiv({ cls: 'engram-bubble' });
 
     // Tool events
     if (msg.toolEvents && msg.toolEvents.length > 0) {
-      const toolsEl = bubble.appendChild(document.createElement('div'));
-      toolsEl.className = 'engram-tool-events';
+      const toolsEl = bubble.createDiv({ cls: 'engram-tool-events' });
       this.renderToolEvents(toolsEl, msg.toolEvents);
     }
 
     // Attachments
     if (msg.attachments && msg.attachments.length > 0) {
-      const attContainer = bubble.appendChild(document.createElement('div'));
-      attContainer.className = 'engram-input-attachments';
+      const attContainer = bubble.createDiv({ cls: 'engram-input-attachments' });
       attContainer.style.marginBottom = msg.content ? '8px' : '0';
       for (const att of msg.attachments) {
         if (att.type.startsWith('image/')) {
-          const img = attContainer.appendChild(document.createElement('img'));
+          const img = attContainer.createEl('img');
           img.src = att.dataUrl || '';
           img.alt = att.name;
           img.setCssStyles({ maxWidth: '100%', borderRadius: 'var(--radius-s)', maxHeight: '200px', objectFit: 'contain' });
         } else {
-          const chip = attContainer.appendChild(document.createElement('div'));
-          chip.className = 'engram-attachment-chip';
-          const nameSpan = chip.appendChild(document.createElement('span'));
-          nameSpan.className = 'engram-attachment-name';
-          nameSpan.textContent = att.name;
+          const chip = attContainer.createDiv({ cls: 'engram-attachment-chip' });
+          chip.createSpan({ cls: 'engram-attachment-name', text: att.name });
         }
       }
     }
 
     // Content
-    const contentEl = bubble.appendChild(document.createElement('div'));
-    contentEl.className = 'engram-bubble-content';
+    const contentEl = bubble.createDiv({ cls: 'engram-bubble-content' });
 
     if (msg.content) {
       if (msg.streaming) {
         // During streaming: plain text node (fast)
-        this.streamingTextNode = document.createTextNode(msg.content);
+        this.streamingTextNode = activeDocument.createTextNode(msg.content);
         contentEl.appendChild(this.streamingTextNode);
       } else {
         renderMarkdownCompat(this.app, msg.content, contentEl, this.component);
@@ -230,19 +226,15 @@ export class MessageRenderer {
 
     // Auto-attached notes (semantic context)
     if (msg.autoAttachedNotes && msg.autoAttachedNotes.length > 0) {
-      const autoAttachedContainer = bubble.appendChild(document.createElement('div'));
-      autoAttachedContainer.className = 'engram-auto-attached-container';
+      const autoAttachedContainer = bubble.createDiv({ cls: 'engram-auto-attached-container' });
 
-      const header = autoAttachedContainer.appendChild(document.createElement('div'));
-      header.className = 'engram-auto-attached-header';
+      const header = autoAttachedContainer.createDiv({ cls: 'engram-auto-attached-header' });
       header.textContent = `🧠 Auto-attached ${msg.autoAttachedNotes.length} note${msg.autoAttachedNotes.length > 1 ? 's' : ''}`;
 
-      const list = autoAttachedContainer.appendChild(document.createElement('div'));
-      list.className = 'engram-auto-attached-list';
+      const list = autoAttachedContainer.createDiv({ cls: 'engram-auto-attached-list' });
 
       for (const path of msg.autoAttachedNotes) {
-        const fileChip = list.appendChild(document.createElement('div'));
-        fileChip.className = 'engram-auto-attached-chip';
+        const fileChip = list.createDiv({ cls: 'engram-auto-attached-chip' });
         const basename = path.split('/').pop() || path;
         fileChip.textContent = basename;
         fileChip.title = path;
@@ -257,39 +249,33 @@ export class MessageRenderer {
     // Thinking indicator (empty streaming bubble)
     const hasText = msg.content.trim().length > 0;
     if (msg.streaming && !hasText) {
-      const thinkingEl = contentEl.appendChild(document.createElement('div'));
-      thinkingEl.className = 'engram-thinking';
-      thinkingEl.appendChild(document.createElement('span')).textContent = 'Thinking';
-      thinkingEl.appendChild(document.createElement('span')).className = 'engram-thinking-dots';
-      (thinkingEl.lastChild as HTMLElement).textContent = '...';
+      const thinkingEl = contentEl.createDiv({ cls: 'engram-thinking' });
+      thinkingEl.createSpan({ text: 'Thinking' });
+      thinkingEl.createSpan({ cls: 'engram-thinking-dots', text: '...' });
     }
 
     // Streaming cursor
     if (msg.streaming) {
-      const cursor = bubble.appendChild(document.createElement('span'));
-      cursor.className = 'engram-cursor';
+      const cursor = bubble.createSpan({ cls: 'engram-cursor' });
       cursor.textContent = '▋';
     }
 
     // Action buttons (Copy, Edit)
     if (!msg.streaming && msg.role !== 'error') {
-      const actions = wrapper.appendChild(document.createElement('div'));
-      actions.className = 'engram-msg-actions';
+      const actions = wrapper.createDiv({ cls: 'engram-msg-actions' });
 
-      const copyBtn = actions.appendChild(document.createElement('button'));
-      copyBtn.className = 'engram-msg-action-btn';
+      const copyBtn = actions.createEl('button', { cls: 'engram-msg-action-btn' });
       copyBtn.title = 'Copy';
       setIcon(copyBtn, 'copy');
       copyBtn.addEventListener('click', () => {
         this.onCopyMessage(msg.content);
-        navigator.clipboard.writeText(msg.content);
+        void navigator.clipboard.writeText(msg.content);
         setIcon(copyBtn, 'check');
-        setTimeout(() => setIcon(copyBtn, 'copy'), 2000);
+        window.setTimeout(() => setIcon(copyBtn, 'copy'), 2000);
       });
 
       if (msg.role === 'user') {
-        const editBtn = actions.appendChild(document.createElement('button'));
-        editBtn.className = 'engram-msg-action-btn';
+        const editBtn = actions.createEl('button', { cls: 'engram-msg-action-btn' });
         editBtn.title = 'Edit & Resend';
         setIcon(editBtn, 'pencil');
         // The bubble carries its own message (and sourceIndex): no DOM-position guessing
@@ -297,8 +283,7 @@ export class MessageRenderer {
       }
 
       if (msg.role === 'assistant') {
-        const regenBtn = actions.appendChild(document.createElement('button'));
-        regenBtn.className = 'engram-msg-action-btn';
+        const regenBtn = actions.createEl('button', { cls: 'engram-msg-action-btn' });
         regenBtn.title = 'Regenerate response';
         setIcon(regenBtn, 'refresh-cw');
         regenBtn.addEventListener('click', () => this.onRegenerateMessage(msg));
@@ -311,8 +296,7 @@ export class MessageRenderer {
   private renderToolEvents(container: HTMLElement, events: ToolEvent[]): void {
     container.empty();
     for (const ev of events) {
-      const evEl = container.appendChild(document.createElement('div'));
-      evEl.className = `engram-tool-event engram-tool-${ev.type}`;
+      const evEl = container.createDiv({ cls: `engram-tool-event engram-tool-${ev.type}` });
       const icon = TOOL_ICONS[ev.name] ?? '🛠️';
       if (ev.type === 'start') {
         evEl.textContent = `${icon} ${ev.name.replace(/_/g, ' ')}…`;
@@ -326,14 +310,13 @@ export class MessageRenderer {
   }
 
   private updateToolEventsEl(wrapper: HTMLElement, events: ToolEvent[]): void {
-    const toolsEl = wrapper.querySelector('.engram-tool-events') as HTMLElement | null;
+    const toolsEl = wrapper.querySelector<HTMLElement>('.engram-tool-events');
     if (!toolsEl && events.length === 0) return;
 
     if (!toolsEl) {
-      const bubble = wrapper.querySelector('.engram-bubble') as HTMLElement;
+      const bubble = wrapper.querySelector<HTMLElement>('.engram-bubble');
       if (!bubble) return;
-      const newToolsEl = document.createElement('div');
-      newToolsEl.className = 'engram-tool-events';
+      const newToolsEl = createDiv({ cls: 'engram-tool-events' });
       bubble.insertBefore(newToolsEl, bubble.firstChild);
       this.renderToolEvents(newToolsEl, events);
     } else {
@@ -343,8 +326,8 @@ export class MessageRenderer {
 
   /** Debounce Markdown render during streaming (max once per 200ms). */
   private scheduleMdRender(msg: DisplayMessage, contentEl: HTMLElement): void {
-    if (this.mdDebounceTimer !== null) clearTimeout(this.mdDebounceTimer);
-    this.mdDebounceTimer = setTimeout(() => {
+    if (this.mdDebounceTimer !== null) window.clearTimeout(this.mdDebounceTimer);
+    this.mdDebounceTimer = window.setTimeout(() => {
       this.mdDebounceTimer = null;
       if (!msg.streaming) return; // already finalized
       contentEl.empty();
@@ -365,8 +348,7 @@ export class MessageRenderer {
     };
 
     const toAnchor = (path: string): HTMLAnchorElement => {
-      const a = document.createElement('a');
-      a.className = 'engram-note-link';
+      const a = createEl('a', { cls: 'engram-note-link' });
       a.textContent = path;
       a.title = `Open "${path}" in a new tab`;
       a.href = '#';
@@ -405,19 +387,19 @@ export class MessageRenderer {
         const text = node.textContent ?? '';
         const matches = [...text.matchAll(NOTE_PATH_RE)];
         if (matches.length === 0) return;
-        const frag = document.createDocumentFragment();
+        const frag = createFragment();
         let lastIdx = 0;
         for (const match of matches) {
           const start = match.index!;
           const end = start + match[0].length;
           const file = this.resolveFile(match[0].trim());
           if (!file) continue;
-          if (start > lastIdx) frag.appendChild(document.createTextNode(text.slice(lastIdx, start)));
+          if (start > lastIdx) frag.appendChild(activeDocument.createTextNode(text.slice(lastIdx, start)));
           frag.appendChild(toAnchor(file));
           lastIdx = end;
         }
         if (lastIdx > 0) {
-          if (lastIdx < text.length) frag.appendChild(document.createTextNode(text.slice(lastIdx)));
+          if (lastIdx < text.length) frag.appendChild(activeDocument.createTextNode(text.slice(lastIdx)));
           node.parentNode?.replaceChild(frag, node);
         }
       } else if (node.nodeType === Node.ELEMENT_NODE && !['A', 'CODE', 'PRE'].includes((node as Element).tagName)) {
@@ -442,7 +424,7 @@ export class MessageRenderer {
 
   private doResolveFile(rawPath: string): string | null {
     // We access the Obsidian vault via the app instance
-    const vault = (this.app as any).vault;
+    const vault = this.app.vault;
     if (!vault) return null;
 
     const trimmed = (rawPath ?? '').trim();
@@ -464,7 +446,7 @@ export class MessageRenderer {
 
     for (const c of candidates) {
       const f = vault.getAbstractFileByPath(c);
-      if (f) return f.path as string;
+      if (f) return f.path;
     }
 
     const toKey = (v: string) => v.replace(/\\/g, '/').normalize('NFC').toLowerCase();
@@ -474,7 +456,7 @@ export class MessageRenderer {
     // O(1) optimization using indexer note paths if available (H-21)
     const files = this.indexer
       ? this.indexer.getAllPaths().map(p => ({ path: p, name: p.split('/').pop() ?? p }))
-      : (vault.getMarkdownFiles() as Array<{ path: string; name: string }>);
+      : vault.getMarkdownFiles();
 
     for (const f of files) if (cKeys.has(toKey(f.path))) return f.path;
 

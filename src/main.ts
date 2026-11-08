@@ -13,6 +13,7 @@ import { ChatSessionService } from './chat/ChatSessionService';
 import { OwnOpTracker } from './chat/OwnOpTracker';
 import { PluginDataStore } from './storage/PluginDataStore';
 import { scopeSignature, providerSignature } from './utils/settingsSignature';
+import { setConfigDir } from './utils/pathUtils';
 import { migrateSettings } from './utils/settingsMigration';
 import { showBackupPicker } from './ui/BackupPickerModal';
 import { showConfirmDialog } from './ui/ConfirmDialog';
@@ -42,8 +43,8 @@ export default class EngramPlugin extends Plugin {
   private resolveChatsReady!: () => void;
   private chatOwnOps = new OwnOpTracker();
 
-  private indexRebuildTimer: ReturnType<typeof setTimeout> | null = null;
-  private scopeRebuildTimer: ReturnType<typeof setTimeout> | null = null;
+  private indexRebuildTimer: number | null = null;
+  private scopeRebuildTimer: number | null = null;
   private pendingMigrationMessages: string[] = [];
   private lastScopeSig = '';
   private lastProviderSig = '';
@@ -51,6 +52,7 @@ export default class EngramPlugin extends Plugin {
 
   async onload(): Promise<void> {
     await this.loadSettings();
+    setConfigDir(this.app.vault.configDir);
 
     // Vault-backed chat store. Nothing touches the vault until the layout is ready.
     this.chatHistoryStore = new ChatHistoryStore(
@@ -71,7 +73,7 @@ export default class EngramPlugin extends Plugin {
 
     // Make sure unsaved chat messages reach disk when Obsidian quits
     this.registerEvent(
-      (this.app.workspace as any).on('quit', (tasks?: { add?: (fn: () => Promise<unknown>) => void }) => {
+      this.app.workspace.on('quit', (tasks) => {
         if (tasks?.add) tasks.add(() => this.flushAllChats());
         else void this.flushAllChats();
       })
@@ -194,7 +196,7 @@ export default class EngramPlugin extends Plugin {
     const leaves = this.app.workspace.getLeavesOfType(ENGRAM_VIEW_TYPE);
     for (const leaf of leaves) {
       if (leaf.view instanceof ChatView) {
-        leaf.view.onSettingsUpdate(providerChanged);
+        void leaf.view.onSettingsUpdate(providerChanged);
       }
     }
   }
@@ -205,7 +207,7 @@ export default class EngramPlugin extends Plugin {
     this.scopeRebuildTimer = window.setTimeout(() => {
       this.scopeRebuildTimer = null;
       void this.buildIndexInBackground();
-    }, 2000) as any;
+    }, 2000);
   }
 
   // ── Connection test (called from settings UI) ────────────────────────────────
@@ -292,7 +294,6 @@ export default class EngramPlugin extends Plugin {
     if (this.settings.chatHistoryPath !== OLD_HIDDEN_PATH) {
       const moved = await this.chatHistoryStore.migrateFrom(OLD_HIDDEN_PATH);
       if (moved > 0) {
-        console.log(`[Engram] Moved ${moved} chat file(s) from ${OLD_HIDDEN_PATH} → ${this.settings.chatHistoryPath}`);
         new Notice(`🧠 Engram: Moved ${moved} chat(s) to ${this.settings.chatHistoryPath}`);
       }
     }
@@ -303,30 +304,32 @@ export default class EngramPlugin extends Plugin {
 
     // 2. Load legacy sessions from data.json (backward compat / migration)
     const data = this.dataStore.get();
-    const legacySessions: ChatSession[] = Array.isArray(data?.chatSessions)
-      ? (data.chatSessions as any[])
-          .filter((s: any) => s && typeof s.id === 'string' && Array.isArray(s.messages))
-          .map((s: any): ChatSession => ({
+    const rawLegacy: unknown = data?.chatSessions;
+    const legacySessions: ChatSession[] = Array.isArray(rawLegacy)
+      ? (rawLegacy as unknown[])
+          .filter((s): s is Record<string, unknown> =>
+            !!s && typeof s === 'object' &&
+            typeof (s as Record<string, unknown>).id === 'string' &&
+            Array.isArray((s as Record<string, unknown>).messages))
+          .map((s): ChatSession => ({
             schemaVersion: 1,
-            id: s.id,
+            id: s.id as string,
             title: typeof s.title === 'string' && s.title.trim() ? s.title : 'New chat',
             createdAt: typeof s.createdAt === 'number' ? s.createdAt : Date.now(),
             updatedAt: typeof s.updatedAt === 'number' ? s.updatedAt : Date.now(),
-            messages: s.messages,
+            messages: s.messages as ChatSession['messages'],
           }))
       : [];
 
     // 3. Migrate legacy sessions not yet in vault
     const toMigrate = legacySessions.filter(s => !vaultIds.has(s.id));
     if (toMigrate.length > 0) {
-      console.log(`[Engram] Migrating ${toMigrate.length} chat session(s) from data.json → vault files`);
       for (const session of toMigrate) {
         await this.chatHistoryStore.save(session);
       }
 
       // Remove the now-migrated chatSessions key from data.json
       await this.dataStore.update(d => { delete d.chatSessions; });
-      console.log('[Engram] Migration complete — chat sessions removed from data.json');
     }
 
     // 4. Merge and sort all sessions
@@ -364,7 +367,6 @@ export default class EngramPlugin extends Plugin {
   async syncChatsFromVault(): Promise<void> {
     const count = await this.chatService.syncFromVault();
     new Notice(`🧠 Engram: ${count} chat session(s) loaded from vault`);
-    console.log(`[Engram] syncChatsFromVault: loaded ${count} session(s)`);
   }
 
   /** Ids of the chat sessions currently displayed in open Engram views. */
@@ -410,14 +412,12 @@ export default class EngramPlugin extends Plugin {
   private async buildIndexInBackground(): Promise<void> {
     const data = this.dataStore.get();
     const savedIndex = data?.index ?? null;
-    const savedEmbeds: EmbeddingIndexData | null = data?.embeddings ?? null;
+    const savedEmbeds = (data?.embeddings as EmbeddingIndexData | undefined) ?? null;
 
     try {
       await this.indexer.build(savedIndex);
-      console.log(`[Engram] Vault indexed: ${this.indexer.noteCount} notes`);
 
       this.embeddingIndex.load(savedEmbeds);
-      console.log(`[Engram] Embeddings loaded: ${this.embeddingIndex.entryCount} notes in index`);
 
       await this.persistIndex();
     } catch (e) {
@@ -425,7 +425,7 @@ export default class EngramPlugin extends Plugin {
     }
   }
 
-  private async persistIndex(): Promise<void> {
+  async persistIndex(): Promise<void> {
     const index = this.indexer.getSerializable();
     const embeddings = this.embeddingIndex.isReady ? this.embeddingIndex.toJSON() : undefined;
     await this.dataStore.update(d => {
@@ -504,7 +504,7 @@ export default class EngramPlugin extends Plugin {
 
   private schedulePersist(): void {
     if (this.indexRebuildTimer) window.clearTimeout(this.indexRebuildTimer);
-    this.indexRebuildTimer = window.setTimeout(() => this.persistIndex(), 5000) as any;
+    this.indexRebuildTimer = window.setTimeout(() => { void this.persistIndex(); }, 5000);
   }
 
   /**
@@ -534,7 +534,7 @@ export default class EngramPlugin extends Plugin {
       if (leaf) await leaf.setViewState({ type: ENGRAM_VIEW_TYPE, active: true });
     }
 
-    if (leaf) workspace.revealLeaf(leaf);
+    if (leaf) await workspace.revealLeaf(leaf);
   }
 }
 

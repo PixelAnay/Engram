@@ -1,6 +1,7 @@
-import { App, TFile, TFolder, Notice } from 'obsidian';
+import { App, TFile, TFolder } from 'obsidian';
 import type { VaultIndexer } from './indexer';
 import type { EngramSettings } from './types';
+import type { ToolDefinition } from './providers/types';
 import type { EmbeddingIndex } from './embeddings';
 import type { MemoryManager } from './memory/MemoryManager';
 import { validateVaultPath, isPathAllowed, isProtectedPath } from './utils/pathUtils';
@@ -9,7 +10,7 @@ import { showConfirmDialog } from './ui/ConfirmDialog';
 
 // ─── Tool Definitions (OpenAI schema) ────────────────────────────────────────
 
-export const TOOL_DEFINITIONS = [
+export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     type: 'function',
     function: {
@@ -304,7 +305,7 @@ export const TOOL_DEFINITIONS = [
       },
     },
   },
-] as const;
+];
 
 // ─── Prompt-Injection Template (fallback mode) ────────────────────────────────
 
@@ -408,7 +409,7 @@ export class ToolExecutor {
   async execute(name: string, argsJson: string): Promise<string> {
     let args: Record<string, unknown>;
     try {
-      args = JSON.parse(argsJson);
+      args = JSON.parse(argsJson) as Record<string, unknown>;
     } catch {
       return `Error: Invalid JSON arguments: ${argsJson}`;
     }
@@ -470,7 +471,7 @@ export class ToolExecutor {
     if (entry.destinationPath) {
       const destFile = this.app.vault.getAbstractFileByPath(entry.destinationPath);
       if (destFile) {
-        await this.app.vault.trash(destFile, true);
+        await this.app.fileManager.trashFile(destFile);
         this.indexer.removeFile(entry.destinationPath);
       }
     }
@@ -479,7 +480,7 @@ export class ToolExecutor {
     if (entry.previousContent === null) {
       const file = this.app.vault.getAbstractFileByPath(entry.path);
       if (file) {
-        await this.app.vault.trash(file, true);
+        await this.app.fileManager.trashFile(file);
         this.indexer.removeFile(entry.path);
       }
       return entry.path;
@@ -993,7 +994,7 @@ export class ToolExecutor {
       this.pushUndo(path, content, `delete ${path}`);
     }
 
-    await this.app.vault.trash(file, true);
+    await this.app.fileManager.trashFile(file);
     this.indexer.removeFile(path);
 
     return `✅ Deleted "${path}" (moved to system trash)`;
@@ -1119,7 +1120,7 @@ export class ToolExecutor {
       if (!exists) {
         try {
           await this.app.vault.createFolder(currentPath);
-        } catch (e) {
+        } catch {
           // Folder might have been created concurrently, or exists but is not tracked
         }
       }

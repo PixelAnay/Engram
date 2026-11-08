@@ -178,8 +178,8 @@ ${vaultMap}`;
         tokenBudget = Math.max(0, tokenBudget);
 
         for (const path of relevantPaths) {
-          const file = this.app.vault.getAbstractFileByPath(path) as TFile | null;
-          if (!file) continue;
+          const file = this.app.vault.getAbstractFileByPath(path);
+          if (!(file instanceof TFile)) continue;
 
           const content = await this.app.vault.read(file);
           const noteText = `\n### ${path}\n[VAULT DATA START]\n${content}\n[VAULT DATA END]\n`;

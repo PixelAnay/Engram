@@ -57,19 +57,13 @@ export class TokenBudgetBar {
     this.maxTokens = Math.max(1, maxTokens);
 
     // ── Wrapper ───────────────────────────────────────────────────────────
-    this.el = document.createElement('div');
-    this.el.className = 'engram-token-bar';
-    container.appendChild(this.el);
+    this.el = container.createDiv({ cls: 'engram-token-bar' });
 
     // ── Fill strip ────────────────────────────────────────────────────────
-    this.fillEl = document.createElement('div');
-    this.fillEl.className = 'engram-token-bar-fill';
-    this.el.appendChild(this.fillEl);
+    this.fillEl = this.el.createDiv({ cls: 'engram-token-bar-fill' });
 
     // ── Label ─────────────────────────────────────────────────────────────
-    this.labelEl = document.createElement('span');
-    this.labelEl.className = 'engram-token-bar-label';
-    this.el.appendChild(this.labelEl);
+    this.labelEl = this.el.createSpan({ cls: 'engram-token-bar-label' });
 
     // Render initial empty state
     this.update(0);

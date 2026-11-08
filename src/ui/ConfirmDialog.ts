@@ -90,7 +90,7 @@ class ConfirmModal extends Modal {
 
     // Destructive dialogs focus Cancel, so a stray Enter never confirms
     const focusTarget = this.danger ? cancelBtn : confirmBtn;
-    setTimeout(() => focusTarget.focus(), 50);
+    window.setTimeout(() => focusTarget.focus(), 50);
   }
 
   onClose() {
@@ -200,11 +200,11 @@ class PromptModal extends Modal {
     // Focus immediately and also at timeouts to ensure focus is not stolen during modal transitions
     inputEl.focus();
     inputEl.select();
-    setTimeout(() => {
+    window.setTimeout(() => {
       inputEl.focus();
       inputEl.select();
     }, 50);
-    setTimeout(() => {
+    window.setTimeout(() => {
       inputEl.focus();
       inputEl.select();
     }, 150);
